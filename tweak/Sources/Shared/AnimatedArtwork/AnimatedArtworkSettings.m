@@ -46,9 +46,8 @@ NSArray *SGLockScreenMotionRows(void) {
             lowData,
         ];
     }
-    // Below iOS 26 with a jailbreak the add-on in SpringBoard draws the cover full screen itself: its own switch, under
-    // the row the section has without one, which it leaves as it is. iOS 26 and later never come here, its own lock
-    // screen artwork being the rows above.
+    // Below iOS 26 with a jailbreak the add-on in SpringBoard draws the cover full screen itself, in place of the row that
+    // says the lock screen needs iOS 26. iOS 26 and later never come here: their own lock screen artwork is the rows above.
     if (SGHapticEverywhereOffered()) {
         SGModRow *cover = SGOptionRow(@"Canvas for the large cover", @"Tap the lock screen player's cover: it opens the screen's width across, the widgets under the clock hidden, with the Canvas or Apple Music's animated cover in its place where the song has one. Drawn by Vitrine Addon", SGKeyLockCoverAddon);
         cover.changed = ^(BOOL on) {
@@ -62,7 +61,7 @@ NSArray *SGLockScreenMotionRows(void) {
             });
         });
         update.visible = ^BOOL { return SGHapticAddonOutdated(); };
-        return @[SGLockScreenArtworkNeedsRow(), cover, update];
+        return @[cover, update];
     }
     return @[SGLockScreenArtworkNeedsRow()];
 }
