@@ -143,6 +143,7 @@ static SGRArtworkField *fieldIn(UIView *page) {
     if (field.superview != page) [page insertSubview:field atIndex:0];
     else if (page.subviews.firstObject != field) [page sendSubviewToBack:field];
     if (!CGRectEqualToRect(field.frame, page.bounds)) field.frame = page.bounds;
+    SGRAlbumClearNavigationBar(page);
 }
 %end
 
@@ -186,6 +187,43 @@ static void clearCards(UIView *cell) {
 }
 %end
 
+// A header the list pins above its rows is a supplementary view, not a cell: a show's "Newest • All Episodes"
+// filter (Components.UI.SortAndFilterHeading, #000000) stayed a black band across the field. Cleared the same
+// way a cell is.
+%hook _TtC12Element_List21SupplementaryItemView
+- (void)layoutSubviews {
+    %orig;
+    UIView *view = (UIView *)self;
+    if (isPageCell(view)) SGRClearCellPaint(view);
+}
+%end
+
+// A podcast page is the album's template, and Spotify fades UIKit's navigation bar over it on the way down
+// with a dark backing (the artist's page has the same, ArtistHeader.x). The page's item gets the bar with no
+// background, again whenever Spotify sets its own.
+static char kClearBarKey;
+
+void SGRAlbumClearNavigationBar(UIView *page) {
+    UIResponder *responder = page;
+    while (responder && !([responder isKindOfClass:UIViewController.class]
+                          && [((UIViewController *)responder).parentViewController isKindOfClass:UINavigationController.class]))
+        responder = responder.nextResponder;
+    UIViewController *host = (UIViewController *)responder;
+    if (!host) return;
+    UINavigationBarAppearance *clear = objc_getAssociatedObject(host, &kClearBarKey);
+    UINavigationItem *item = host.navigationItem;
+    if (clear && item.standardAppearance == clear && item.scrollEdgeAppearance == clear) return;
+    if (!clear) {
+        clear = [host.navigationController.navigationBar.standardAppearance copy] ?: [UINavigationBarAppearance new];
+        [clear configureWithTransparentBackground];
+        objc_setAssociatedObject(host, &kClearBarKey, clear, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    item.standardAppearance = clear;
+    item.scrollEdgeAppearance = clear;
+    item.compactAppearance = clear;
+    item.compactScrollEdgeAppearance = clear;
+}
+
 %ctor {
     // Registered whatever the switch says: the flag rows elsewhere lock to these while it is on.
     SGRedesignForceFlags(@"album", @{
@@ -208,5 +246,6 @@ static void clearCards(UIView *cell) {
         @"_TtC28CreativeWorkPlatform_PageKit24CreativeWorkTemplateView",
         @"_TtC32CreativeWorkPlatform_TemplateKit28CreativeWorkTemplateListView",
         @"_TtC12Element_List18CollectionViewCell",
+        @"_TtC12Element_List21SupplementaryItemView",
     ]);
 }

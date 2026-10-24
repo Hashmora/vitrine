@@ -63,3 +63,6 @@ void SGRAlbumSetSpotifyColor(UIView *view, UIColor *color);
 // The page comes in whole once its cover has been read (Kit/SGRField.h). Called from the album header's pass
 // only, so a podcast's episode page, the same template with no cover for the field to read, is never held.
 void SGRAlbumHoldPage(UIView *page);
+
+// AlbumField.x. The navigation bar of the page `page` is on, given no background of its own (a podcast page).
+void SGRAlbumClearNavigationBar(UIView *page);

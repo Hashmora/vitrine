@@ -36,7 +36,7 @@ static const CGFloat kHairline = 0.5;
 // Between the end of the title's text and the badge drawn after it.
 static const CGFloat kBadgeGap = 4;
 
-static char kRowKey, kSubtitleKey, kLineKey, kTitleKey, kBadgeKey, kArtistKey, kChangeKey;
+static char kRowKey, kSubtitleKey, kLineKey, kTitleKey, kBadgeKey, kArtistKey, kChangeKey, kRowSizeKey;
 
 static void clearSurface(UIView *view) {
     UIColor *color = view.backgroundColor;
@@ -226,6 +226,21 @@ static void applyRow(UIView *cell, UIView *page) {
 
     applyHairline(row);
     if (hidesCredits()) applyCredit(cell, row, page);
+    objc_setAssociatedObject(row, &kRowSizeKey, [NSValue valueWithCGSize:row.bounds.size], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+// The row can change size with no layout of its cell: the first row of an album is laid out 150 pt tall while the page
+// settles and then shrinks to 60, which left its hairline 90 pt down and the badge moved up beside its title 45 pt
+// under it, over the next row (the line at y 149.5 in a row 60 tall). A row of ours that has changed size since its
+// pass lays its cell out again.
+static void rowResized(UIView *row) {
+    NSValue *was = objc_getAssociatedObject(row, &kRowSizeKey);
+    if (!was || CGSizeEqualToSize(was.CGSizeValue, row.bounds.size)) return;
+    for (UIView *v = row.superview; v; v = v.superview) {
+        if (![v isKindOfClass:%c(_TtC12Element_List18CollectionViewCell)]) continue;
+        [v setNeedsLayout];
+        return;
+    }
 }
 
 #pragma mark - the cells
@@ -267,4 +282,5 @@ static BOOL isTrackContent(UIView *content) {
     if (!SGRedesignedUI()) return;
     %init;
     SGRequireClasses(@[@"_TtC12Element_List18CollectionViewCell"]);
+    SGRPassView(NSClassFromString(@"_TtCE16Encore_LayoutKitO16EncoreFoundation6Encore7ListRow"), ^(UIView *v) { rowResized(v); });
 }

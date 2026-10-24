@@ -22,7 +22,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Home.h"
 
-static char kTitleKey, kShowAllKey, kHeldKey, kTriesKey, kAskedKey;
+static char kTitleKey, kShowAllKey, kHeldKey, kTriesKey, kAskedKey, kInfoKey, kInSongDNAKey;
 
 // How often a heading with no title yet is looked at again.
 static const NSUInteger kTries = 3;
@@ -58,6 +58,9 @@ static UILabel *titleLabelIn(UIView *button, UILabel *mine) {
     return title;
 }
 
+static void keepInfoBesideTitle(UIView *heading, UILabel *mine, UILabel *theirs);
+static BOOL inSongDNA(UIView *heading);
+
 static void restyle(UIView *button) {
     UIView *heading = headingAround(button);
     if (!heading) return;
@@ -77,6 +80,8 @@ static void restyle(UIView *button) {
     UILabel *theirs = titleLabelIn(button, mine);
     SGRHeadingHold *held = objc_getAssociatedObject(button, &kHeldKey);
     if (!theirs) {
+        UIView *info = SGRFindByIdentifier(heading, @"Encore.Button.Tertiary", &kInfoKey);
+        if (info && inSongDNA(heading)) info.transform = CGAffineTransformIdentity;
         // A heading between two shelves: nothing to hold the title on until its label has text again.
         mine.hidden = YES;
         if (held.constraints) [NSLayoutConstraint deactivateConstraints:held.constraints];
@@ -126,6 +131,33 @@ static void restyle(UIView *button) {
         static dispatch_once_t once;
         dispatch_once(&once, ^{ SGLog(@"redesign home: heading \"%@\" %.0fpt drawn at %.0fpt, held on Spotify's label", theirs.text, theirs.font.pointSize, font.pointSize); });
     }
+    keepInfoBesideTitle(heading, mine, theirs);
+}
+
+// SongDNA's section headings (Covers, Samples...) carry an info button (id=Encore.Button.Tertiary, \"About SongDNA\")
+// that Spotify lays out right after its own 18pt label. The title here is larger and wider than that label, so the
+// button sat on the end of it. It is moved by the difference, as a transform, which Spotify's layout never writes, so
+// it stays the title's right neighbour whatever the title says.
+static BOOL inSongDNA(UIView *heading) {
+    NSNumber *known = objc_getAssociatedObject(heading, &kInSongDNAKey);
+    if (known) return known.boolValue;
+    if (!heading.window) return NO;
+    BOOL found = NO;
+    for (UIResponder *r = heading; r && !found; r = r.nextResponder) {
+        found = [NSStringFromClass(r.class) containsString:@"SongDNA"];
+    }
+    objc_setAssociatedObject(heading, &kInSongDNAKey, @(found), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return found;
+}
+
+static void keepInfoBesideTitle(UIView *heading, UILabel *mine, UILabel *theirs) {
+    if (!inSongDNA(heading)) return;
+    UIView *info = SGRFindByIdentifier(heading, @"Encore.Button.Tertiary", &kInfoKey);
+    if (!info) return;
+    CGFloat wanted = ceil([mine sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)].width);
+    CGFloat shift = MAX(0, wanted - theirs.bounds.size.width);
+    CGAffineTransform move = CGAffineTransformMakeTranslation(shift, 0);
+    if (!CGAffineTransformEqualToTransform(info.transform, move)) info.transform = move;
 }
 
 // Looks again once the layout has settled, while the heading has no label with text to hold the title on.
