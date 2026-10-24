@@ -173,6 +173,13 @@ BOOL SGEeveeLyricsOn(void);
 BOOL SGLyricsStandAsideForEevee(void);
 // The base62 id, a local file's lyrics key (Shared/LocalFiles), nil before the player reported.
 NSString *SGKaraokePlayingTrack(void);
+// The key the redesign's lyrics view reads the playing item's lines by: SGKaraokePlayingTrack's, or for a
+// podcast episode "episode:<id>", whose lines are its transcript (asked of spclient by SGKaraokeRequestLyrics).
+// The lock screen and the Live Activity keep to tracks and never see an episode.
+NSString *SGKaraokePlayingLyricsKey(void);
+// A transcript body (spclient's transcript-read-along, JSON) as lines timed by their starts; nil when it
+// holds no sentences or is not JSON.
+NSArray<SGKaraokeLine *> *SGKaraokeLinesFromTranscript(NSData *body);
 NSInteger SGKaraokePositionMs(void);     // negative when unknown
 // The Lyrics page's Delay: every line shows this many ms later than the song, for headphones that play
 // behind it. Whatever times lines against the position compares them with the position less this, and a

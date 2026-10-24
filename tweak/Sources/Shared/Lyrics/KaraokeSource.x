@@ -87,6 +87,8 @@ void SGSpclientHeaders(void (^use)(NSDictionary<NSString *, NSString *> *headers
 
 static SPTPlayerState *playerState(void);
 static NSString *idOf(SPTPlayerTrack *track);
+static NSString *lyricsKeyOf(SPTPlayerTrack *track);
+static void requestTranscript(NSString *key);
 
 // The track after this one, when the player knows it.
 static SPTPlayerTrack *upNextIn(SPTPlayerState *state) {
@@ -95,13 +97,17 @@ static SPTPlayerTrack *upNextIn(SPTPlayerState *state) {
     return [next isKindOfClass:objc_getClass("SPTPlayerTrack")] ? next : nil;
 }
 
+static BOOL isEpisodeKey(NSString *key) {
+    return [key hasPrefix:@"episode:"];
+}
+
 // Lines with no translation of their own take Musixmatch's community ones in the Lyrics page's language,
 // whichever source they came from, Spotify's own included, matched by their text. Only the redesign shows
 // translations, so the native look asks for none. The translated lines are copies kept in place of the
 // lines: the lyrics view measures lines off the main thread, and a new array is what tells it to look.
 // Musixmatch answers at once once it has answered, so lines kept again take the translations straight away.
 static void translate(NSString *track) {
-    NSString *language = SGRedesignedUI() ? SGLyricsTranslationLanguage() : nil;
+    NSString *language = SGRedesignedUI() && !isEpisodeKey(track) ? SGLyricsTranslationLanguage() : nil;
     if (!language || SGKaraokeHasTranslations(sg_lyrics[track])) return;
     SGMusixmatchTranslations(track, language, ^(NSDictionary<NSString *, NSString *> *byLine) {
         // Whatever is kept by now, which may be Spotify's timed lines in place of the plain ones asked for.
@@ -129,7 +135,7 @@ static void keep(NSString *track, NSArray<SGKaraokeLine *> *lines) {
     if (sg_lyrics.count >= kKeptTracks && !sg_lyrics[track]) {
         NSMutableSet<NSString *> *spared = [sg_asking mutableCopy];
         SPTPlayerState *state = playerState();
-        NSString *playing = idOf(state.track), *next = idOf(upNextIn(state));
+        NSString *playing = lyricsKeyOf(state.track), *next = idOf(upNextIn(state));
         if (playing) [spared addObject:playing];
         if (next) [spared addObject:next];
         for (NSString *kept in sg_lyrics.allKeys) {
@@ -341,6 +347,10 @@ static BOOL askLrcLib(NSString *trackID, void (^done)(SGLyricsResult *lyrics)) {
 // Main queue only.
 void SGKaraokeRequestLyrics(NSString *trackID) {
     if (!trackID || sg_lyrics[trackID] || [sg_requested containsObject:trackID]) return;
+    if (isEpisodeKey(trackID)) {
+        requestTranscript(trackID);
+        return;
+    }
     // spclient has nothing for a local file, which only the sources can name. A file of the user's own,
     // linked to it or matching its names, comes before every source.
     BOOL local = SGLocalFileIs(trackID);
@@ -402,6 +412,10 @@ NSString *SGKaraokePlayingTrack(void) {
     return idOf(playerState().track);
 }
 
+NSString *SGKaraokePlayingLyricsKey(void) {
+    return lyricsKeyOf(playerState().track);
+}
+
 NSInteger SGKaraokePositionMs(void) {
     SPTPlayerState *state = playerState();
     if (!state) return -1;
@@ -445,6 +459,56 @@ static NSString *idOf(SPTPlayerTrack *track) {
     NSString *trackID = [text substringFromIndex:@"spotify:track:".length];
     objc_setAssociatedObject(track, &sg_trackIDKey, trackID, OBJC_ASSOCIATION_RETAIN);
     return trackID;
+}
+
+// idOf's key, or "episode:<id>" for a podcast episode.
+static NSString *lyricsKeyOf(SPTPlayerTrack *track) {
+    NSString *key = idOf(track);
+    if (key) return key;
+    id uri = track.URI;
+    NSString *text = [uri isKindOfClass:NSURL.class] ? ((NSURL *)uri).absoluteString : [uri description];
+    return [text hasPrefix:@"spotify:episode:"] ? [@"episode:" stringByAppendingString:[text substringFromIndex:@"spotify:episode:".length]] : nil;
+}
+
+// Main queue only. The episode's transcript, asked of spclient once with the headers of Spotify's own
+// requests (waited for when none has been seen yet). The format is read leniently
+// (SGKaraokeLinesFromTranscript); an answer that holds no lines is logged with its start, to learn the shape from.
+static void requestTranscript(NSString *key) {
+    if (!key || sg_lyrics[key] || [sg_requested containsObject:key]) return;
+    [sg_requested addObject:key];
+    [sg_asking addObject:key];
+    [sg_looking addObject:key];
+    NSString *episode = [key substringFromIndex:@"episode:".length];
+    SGSpclientHeaders(^(NSDictionary<NSString *, NSString *> *headers) {
+        NSString *address = [NSString stringWithFormat:@"https://spclient.wg.spotify.com/transcript-read-along/v2/episode/%@?format=json", episode];
+        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:address]];
+        [headers enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSString *value, BOOL *stop) {
+            [request setValue:value forHTTPHeaderField:name];
+        }];
+        [request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+        [NSURLProtocol setProperty:@YES forKey:SGLyricsOwnRequestKey inRequest:request];
+        [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *body, NSURLResponse *response, NSError *error) {
+            NSArray<SGKaraokeLine *> *lines = SGKaraokeLinesFromTranscript(body);
+            NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
+            SGLog(@"karaoke: transcript for %@: status %ld, %lu lines, error %@", episode, (long)status, (unsigned long)lines.count, error);
+            if (!lines.count && body.length) {
+                NSString *head = [[NSString alloc] initWithData:[body subdataWithRange:NSMakeRange(0, MIN((NSUInteger)300, body.length))] encoding:NSUTF8StringEncoding];
+                SGLog(@"karaoke: transcript body starts %@", head ?: @"(not text)");
+            }
+            BOOL lost = SGLyricsReplyFailed(response, error) || status == 401 || status == 403;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [sg_looking removeObject:key];
+                [sg_asking removeObject:key];
+                if (lost) {
+                    [sg_requested removeObject:key];
+                } else if (lines.count) {
+                    keep(key, lines);
+                    return;
+                }
+                announce(key);
+            });
+        }] resume];
+    });
 }
 
 // Tracks come in from the player and from every list that reads their metadata, so when the table
@@ -491,19 +555,34 @@ static void prefetch(SPTPlayerTrack *track, NSString *trackID, SPTPlayerState *s
 
 // A state the player reported or was asked for: a new track is remembered and its walk begun. From the
 // -state hook on any thread, and from the player's own reports on the main one.
+static void seenEpisode(SPTPlayerTrack *track);
 static void seen(SPTPlayerState *state) {
     SPTPlayerTrack *track = state.track;
+    BOOL episode = NO;
     if (!track || track == sg_lastSeen) return;
     NSString *trackID = nil;
     @synchronized (sg_seenTracks) {
         if (track == sg_lastSeen) return;
         sg_lastSeen = track;
         trackID = idOf(track);
-        if (!trackID || [trackID isEqualToString:sg_lastSeenID]) return;
-        sg_lastSeenID = trackID;
+        episode = trackID == nil;
+        if (!episode && [trackID isEqualToString:sg_lastSeenID]) return;
+        if (!episode) sg_lastSeenID = trackID;
+    }
+    if (episode) {
+        seenEpisode(track);
+        return;
     }
     remember(track, trackID);
     prefetch(track, trackID, state);
+}
+
+// An episode has no id for the sources and nothing of Spotify's asks for its transcript while the redesign's
+// player shows no read-along page, so it is asked for as the episode starts.
+static void seenEpisode(SPTPlayerTrack *track) {
+    NSString *key = lyricsKeyOf(track);
+    if (!isEpisodeKey(key) || !SGRedesignedUI()) return;
+    dispatch_async(dispatch_get_main_queue(), ^{ SGKaraokeRequestLyrics(key); });
 }
 
 // The -state hook runs only when something asks the player, which nothing may do with the app in the

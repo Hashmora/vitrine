@@ -376,6 +376,41 @@ NSArray<SGKaraokeLine *> *SGKaraokeLinesFromBody(NSData *body) {
     return ((const uint8_t *)body.bytes)[0] == '{' ? fromJSON(body) : fromProtobuf(body);
 }
 
+#pragma mark - podcast transcripts
+
+static NSString *sentenceIn(id node, int depth) {
+    if (depth > 4) return nil;
+    if ([node isKindOfClass:NSString.class]) return node;
+    if (![node isKindOfClass:NSDictionary.class]) return nil;
+    NSDictionary *dict = node;
+    for (NSString *key in @[@"sentence", @"text"]) {
+        NSString *found = sentenceIn(dict[key], depth + 1);
+        if (found.length) return found;
+    }
+    return nil;
+}
+
+// { "section": [ { "startMs": 1200, "text": { "sentence": { "text": "..." } } },
+//                { "startMs": 0, "title": { "title": "Speaker 1" } } ] }
+// A section with a title and no text is a speaker's name, and is left out. The shape is read leniently: the
+// sentence may sit under "sentence" or "text", and the start may be a number or a string.
+NSArray<SGKaraokeLine *> *SGKaraokeLinesFromTranscript(NSData *body) {
+    if (!body.length || ((const uint8_t *)body.bytes)[0] != '{') return nil;
+    NSDictionary *root = [NSJSONSerialization JSONObjectWithData:body options:0 error:nil];
+    NSArray *sections = [root isKindOfClass:NSDictionary.class] ? root[@"section"] : nil;
+    if (![sections isKindOfClass:NSArray.class]) return nil;
+    NSMutableArray<NSNumber *> *starts = [NSMutableArray array];
+    NSMutableArray<NSString *> *texts = [NSMutableArray array];
+    for (NSDictionary *section in sections) {
+        if (![section isKindOfClass:NSDictionary.class]) continue;
+        NSString *text = [sentenceIn(section[@"text"], 0) stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (!text.length) continue;
+        [starts addObject:@([section[@"startMs"] integerValue])];
+        [texts addObject:text];
+    }
+    return SGKaraokeEstimatedLines(starts, texts);
+}
+
 BOOL SGKaraokeHasTranslations(NSArray<SGKaraokeLine *> *lines) {
     for (SGKaraokeLine *line in lines) {
         if (line.translation.length) return YES;

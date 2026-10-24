@@ -278,7 +278,7 @@ static void placeTitleRow(SGRLyricsLayout l) {
 #pragma mark - opening and closing
 
 BOOL SGRPlayerLyricsAvailable(void) {
-    NSString *track = SGKaraokePlayingTrack();
+    NSString *track = SGKaraokePlayingLyricsKey();
     return track != nil && SGKaraokeLinesForTrack(track) != nil;
 }
 
@@ -850,7 +850,7 @@ static void durationUnitLaidOut(UIViewController *unit) {
 // Lines kept for the track playing, or the look for them over with none. The glyph is told only when they
 // are here, since SGRPlayerLyricsChanged sets the animated artwork's blur each time.
 - (void)linesKept:(NSNotification *)note {
-    if (![note.object isEqual:SGKaraokePlayingTrack()]) return;
+    if (![note.object isEqual:SGKaraokePlayingLyricsKey()]) return;
     if (SGRPlayerLyricsAvailable()) SGRPlayerLyricsChanged();
     else [self closeIfNone];
     SGRPlayerLandscapeLinesChanged();
@@ -862,7 +862,7 @@ static void durationUnitLaidOut(UIViewController *unit) {
 
 // The lines go once the grace is over and nothing is looking for the track's own any more.
 - (void)closeIfNone {
-    if (!_graceOver || !sg_open || SGRPlayerLyricsAvailable() || SGKaraokeLooking(SGKaraokePlayingTrack())) return;
+    if (!_graceOver || !sg_open || SGRPlayerLyricsAvailable() || SGKaraokeLooking(SGKaraokePlayingLyricsKey())) return;
     SGLog(@"redesign player: no lyrics for the track that came on, the cover is back");
     setOpen(NO, YES);
 }
