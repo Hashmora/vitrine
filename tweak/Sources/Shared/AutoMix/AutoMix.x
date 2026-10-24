@@ -3,6 +3,8 @@
 #import "Core/SGCore.h"
 #import "Shared/AdBlock/AdBlock.h"
 #import "Shared/Player/PlayerState.h"
+#import "Shared/Player/SpeedPitch.h"
+#import "Shared/Sing/Sing.h"
 #import "Shared/SpotifyPrefs/SpotifyPrefs.h"
 #import "AutoMix.h"
 
@@ -154,6 +156,7 @@ static NSString *trackLine(id track) {
     NSString *_uri;
     NSUInteger _metadataCount;
     SPTPlayerState *_last;
+    uint64_t _silent;   // SGPlayerMixerSilentFrames at the previous report
 }
 
 static NSUInteger metadataCount(id track) {
@@ -163,9 +166,9 @@ static NSUInteger metadataCount(id track) {
 }
 
 - (void)playerStateDidReport:(SPTPlayerState *)state {
-    if (!SGFlag(SGKeyAutoMix, NO)) return;
     NSString *uri = SGURIString(state.track.URI);
     id next = state.future.firstObject;
+    uint64_t silent = SGPlayerMixerSilentFrames();
     // Counted rather than formatted, since this runs on every report; a new count is metadata that came after its track.
     NSUInteger count = metadataCount(state.track) + metadataCount(next);
     if (uri && ![uri isEqualToString:_uri]) {
@@ -177,14 +180,22 @@ static NSUInteger metadataCount(id track) {
             double elapsed = [state.timestamp timeIntervalSinceDate:_last.timestamp] * (_last.isPaused ? 0 : _last.playbackSpeed);
             left = MAX(0, _last.duration - (_last.positionAsOfTimestamp + elapsed));
         }
-        SGLog(@"automix probe: change, %.2f s of the last track left; context %@; now %@; next %@; Spotify %@", left,
-              SGURIString(state.contextURI), trackLine(state.track), trackLine(next), settings);
+        // Silence the music's mixer returned since the previous report (about a second ago): a gap where the core had
+        // no sound of the new track yet. Near 0 with `left` near 0 means the core hands the next track over gaplessly
+        // but only once the old one is done; `left` near the blend length means the core overlapped them itself.
+        AudioStreamBasicDescription format = {0};
+        double rate = SGPlayerMusicClientFormat(&format) && format.mSampleRate > 0 ? format.mSampleRate : 44100;
+        double silentMs = (silent - _silent) * 1000.0 / rate;
+        SGLog(@"automix probe: change, %.2f s of the last track left; mixer silent %.0f ms since the last report%@; context %@; now %@; next %@; Spotify %@",
+              left, silentMs, SGSingOn() ? @" (Sing on, overcounts)" : @"", SGURIString(state.contextURI), trackLine(state.track),
+              trackLine(next), settings);
     } else if (uri && count != _metadataCount) {
         SGLog(@"automix probe: update; now %@; next %@", trackLine(state.track), trackLine(next));
     }
     _uri = uri;
     _metadataCount = count;
     _last = state;
+    _silent = silent;
 }
 
 - (void)playerStateDidChange:(SPTPlayerState *)state {
@@ -237,5 +248,5 @@ NSDictionary *SGAutoMixProbeCommand(NSDictionary *p, NSString **error) {
 %ctor {
     %init;
     SGRequireClasses(@[@"SPTCoreProductState"]);
-    if (SGFlag(SGKeyAutoMix, NO)) startProbe();
+    startProbe();   // the probe only logs, so it runs with the switch off too: Spotify's own crossfade can be measured
 }

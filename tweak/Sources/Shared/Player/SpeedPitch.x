@@ -151,6 +151,13 @@ static double playedSeconds(void) {
     return atomic_load_explicit(&sg_playedMicros, memory_order_relaxed) / 1e6;
 }
 
+// Frames the music's mixer was pulled for that came back silent or failed, since launch (AutoMix's probe reads it).
+static _Atomic uint64_t sg_mixerSilentFrames;
+
+uint64_t SGPlayerMixerSilentFrames(void) {
+    return atomic_load_explicit(&sg_mixerSilentFrames, memory_order_relaxed);
+}
+
 // Whether the music's output is fed through this file's callback.
 static BOOL tapped(void) {
     Output *output = music();
@@ -266,6 +273,8 @@ static OSStatus pullSource(Output *output, AudioUnit source, const AudioTimeStam
         #endif
         if ((status != noErr || (flags & kAudioUnitRenderAction_OutputIsSilence))
             && observesSource && output == music()) SGPlayerInvalidateSource();
+        if (output == music() && (status != noErr || (flags & kAudioUnitRenderAction_OutputIsSilence)))
+            atomic_fetch_add_explicit(&sg_mixerSilentFrames, count, memory_order_relaxed);
         #if SG_DRIVER
         if (output == music()) {
             // Silent as flagged, or as heard: every sample of the first channel under -80 dBFS.

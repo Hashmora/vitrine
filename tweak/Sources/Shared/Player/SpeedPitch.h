@@ -84,6 +84,10 @@ typedef void (*SGPlayerSourceSelector)(AudioUnit output, uint64_t epoch, double 
                                       double sampleRate, UInt32 frames, AudioBufferList *data);
 void SGPlayerSetSourceSelector(SGPlayerSourceSelector selector);
 uint64_t SGPlayerSourceEpoch(void);
+// Frames the music's mixer has been pulled for since launch that came back silent (Spotify had none of its sound
+// there) or failed. Any thread. Under Sing a silent part is pulled again at each render until it sounds, so this
+// overcounts with Sing on; with it off, each silent frame is counted once.
+uint64_t SGPlayerMixerSilentFrames(void);
 // Any thread, including render. Invalidate on every seek/skip/recording occurrence/policy cancellation.
 // Audio-output lifecycle changes also invalidate internally. An already admitted render may finish.
 void SGPlayerInvalidateSource(void);
