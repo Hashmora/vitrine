@@ -1,8 +1,8 @@
 // A podcast's "Find in this show" page, the one the search row at the top of See all episodes opens
 // (ShowPage_ShowSearchPageImpl.ShowSearchViewController): the redesign's bar over it, its field and Cancel on glass.
 //
-// Tree (trees/continuous/5.txt): under SPNavigationBar (Back only, no title) and Spotify's blur (#1C1C1C@0.73) the page
-// is a plain black view holding a SearchHeader ContainerView 390x50 painted #000000, a stack with the field
+// Tree: under SPNavigationBar (Back only, no title) and Spotify's blur (#1C1C1C@0.73) the page is a plain black view
+// holding a SearchHeader ContainerView 390x50 painted #000000, a stack with the field
 // (Components.SearchHeader.Private.SearchField, a 302x30 EncoreTextField, #FFFFFF@0.14 r=4) and, in a plain 72x30 view,
 // Cancel (Components.SearchHeader.Private.CancelButton, 40x30).
 //

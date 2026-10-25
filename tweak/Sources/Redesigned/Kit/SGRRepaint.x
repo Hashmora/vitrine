@@ -228,8 +228,8 @@ static void clearAttachedPaint(UIView *view) {
     if (sgr_sheetChromeRoot && color && isSheetPaint((UIView *)self, color.CGColor)) color = UIColor.clearColor;
     // A class held clear (SGRHoldClearClass), at the view: UIView keeps the colour it is given and puts it on its layer
     // again by ways of its own (a change of traits), past the layer's setter, so a view left holding its black got it
-    // back on its layer after the layer had been cleared (the phone, 2026-10-24: Home's header element, its view and its
-    // layer both #000000 with the hold in place).
+    // back on its layer after the layer had been cleared (Home's header element, its view and its layer both #000000
+    // with the hold in place).
     if (color && heldClearClassCount && ofHeldClearClass(self)) color = nil;
     %orig(color);
 }

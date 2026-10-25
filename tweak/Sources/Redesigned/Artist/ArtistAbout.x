@@ -1,10 +1,10 @@
 // Artist redesign: the About card on glass. Spotify draws it as a card painted #282828 with its corners at 16, the
-// biography's part of it painted the same again, a gray block on the artist's field (the phone, 2026-10-23). Here
-// both paints go and the card is a pane of the sheets' glass with the same corners; the picture at its top stays.
+// biography's part of it painted the same again, a gray block on the artist's field. Here both paints go and the
+// card is a pane of the sheets' glass with the same corners; the picture at its top stays.
 //
-// Tree (the phone, 2026-10-23): Creator_ECMKit.CreatorBiographyCardLayout (a private class) 382x452.5, r=16, clips,
-// bg #282828, holding the picture and, at its foot, a plain UIView 382x166 bg #282828 with the rank, the name, Follow,
-// the listeners and the biography.
+// Tree: Creator_ECMKit.CreatorBiographyCardLayout (a private class) 382x452.5, r=16, clips, bg #282828, holding the
+// picture and, at its foot, a plain UIView 382x166 bg #282828 with the rank, the name, Follow, the listeners and the
+// biography.
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
@@ -48,7 +48,7 @@ static void dressAbout(UIView *card) {
 }
 
 // Found by name in the cell the artist's list lays out (ArtistSections.x), which knows the About cell by its
-// identifier: a class pass on the card's private class never ran on the phone (2026-10-23, the card stayed #282828).
+// identifier: a class pass on the card's private class does not run.
 void SGRArtistDressAbout(UIView *cell) {
     // The card is 452pt tall; a shorter cell is never it, and is not walked on every pass of the scroll.
     if (cell.bounds.size.height < 300) return;

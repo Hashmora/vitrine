@@ -1,10 +1,10 @@
 // Redesign, iOS < 26: the chips of the Add to playlist sheet on glass, as the library's chips are.
 //
-// Tree (trees/continuous/27.txt:1250-1290): the sheet's AssistedCurationTabsElement holds a
-// Home_PillUIKit.PillScrollView, a UIScrollView of PillDrawerViews, each with a Home_PillUIKit.PillView 32pt
-// tall (From your Liked Songs, Recently played, Songs). The pill paints its own layer, #333333 unselected and a
-// solid colour of its own (the accent) selected, so, unlike Encore's chips (SGRChips.m), the unselected fill is
-// an opaque grey and not a translucent white.
+// Tree: the sheet's AssistedCurationTabsElement holds a Home_PillUIKit.PillScrollView, a
+// UIScrollView of PillDrawerViews, each with a Home_PillUIKit.PillView 32pt tall (From your Liked Songs,
+// Recently played, Songs). The pill paints its own layer, #333333 unselected and a solid colour of its own (the
+// accent) selected, so, unlike Encore's chips (SGRChips.m), the unselected fill is an opaque grey and not a
+// translucent white.
 //
 // The glass goes in the pill itself, first among its subviews, as in the library (Library/LibraryHeader.x): an
 // unselected pill's grey goes and a glass capsule stands behind its label; a selected pill keeps its colour, and

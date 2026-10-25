@@ -3,16 +3,15 @@
 // that opens the side drawer at the trailing edge, and the scrim Spotify lays behind the header gone, the soft
 // scroll edge (Kit/SGREdgeEffect.x) being what keeps the header clear of the list scrolling under it.
 //
-// The filter chips under the row stay Spotify's own views and controls. They were taken out when the redesign
-// was first built and the header closed up by the 49pt they left, and sorting a library turned out to be
-// something the page cannot do without (issue #20); with them back the header keeps the height Spotify gives
-// it and the list keeps Spotify's own inset, and there is nothing here to resize or to hold. Only the paint
-// changes: an unselected chip's flat grey fill goes (SGRRepaint.x holds it clear when Spotify paints it back)
-// and a glass capsule stands behind it, like the header's round buttons; a selected chip is that glass with its own
-// colour over it as a tint (SGRSelectedChipPaint), and so is the cross that clears the filters, left of the chips.
-// The header's own backing is gone and the list runs up under the chips (clearBacking, raiseList), so the glass
-// has the rows to show; a folder's header gets the same, and its Back, ⋯ and + a glass circle each,
-// like the root header's buttons (trees/continuous/21.txt, 10.txt).
+// The filter chips under the row stay Spotify's own views and controls. They were taken out when the redesign was
+// first built and the header closed up by the 49pt they left, and sorting a library turned out to be something the
+// page cannot do without (issue #20); with them back the header keeps the height Spotify gives it and the list
+// keeps Spotify's own inset, and there is nothing here to resize or to hold. Only the paint changes: an unselected
+// chip's flat grey fill goes (SGRRepaint.x holds it clear when Spotify paints it back) and a glass capsule stands
+// behind it, like the header's round buttons; a selected chip is that glass with its own colour over it as a tint
+// (SGRSelectedChipPaint), and so is the cross that clears the filters, left of the chips. The header's own backing
+// is gone and the list runs up under the chips (clearBacking, raiseList), so the glass has the rows to show; a
+// folder's header gets the same, and its Back, ⋯ and + a glass circle each, like the root header's buttons.
 //
 // Tree (trees/clean/library/03.txt:1159-1247): YourLibraryView holds YourLibraryContentView, the size of the
 // page, and after it -- so over it -- YourLibraryHeaderView 402x159.33: LiquidGlass.GradientView (the scrim), a
@@ -305,8 +304,8 @@ static BOOL isChipView(UIView *view) {
 }
 
 // Only the chips of a library header or a folder's, the search results' and the Find page's of the Add songs sheet
-// (Songs / Artists / Albums, trees/continuous/14.txt:2160-2187: the same chips in an AssistedCurationFiltersElement),
-// the rows of these chips that are glass: Home has chips of its own, with their own treatment.
+// (Songs / Artists / Albums: the same chips in an AssistedCurationFiltersElement), the rows of these chips
+// that are glass: Home has chips of its own, with their own treatment.
 static BOOL inLibraryChips(UIView *view) {
     for (UIView *v = view; v; v = v.superview) {
         if ([NSStringFromClass(v.class) hasSuffix:@"YourLibraryHeaderContentFiltersView"]) return YES;
@@ -406,7 +405,7 @@ static void layoutRoot(UIView *page) {
     if (!trailing.count) return;
 
     // Search, + and the avatar, side by side, stand on one 44pt glass capsule, as iOS 26 groups a bar's buttons and as
-    // Home's pill holds its own (the phone, 2026-10-24: a circle each read as three loose buttons).
+    // Home's pill holds its own (a circle each read as three loose buttons).
     if (SGBelowiOS26()) {
         UIView *host = trailing.firstObject.superview;
         BOOL shared = YES;

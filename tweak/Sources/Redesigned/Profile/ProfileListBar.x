@@ -3,11 +3,11 @@
 // playlist's is: the blur gone, Back a glass circle pinned to the corner, the title on a glass capsule. That is the
 // bar of Pages/PageBar.m, the one Recents and Your Updates have.
 //
-// Tree (trees/continuous/7.txt, 8.txt, 9.txt): the page is a plain view holding Profile_CommonImpl.ProfileListView,
-// whose UITableView is the size of the screen on #000000, so the list already runs under the bar. In the
-// navigation controller's view, over the page, a plain UIView 390x91 holding a UIVisualEffectView (#1C1C1C@0.73),
-// then SPNavigationBar with Back (_UIButtonBarButton), the title in a _UINavigationBarTitleControl and an empty
-// trailing stack: no page of these has a ⋯.
+// Tree: the page is a plain view holding Profile_CommonImpl.ProfileListView, whose UITableView is the size of the
+// screen on #000000, so the list already runs under the bar. In the navigation controller's view, over the page, a
+// plain UIView 390x91 holding a UIVisualEffectView (#1C1C1C@0.73), then SPNavigationBar with Back
+// (_UIButtonBarButton), the title in a _UINavigationBarTitleControl and an empty trailing stack: no page of these
+// has a ⋯.
 //
 // The page is told by what it holds, ProfileListView in the top page's view (no controller of its own is named in the
 // trees), and dressed from the bar's own passes (Pages.h, SGRDressBarPagesFound).

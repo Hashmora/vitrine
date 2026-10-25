@@ -1,7 +1,7 @@
 // SongDNA redesign: the contributor's pop-up on glass. Tapping a contributor on the map opens a card over it
-// (SongDNA_MapKit.DNAPopupView, trees/continuous/38.txt): a #1F1F1F rounded card, r=16, holding the contributor's name
-// with a chevron at its trailing edge, a two-line story, and the "View 81 songs together" button (an Encore
-// Secondary, id=dna-blend-button-cta).
+// (SongDNA_MapKit.DNAPopupView): a #1F1F1F rounded card, r=16, holding the contributor's name with a chevron at its
+// trailing edge, a two-line story, and the "View 81 songs together" button (an Encore Secondary,
+// id=dna-blend-button-cta).
 //
 // The card's grey goes and a glass pane of the sheets' body (SGRThickenSheetGlass, as the redesign's dialogs have)
 // stands behind its content; the chevron gets a glass circle of its own behind it, and the button is made a glass
@@ -22,7 +22,7 @@ static char kPaneKey, kChevronKey, kButtonKey;
 // The card's own paint: its one subview that is the opaque grey, as wide as the card. Once dressed its grey is
 // clear, so it is then the subview that holds our pane. Looking for the grey alone found no card from the second
 // pass on, and the first one runs before the heading and the button are laid out (the chevron 0pt wide), so the
-// chevron and the button never got their glass (trees/continuous/16.txt).
+// chevron and the button never got their glass.
 static UIView *cardOf(UIView *popup) {
     for (UIView *sub in popup.subviews) {
         if (objc_getAssociatedObject(sub, &kPaneKey) || SGRIsSheetSurface(sub.layer.backgroundColor)) return sub;

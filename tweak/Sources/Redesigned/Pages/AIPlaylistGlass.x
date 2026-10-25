@@ -1,17 +1,17 @@
 // Redesign: the header of the AI playlist's chat on glass.
 //
-//   AI playlist   AIPlaylist_PlaylistCreationPageImpl.PlaylistCreationView (trees/continuous/6.txt): the header row's
+//   AI playlist   AIPlaylist_PlaylistCreationPageImpl.PlaylistCreationView: the header row's
 //                 "Abort Playlist Creation" cross, and the "Close Chat" cross that takes its place once the chat has
 //                 started, become glass circles, as the cross of Create cover art is (CoverArt/CoverArt.x).
 //                 "Cancel" (shown in the cross's place while the playlist is being made) is a glass capsule and the
-//                 row's "More Options" ⋯ at the other corner a glass circle (trees/continuous/1.txt, 2.txt). The ⋯ is
+//                 row's "More Options" ⋯ at the other corner a glass circle. The ⋯ is
 //                 32 x 32 at (346, 12) in the row, 2pt higher than the cross's centre, and is moved down by that much. It is
 //                 dimmed to 0.4 until the chat has started, and glass drawn under a button's fading alpha is drawn wrongly
 //                 (Kit/SGRGlass.h, SGRShowGlass), so its glass is shown only while the button is not dimmed.
 //                 The chat below the header (message, cards, field, the black behind them) is AIPlaylistChat.x, the popup
 //                 the ⋯ opens AIPlaylistMore.x.
 //
-//   Onboarding    the first screen, "Your playlist playground awaits" (trees/continuous/6.txt:243-258): a plain container the size of
+//   Onboarding    the first screen, "Your playlist playground awaits": a plain container the size of
 //                 the screen that is the page's sibling, over it, holds the story and its own cross, "Components.UI.OnboardingView.CloseButton",
 //                 a Tertiary button 48 x 48 at the corner. It is not inside the page, so the page's passes never met it and it
 //                 showed as Spotify's bare cross, 4pt left of and 6pt above the header row's (that button is 48 x 52 at (4, 4) in its row).
@@ -59,8 +59,8 @@ static void shiftButton(UIView *button, CGFloat x, CGFloat y) {
 }
 
 // A button of the header dressed from its own passes, not only from the page's: the page is not laid out again while the first
-// screen stands over it (6.txt:42-47 holds the header row's buttons with no glass in them), and a button laid out at no size on
-// the page's first pass is met again only by its own.
+// screen stands over it (the view that holds the header row's buttons, with no glass in them), and a button laid out at no size on the
+// page's first pass is met again only by its own.
 static void dressCrossButton(UIView *button) {
     NSString *identifier = button.accessibilityIdentifier;
     if (!identifier.length) return;

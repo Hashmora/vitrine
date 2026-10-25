@@ -4,8 +4,8 @@
 // "sheet-view" is left as it is (SGRGlassSheetChrome returns at once).
 //
 // The sleep timer has one more #1F1F1F view over the whole of it (id=sleep_timer_options), cleared with the rest.
-// The Connect volume sheet for another device is a SwiftUI hosting controller with no BottomSheetViewController
-// (trees/continuous/4.txt); SGRSheetPopups.x gives that one its pane by the hosted controller's name.
+// The Connect volume sheet for another device is a SwiftUI hosting controller with no BottomSheetViewController;
+// SGRSheetPopups.x gives that one its pane by the hosted controller's name.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 

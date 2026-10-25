@@ -2,14 +2,13 @@
 // .ContentPickerViewController, presented in a navigation controller of its own): the cross on glass, and the search
 // field on glass.
 //
-// Tree (trees/continuous/20.txt, 22.txt): ContentPickerView holds the grid (a UICollectionView on #000000 below the
-// search field), the large header (LargeHeaderView on #000000: the title and the search bar, AllBoardingSearch.searchBar
-// 374x52, a UISearchBar whose field, a 358x44 UISearchBarTextField, is drawn by a picture, a
-// _UITextFieldImageBackgroundView, with its text and magnifier dark), Done on its gradient and, last, a plain 390x91 view
-// on #000000 over the top. Over all of it, outside the page, the navigation controller's blur (a=0.00 here, it fades in
-// as the list scrolls) and SPNavigationBar: a leading stack with one button (a cross or a chevron, 20x20), an empty
-// trailing stack and the title control, whose label (Allboarding.customNavigationTitleLabel) shows only once the large
-// title has scrolled away.
+// Tree: ContentPickerView holds the grid (a UICollectionView on #000000 below the search field), the large header
+// (LargeHeaderView on #000000: the title and the search bar, AllBoardingSearch.searchBar 374x52, a UISearchBar whose
+// field, a 358x44 UISearchBarTextField, is drawn by a picture, a _UITextFieldImageBackgroundView, with its text and
+// magnifier dark), Done on its gradient and, last, a plain 390x91 view on #000000 over the top. Over all of it, outside
+// the page, the navigation controller's blur (a=0.00 here, it fades in as the list scrolls) and SPNavigationBar: a
+// leading stack with one button (a cross or a chevron, 20x20), an empty trailing stack and the title control, whose label
+// (Allboarding.customNavigationTitleLabel) shows only once the large title has scrolled away.
 //
 // So the bar is Pages/PageBar.m's, without a capsule for its title (the label comes and goes with the scroll, and a
 // capsule behind it would stay): the blur is drawn by nothing and the cross is a glass circle pinned to the corner that

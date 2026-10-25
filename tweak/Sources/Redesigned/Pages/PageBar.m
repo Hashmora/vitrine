@@ -1,8 +1,8 @@
-// The bar of a page under SPNavigationBar (trees/continuous/7.txt, 8.txt). Spotify draws it as UIKit's bar with no
-// background of its own over a blur of its own, a plain view in the navigation controller's view that holds a
-// UIVisualEffectView and is painted #000000 (7.txt:936); the back button is a _UIButtonBarButton at the leading
-// edge of the bar's content view, the title a _UINavigationBarTitleControl with a UILabel, and a page's ⋯ the
-// Encore button in a _UIButtonBarStackView at the trailing edge (8.txt:204).
+// The bar of a page under SPNavigationBar. Spotify draws it as UIKit's bar with no background of its own over a
+// blur of its own, a plain view in the navigation controller's view that holds a UIVisualEffectView and is painted
+// #000000; the back button is a _UIButtonBarButton at the leading edge of the bar's content view, the title a
+// _UINavigationBarTitleControl with a UILabel, and a page's ⋯ the Encore button in a _UIButtonBarStackView at the
+// trailing edge.
 //
 // The playlist, album and artist pages have none of that: the page's field to the top of the screen, a glass
 // circle for Back and for ⋯ at the corners, level with each other, and the name on a glass capsule between them.
@@ -15,17 +15,15 @@
 // before it takes this one's leave: the bar is that page's then, and stays dressed.
 //
 // The bar is made dark while a page is dressed, and its title white: the system's appearance reached the bar, which
-// drew the title in the label color, black in light mode, on a capsule of dark glass (device, 2026-10-15,
-// trees/continuous/8.txt, 9.txt, 12.txt, 13.txt).
+// drew the title in the label color, black in light mode, on a capsule of dark glass.
 //
 // What is concealed is Spotify's own controls, not replaced: the pinned ⋯ fires the page's own ⋯ -- the Encore
 // button in this page's bar, or the Share of a Listening stats list, drawn as a share glyph -- and Back pops the
 // navigation controller.
 //
 // A page dressed with SGRDressBarPageBackOnly gets Back and the title and nothing at the trailing edge: Settings and its
-// sections (trees/continuous/9.txt, 11.txt to 18.txt) and the mod's own pages (8.txt) have no ⋯, and what sits in
-// their trailing stack is not one (a 22pt button the tree gives no name, and on the Settings root a hidden pair), so
-// those controls are left as Spotify has them.
+// sections and the mod's own pages have no ⋯, and what sits in their trailing stack is not one (a 22pt button the tree
+// gives no name, and on the Settings root a hidden pair), so those controls are left as Spotify has them.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Pages.h"
@@ -44,9 +42,9 @@ static const CGFloat kCorner = 16, kGap = 8;
 
 #pragma mark - the controls of the bar
 
-// The bar's stacks of controls, told apart by the half of the bar they stand in: one at the trailing edge (the page's
-// ⋯, a Share) and, when the page put an item of its own at the leading edge, one there (Add artists' cross,
-// trees/continuous/20.txt, 22.txt). The system's back button is no such item: it is a direct subview of the content view.
+// The bar's stacks of controls, told apart by the half of the bar they stand in: one at the trailing edge (the page's ⋯,
+// a Share) and, when the page put an item of its own at the leading edge, one there (Add artists' cross). The system's
+// back button is no such item: it is a direct subview of the content view.
 static UIView *stackIn(UIView *content, BOOL leading) {
     CGFloat middle = content.bounds.size.width / 2;
     for (UIView *sub in content.subviews) {
@@ -77,9 +75,9 @@ static UIView *moreOf(UIView *content) {
     return button.bounds.size.width > 1 ? button : nil;
 }
 
-// Whether the page's trailing control is a Share (Listening stats' Top artists and Top songs) rather than a ⋯.
-// A second control after the ⋯ in the trailing stack (SongDNA's bar: Share, then Close, trees/continuous/37.txt), the
-// one nearest the corner. Pages with a single control have none.
+// Whether the page's trailing control is a Share (Listening stats' Top artists and Top songs) rather than a ⋯. A
+// second control after the ⋯ in the trailing stack (SongDNA's bar: Share, then Close), the one nearest the corner.
+// Pages with a single control have none.
 static UIView *extraOf(UIView *content) {
     UIView *stack = stackIn(content, NO);
     BOOL first = YES;
@@ -117,7 +115,7 @@ static void reveal(UIView *view) {
 }
 
 // Gives back a control this file concealed, and only one of those: a control Spotify hides itself (the hidden, masked
-// pair at the trailing edge of the Settings root's bar, trees/continuous/9.txt) stays hidden.
+// pair at the trailing edge of the Settings root's bar) stays hidden.
 static void restore(UIView *view) {
     if (view && objc_getAssociatedObject(view, &kConcealedKey)) reveal(view);
 }
@@ -160,8 +158,8 @@ static BOOL topIsIn(NSHashTable<UIViewController *> *pages, UINavigationControll
 // Spotify's own Back, ⋯ and title are kept out of sight from the moment a page that wants the redesign's bar is
 // pushed, not from the first pass that dresses it: UIKit builds them in the bar's content view, whose pass this
 // runs after, and until the page's own controller exists nothing else hides them, so Spotify's bar showed for a
-// moment and went (trees/continuous/4.txt is that moment). A dressed page conceals Back and ⋯ itself and its title
-// is shown again here for its capsule; a page that turns out to be another gets all three back.
+// moment and went. A dressed page conceals Back and ⋯ itself and its title is shown again here
+// for its capsule; a page that turns out to be another gets all three back.
 static void holdControls(UINavigationController *navigation, BOOL wanted) {
     UINavigationBar *bar = navigation.navigationBar;
     UIView *content = SGRChildNamed(bar, @"_UINavigationBarContentView");
@@ -279,14 +277,13 @@ static void glassTitle(UIView *title) {
         if (![label.textColor isEqual:white]) label.textColor = white;
         content = SGRTitleWidth(label);
     } else {
-        // A title that is a picture (Song DNA's logo and its Beta tag, trees/continuous/41.txt): the capsule wraps the control.
+        // A title that is a picture (Song DNA's logo and its Beta tag): the capsule wraps the control.
         content = ceil(title.bounds.size.width);
         if (content < 1) return;
     }
     CGFloat screen = title.window ? title.window.bounds.size.width : 390;
     // Two glass circles at the trailing edge (Song DNA's Share and Close) take two places from the corner, and the
-    // capsule is centred, so it leaves as much on the leading side: with one place it ran to 2pt from Share
-    // (trees/continuous/10.txt, 15.txt).
+    // capsule is centred, so it leaves as much on the leading side: with one place it ran to 2pt from Share.
     BOOL backOnly = topIsIn(sg_backOnly, SGRNavigationOf(title));
     CGFloat places = !backOnly && extraOf(title.superview) ? 2 : 1;
     CGFloat room = screen - 2 * (kCorner + places * (SGRGlassCircleSize + kGap));
@@ -329,8 +326,8 @@ static void pinTrailing(UIView *view, UIView *more, UIView *extra) {
 
 // The bar's own background, which UIKit fills with its blur once the list scrolls (its standard appearance in place of
 // the scroll edge one), is above the page, so it covered the pinned Back: Settings scrolled showed a grey band with no
-// Back in it (the phone, 2026-10-23). Taking the background off left the list's text under the status bar with nothing
-// over it, so it keeps its blur with a hole the shape of Back cut in it, by a mask, which UIKit does not touch.
+// Back in it. Taking the background off left the list's text under the status bar with nothing over it, so it keeps
+// its blur with a hole the shape of Back cut in it, by a mask, which UIKit does not touch.
 static void punchBack(UINavigationBar *bar, UIView *back) {
     UIView *background = SGRChildNamed(bar, @"_UIBarBackground");
     if (!background || !back.window) return;
@@ -461,8 +458,8 @@ static void undressBar(UIViewController *page, UINavigationController *navigatio
 
 // A swipe back says the page is going the moment the finger moves, and the page is still under it, following the
 // finger, until it is let go. The bar is given back at the end of the swipe and not at its start: the title's capsule
-// (Song DNA's logo, trees/continuous/10.txt) went with the first move while the page was still on screen. A swipe the
-// finger takes back leaves the page dressed, and the pass its own appearing makes finds it so.
+// (Song DNA's logo) went with the first move while the page was still on screen. A swipe the finger takes back leaves
+// the page dressed, and the pass its own appearing makes finds it so.
 void SGRUndressBarPage(UIViewController *page) {
     UINavigationController *navigation = page.navigationController;
     id<UIViewControllerTransitionCoordinator> coordinator = page.transitionCoordinator;

@@ -3,7 +3,7 @@
 #import "SGRGlass.h"
 #import "SGRRestyle.h"
 
-// Encore_ChipsKit's own classes, as the trees print them (trees/continuous/1.txt:27-31).
+// Encore_ChipsKit's own classes, as the trees print them.
 static NSString *const kChipClass = @"_TtCE15Encore_ChipsKitO16EncoreFoundation6Encore8ChipView";
 static NSString *const kPillClass = @"_TtCE15Encore_ChipsKitO16EncoreFoundation6Encore8PillView";
 static NSString *const kRowClass = @"_TtCE15Encore_ChipsKitO16EncoreFoundation6Encore15NestedChipsView";

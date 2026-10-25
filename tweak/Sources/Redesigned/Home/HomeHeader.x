@@ -393,18 +393,18 @@ static void layoutHeader(UIViewController *page);
 // The feed under the header. Spotify stacks it below the header (the header element's bottom to the feed's container's
 // top, 98pt down on a 414pt phone) in a container that clips, and paints the header black: once the title row had
 // scrolled away, the top of the page was an empty black band 98pt tall with the feed cut off under it in a straight
-// line (the phone, 2026-10-23). The Music app's page runs under its header to the top of the screen. So, below iOS 26,
-// the container's top is tied to the page's own, the header's black goes, and the feed is pushed down inside by what
-// the container rose (insetFeed), so nothing moves at rest.
+// line. The Music app's page runs under its header to the top of the screen. So, below iOS 26, the container's top is
+// tied to the page's own, the header's black goes, and the feed is pushed down inside by what the container rose
+// (insetFeed), so nothing moves at rest.
 static char kLiftedKey, kExtraKey;
 // Where the feed's first content stood, from the top of the page, before the container rose: the container's old top
 // and the feed's safe area then.
 static CGFloat sg_firstTop;
 
 // The feed's top inset is Spotify's own plus what keeps its first content at sg_firstTop under the safe area it has
-// now. The safe area changes after the container rises (8pt became 56pt on the phone, 2026-10-23, and a lift worked out
-// once left Home 48pt low), so it is worked out again on every pass and every scroll; Spotify's own part is what the
-// inset holds less what was added last.
+// now. The safe area changes after the container rises (8pt became 56pt, and a lift worked out once left Home 48pt
+// low), so it is worked out again on every pass and every scroll; Spotify's own part is what the inset holds less what
+// was added last.
 static void insetFeed(UIScrollView *feed) {
     if (sg_firstTop <= 0 || !feed) return;
     CGFloat extra = MAX(0, sg_firstTop - feed.safeAreaInsets.top);
@@ -419,16 +419,16 @@ static void insetFeed(UIScrollView *feed) {
 }
 
 // The header element's black: Spotify paints it again as the page scrolls, after any pass of ours, and on its layer
-// rather than through the view's setter, so a hook of the setter left the band there (the phone, 2026-10-24). The
-// repaint hook holds the element's fill clear instead (SGRHoldClear).
+// rather than through the view's setter, so a hook of the setter left the band there. The repaint hook holds the
+// element's fill clear instead (SGRHoldClear).
 static void keepHeaderClear(UIView *element) {
     static __weak UIView *held;
     if (held != element) {
         held = element;
         SGRHoldClear(element);
         // And every element of its class, made later: Home builds its header again with the feed and paints the new one
-        // black as it makes it, before a pass of the page has found it (the phone, 2026-10-24: the element at y 48,
-        // 414x50, #000000@1.00 over the feed as it scrolled, gone once its fill was taken off).
+        // black as it makes it, before a pass of the page has found it (the element at y 48, 414x50, #000000@1.00 over
+        // the feed as it scrolled, gone once its fill was taken off).
         SGRHoldClearClass(object_getClass(element));
         SGLog(@"redesign home: the header's fill is held clear");
     }

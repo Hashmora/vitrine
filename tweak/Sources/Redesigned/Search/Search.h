@@ -18,7 +18,7 @@
 
 // The page's list (trees/clean/search/01.txt:24).
 extern NSString *const SGRSearchListIdentifier;
-// The row of filter chips (Songs, Videos, Artists...) in the results header (trees/continuous/14.txt:564).
+// The row of filter chips (Songs, Videos, Artists...) in the results header.
 #define SGRSearchFiltersIdentifier @"Components.UI.FiltersView"
 
 // SearchSections.x: measures how far the cards sit below the top of the list because of the sections collapsed above

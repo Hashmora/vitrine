@@ -12,9 +12,9 @@
 // its Back button; a podcast episode shares the album template and is left alone.
 //
 // The scrims themselves are refused at the class: a mask or a hidden written once is undone by Spotify (-setHidden:NO
-// as the page scrolls), and an album's or an artist's showed as a band under the name and behind the header, where
-// a playlist's own had none (trees/continuous/6.txt, 7.txt). So a GradientView on a dressed playlist, album or
-// artist page, outside the page's list rows, refuses to be shown, whoever asks.
+// as the page scrolls), and an album's or an artist's showed as a band under the name and behind the header, where a
+// playlist's own had none. So a GradientView on a dressed playlist, album or artist page, outside the page's list
+// rows, refuses to be shown, whoever asks.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Playlist.h"
@@ -48,8 +48,8 @@ static BOOL isPageScrim(UIView *view) {
     }
     UIViewController *headerVC = SGRPlaylistHeaderOf(view);
     if (headerVC) return !isLikedSongs(headerVC);
-    // A dressed profile's wash (the HeaderView's GradientView, still #000 at 57% over the header, trees/continuous/4.txt)
-    // and the bar's scrim go the same way, and so do the two of a Live Events gallery page (Pages/LiveEvents.x).
+    // A dressed profile's wash (the HeaderView's GradientView, still #000 at 57% over the header) and the bar's scrim go
+    // the same way, and so do the two of a Live Events gallery page (Pages/LiveEvents.x).
     return isDressedPage(view) || SGRGalleryPageOf(view) != nil;
 }
 

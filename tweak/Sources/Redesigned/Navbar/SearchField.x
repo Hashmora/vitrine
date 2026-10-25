@@ -105,7 +105,7 @@ static void styleSearchField(UIView *button) {
     button.layer.cornerRadius = size.height / 2;
     button.layer.cornerCurve = kCACornerCurveContinuous;
     // The legacy glass grows and stretches under a finger (SGGlassInteractive) and the pane has the corners itself, but
-    // Spotify's button clips to its bounds (trees/continuous/1.txt: r=24 clips), which cut the grown capsule off at its edges.
+    // Spotify's button clips to its bounds (r=24 clips), which cut the grown capsule off at its edges.
     if (SGUseLegacyGlass() && button.layer.masksToBounds) button.layer.masksToBounds = NO;
 
     UIView *glass = SGGlassAt(button, 0);

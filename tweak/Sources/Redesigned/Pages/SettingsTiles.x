@@ -1,11 +1,11 @@
 // Settings redesign: the three tiles at the top of Spotify's settings (Data saver mode, Offline mode, Private session)
 // on glass. Each is an Encore Box that draws its gray as a shape layer the size of the box, the one gray block left on
-// the page (the phone, 2026-10-23). Here that fill goes and the tile stands on a glass pane with rounded corners; the
-// press highlight beside it (a shape inset by 4 at opacity 0) stays.
+// the page. Here that fill goes and the tile stands on a glass pane with rounded corners; the press highlight beside
+// it (a shape inset by 4 at opacity 0) stays.
 //
-// Tree (the phone, 2026-10-23): QuickAccessSettingsRowElement > UIStackView of three
-// MultipleChoiceQuickAccessSettingsElements, each holding Encore.Box id=QuickSettingsButton 124.5x71 with sublayers
-// [CAShapeLayer 124.5x71; CAShapeLayer op=0 inset 4].
+// Tree: QuickAccessSettingsRowElement > UIStackView of three MultipleChoiceQuickAccessSettingsElements, each
+// holding Encore.Box id=QuickSettingsButton 124.5x71 with sublayers [CAShapeLayer 124.5x71; CAShapeLayer op=0 inset
+// 4].
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"

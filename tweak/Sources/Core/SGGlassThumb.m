@@ -12,19 +12,17 @@ static const NSTimeInterval kLiftDuration = 0.4, kDropDuration = 0.6;
 static const CGFloat kLiftDamping = 0.6, kDropDamping = 0.7;
 // How much of the measured lens the held glass takes: the bend of the band at the rim, round the switch's lens's middle.
 static const CGFloat kHeldLensScale = 0.6;
-// iOS 26's held switch thumb (its own Settings in the dark, 2026-10-24) shrinks what is under it: inside the drop the
-// track shows smaller than it is, a green (or grey) pill about the drop's middle on the card's dark, and the drop reaches
-// past the track's end. There is no white outline: the rim is the glass's bend and its light, with a soft shadow under it.
-// The backdrop glass cannot shrink (it holds only what is under it), so the switch's lens draws its middle itself: the
-// card's colour, and the track at kLensShrink about the drop's middle, inset kLensBand from the rim, where the glass
-// bends the real track and card.
+// iOS 26's held switch thumb (its own Settings in the dark) shrinks what is under it: inside the drop the track shows
+// smaller than it is, a green (or grey) pill about the drop's middle on the card's dark, and the drop reaches past the
+// track's end. There is no white outline: the rim is the glass's bend and its light, with a soft shadow under it. The
+// backdrop glass cannot shrink (it holds only what is under it), so the switch's lens draws its middle itself: the card's
+// colour, and the track at kLensShrink about the drop's middle, inset kLensBand from the rim, where the glass bends the
+// real track and card.
 static const CGFloat kLensShrink = 0.7, kLensBand = 1.25;
 // Where the track runs on past an edge of the drop, the shrunk track flares out to the drop's whole height over this
-// much of that edge, following its curve, as the system's lens bends the track in at its rim; cut straight it read
-// as a plain sausage of green, and a gap of the card's dark between it and the rim as a dark band no lens has (the
-// phone against iOS 26's own, 2026-10-24). The flare comes in over this much of the track past the edge.
-// Wider and quicker to rise than at first (8 pt, its curve leaving the track a third of the way out), which read as
-// too slight a bulge beside the system's (the phone, 2026-10-24).
+// much of that edge, following its curve, as the system's lens bends the track in at its rim; cut straight, the track
+// reads as a plain bar of green, and the card's dark between it and the rim as a band no lens has. The flare comes in
+// over this much of the track past the edge.
 static const CGFloat kFlareWidth = 12, kFlareRamp = 6, kFlareLift = 0.6;
 // The rim's light: a 1 pt line lit only on the top left and the bottom right, as the system's is, not a whole ring.
 static const CGFloat kGlareWidth = 1;
@@ -78,7 +76,7 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     // sharpness (no saturation, no blur), the middle shows it as it is and the edge bends it in hard over a band of
     // glass thickness, under a near clear tint with a cool bias (0.9, 0.95, 1.0 at 12%), with no outline of its own.
     // On the pane glass, saturated and blurred, a switch's green showed through as a neon blob, and a white outline
-    // drawn round it read as a ring, not a drop (the phone, 2026-10-23).
+    // drawn round it read as a ring, not a drop.
     if ([_pane isKindOfClass:SGLegacyGlassView.class]) {
         SGLegacyGlassView *glass = (SGLegacyGlassView *)_pane;
         glass.clear = YES;
@@ -229,8 +227,8 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
 }
 
 // The held glass is laid out at its held size and shrunk by a transform at rest, never grown from the capsule's: grown,
-// it magnified the bit of track under the capsule, so the lens was the track's colour through and through (device,
-// 2026-10-23) and showed nothing of what is round the track.
+// it magnified the bit of track under the capsule, so the lens was the track's colour through and through and showed
+// nothing of what is round the track.
 - (CGSize)heldSize {
     return CGSizeMake(self.bounds.size.width * _liftX, self.bounds.size.height * _liftY);
 }
@@ -673,10 +671,9 @@ static UIColor *surfaceOf(UISwitch *toggle) {
 
 static char kSwitchFaceKey;
 
-// UIKit's own drawing of the switch, kept unseen: everything in it but the face. It took the switch's touches, but a
-// view at alpha 0 is not hit-tested (and alpha is its layer's opacity, so hiding it by the layer changed nothing: the
-// switch still never turned, device, 2026-10-23). It is taken out of hit-testing outright, so the touches land on the
-// switch, where SGGlassSwitchWatch turns it.
+// UIKit's own drawing of the switch, kept unseen: everything in it but the face. It would take the switch's touches
+// (a view at alpha 0 is not hit-tested, and its layer's opacity is that same alpha), so it is taken out of hit-testing
+// outright and the touches land on the switch, where SGGlassSwitchWatch turns it.
 static void hideOwnDrawing(UISwitch *toggle, UIView *face) {
     for (UIView *sub in toggle.subviews) {
         if (sub == face) continue;

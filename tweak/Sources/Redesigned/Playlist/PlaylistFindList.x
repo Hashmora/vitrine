@@ -1,10 +1,9 @@
 // Redesign: the list under "Find on this page" (Liked Songs and any other playlist) runs on under the bars.
 //
-// Tree (trees/continuous/2.txt): the page (ListUXPlatform_FreeTierPlaylistImpl.FTPSearchViewController) is a plain view on
-// #000000 holding one UICollectionView, id=SPTFreeTierPlaylistSearchTableView, which Spotify makes 689pt tall on an 844pt
-// page: it stops where the now playing bar begins. Under the glass tab bar and the glass now playing bar that left a
-// black slab the page shows through, a backing behind the bars, where every other redesigned list runs on beneath
-// them and shows through the glass.
+// Tree: the page (ListUXPlatform_FreeTierPlaylistImpl.FTPSearchViewController) is a plain view on #000000 holding one
+// UICollectionView, id=SPTFreeTierPlaylistSearchTableView, which Spotify makes 689pt tall on an 844pt page: it stops where
+// the now playing bar begins. Under the glass tab bar and the glass now playing bar that left a black slab the page shows
+// through, a backing behind the bars, where every other redesigned list runs on beneath them and shows through the glass.
 //
 // So the list is made as tall as the page, and what Spotify took off its foot goes to the list as its bottom inset: the
 // last row still clears the bars. The top stays Spotify's own (the bar's height, from the safe area), read once and set

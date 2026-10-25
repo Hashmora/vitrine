@@ -146,10 +146,9 @@ UIView *SGRGlassGroupPill(UIView *host, NSArray<UIView *> *controls, const void 
     }
     // The controls shown, where they are drawn (their frames, with the transform a page may move them by: the Library's
     // header moves its buttons to the trailing edge that way, and by their centres they stood far to the left, so the
-    // capsule took the avatar alone, the phone, 2026-10-24), trailing first; the capsule
-    // takes the run of them that stand side by side from the trailing one, so a control standing apart (the Library's
-    // Recents, parked at the row's leading edge while it is hidden) does not stretch it across the title (the phone,
-    // 2026-10-24).
+    // capsule took the avatar alone), trailing first; the capsule takes the run of them that stand side by side from
+    // the trailing one, so a control standing apart (the Library's Recents, parked at the row's leading edge while it
+    // is hidden) does not stretch it across the title.
     NSMutableArray<NSValue *> *spans = [NSMutableArray array];
     for (UIView *control in controls) {
         if (control.bounds.size.width < 1 || control.hidden || control.alpha < 0.01) continue;
@@ -279,7 +278,7 @@ UIView *SGRGlassFillBox(UIView *box, const void *key, BOOL prominent) {
         objc_setAssociatedObject(box, key, shape, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     // The size follows the box by autoresizing, not by a centre worked out from outside: a frame set on a pass goes stale the moment the
-    // box is resized without that pass (3.txt: a 358pt pane at x = -65.7 in the 227pt field Create had narrowed).
+    // box is resized without that pass, as Create narrows the Refine field.
     shape.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     if (shape.superview != box) [box addSubview:shape];
     if (box.subviews.firstObject != shape) [box insertSubview:shape atIndex:0];
@@ -360,8 +359,8 @@ CGColorRef SGRSheetCardFill(void) {
 
 // A SwiftUI view of the sheet's content that is a card. The cards are inset from the page (374 of 390pt), while
 // the page's own backdrop -- the full width _UIGraphicsView under a pushed page's scroll view, such as the Connect
-// device menu's (trees/continuous/15.txt) -- fills its host. That one is not a card: tinted like one it laid a
-// white 12% film over the whole page, so it goes clear with the rest of the sheet's grey.
+// device menu's -- fills its host. That one is not a card: tinted like one it laid a white 12% film over the whole
+// page, so it goes clear with the rest of the sheet's grey.
 BOOL SGRIsSwiftUICard(UIView *view) {
     if (![NSStringFromClass(view.class) hasPrefix:@"SwiftUI"]) return NO;
     UIView *host = view.superview;
@@ -401,8 +400,7 @@ static void clearListPaint(UIView *view, CGFloat wide, int depth) {
         view.backgroundColor = UIColor.clearColor;
     }
     // Spotify marks the wrappers and rows of Save in opaque. An opaque view with no fill is drawn over black, so
-    // the glass behind the list stayed black however clean the tree was (trees/continuous/1.txt has no paint left
-    // in the sheet).
+    // the glass behind the list stayed black with no paint left anywhere in the sheet.
     if (view.opaque && !SGKeepsColor(view) && view.bounds.size.width >= wide) {
         view.opaque = NO;
         view.layer.opaque = NO;
@@ -525,13 +523,13 @@ static const CGFloat kUndimmedSheetDim = 0.7;
 
 // A sheet UIKit holds at its full height with no dimming behind it (Save in) carries UIDropShadowView's shadow: with no
 // shadowPath it is the pane's own shape filled black at opacity 1 and blurred by 12, under the pane, and through the glass
-// the whole sheet read black (2026-10-23, the phone: shadowOpacity 1, and the glass showed the player once it was 0). A
-// glass pane has no shadow, and over a page with no dimming it takes the dimming's black itself.
+// the whole sheet read black (shadowOpacity 1; the glass showed the player once it was 0). A glass pane
+// has no shadow, and over a page with no dimming it takes the dimming's black itself.
 //
 // Taking it off once was not enough: UIKit writes the shadow again as the sheet moves between its detents and during its
 // presentation, so Save in opened black and went to glass only on a later pass, and dragged up from its small detent it
-// stayed black (the phone, 2026-10-23: shadowOpacity back at 1 after the drag). The shadow's layer is marked, and
-// SGRSheetPopups.x's hook keeps it at 0 whenever UIKit writes it.
+// stayed black (shadowOpacity back at 1 after the drag). The shadow's layer is marked, and SGRSheetPopups.x's hook keeps
+// it at 0 whenever UIKit writes it.
 BOOL SGRSheetShadowHeld(CALayer *layer) {
     return objc_getAssociatedObject(layer, &kShadowHeldKey) != nil;
 }

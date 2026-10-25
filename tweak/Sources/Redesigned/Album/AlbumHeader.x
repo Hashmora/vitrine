@@ -591,11 +591,11 @@ static void glassAlbumToolbar(UIView *page) {
         SGRGlassFlatBox(SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey), &kFieldGlassKey, NO);
         SGRGlassFlatBox(SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.ButtonContainer", &kSortBoxKey), &kSortGlassKey, NO);
     }
-    // A podcast's "Find in this show" (trees/continuous/11.txt) is not in that toolbar: it is a row of the page's own,
-    // 16pt in from the sides and 36pt high, set 12pt up into the 100pt bar where Spotify's back button was 32pt, so
-    // the pinned circles (44pt, from the safe area's top) reached 3pt over it. Its box is glass like a playlist's, and
-    // the row is moved down to clear the circles by the gap a playlist's field has under them. A transform and not a
-    // frame: Spotify's constraints put the frame back at every pass.
+    // A podcast's "Find in this show" is not in that toolbar: it is a row of the page's own, 16pt in from the sides
+    // and 36pt high, set 12pt up into the 100pt bar where Spotify's back button was 32pt, so the pinned circles (44pt,
+    // from the safe area's top) reached 3pt over it. Its box is glass like a playlist's, and the row is moved down to
+    // clear the circles by the gap a playlist's field has under them. A transform and not a frame: Spotify's
+    // constraints put the frame back at every pass.
     UIView *row = SGRFindByIdentifier(page, @"CreativeWorkPlatform.Components.UI.FindRow", &kRowKey);
     if (!row) return;
     SGRGlassFlatBox(SGRFindByIdentifier(row, @"Components.Header.UI.Toolbar.SearchField", &kRowFieldKey), &kRowGlassKey, NO);
@@ -609,7 +609,7 @@ static void glassAlbumToolbar(UIView *page) {
 
 static void applyPage(UIView *page) {
     // The wash goes whether or not the header has its title yet: a podcast's page showed its dark wash and bar
-    // gradient until the header's own pass had found the title row (device, 2026-10-15, 17.txt).
+    // gradient until the header's own pass had found the title row.
     applyWash(page);
     UIView *header = SGRFindByIdentifier(page, @"CreativeWorkPlatform.Components.UI.CreativeWorkHeader", &kHeaderKey);
     if (!header) return;

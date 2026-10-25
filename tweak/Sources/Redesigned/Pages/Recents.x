@@ -1,28 +1,27 @@
 // Recents, the listening history: the redesign's bar over the list (Pages/PageBar.m), its chips on glass, and the
 // list run under the bars at the top and the bottom.
 //
-// Tree (trees/continuous/8.txt): the page is a plain view holding an Encore StackView of the chips (Podcasts, Music:
-// the same Encore ChipView and PillView as Liked Songs', Kit/SGRChips.h) and the list, a UICollectionView on
-// #000000, in that order. The stack starts at the bar's bottom and stopped where the tab bar and the now playing bar
-// begin, so the last rows were cut off short of them, leaving a black margin where every other redesigned list runs
-// on under glass.
+// Tree: the page is a plain view holding an Encore StackView of the chips (Podcasts, Music: the same Encore ChipView
+// and PillView as Liked Songs', Kit/SGRChips.h) and the list, a UICollectionView on #000000, in that order. The
+// stack starts at the bar's bottom and stopped where the tab bar and the now playing bar begin, so the last rows
+// were cut off short of them, leaving a black margin where every other redesigned list runs on under glass.
 //
 // So the stack is made as tall as the page from where it starts, and what the bars below took of the stack goes to
 // the list as its bottom inset: the last row clears them. The chips stay first in the stack, where Spotify put
-// them. Bringing them to the front put them at the bottom of the page, since the stack arranges its views in order
-// (trees/continuous/8.txt). The frames are set again after every pass of the view the stack stands in and of the
-// stack, since Spotify's constraints and the stack's layout put them back.
+// them. Bringing them to the front put them at the bottom of the page, since the stack arranges its views in
+// order. The frames are set again after every pass of the view the stack stands in and of the stack, since
+// Spotify's constraints and the stack's layout put them back.
 //
-// The list began where the chips end and clipped there, so rows scrolled up and were cut off in a straight line
-// under the chips, leaving a black band over the top of the page (trees/continuous/4.txt: the list {0, 52} in a stack
-// at y=91). Now the list is as tall as the whole page, from its top edge, with the bar and the chips as its top
-// inset, so rows run on up under the glass chips and the title as they do in the library. The chips are drawn
-// above the list by their layer's zPosition (their place in the stack is untouched), and the list gives up the
-// touches that fall on the chips, which it would otherwise take, being over them.
+// The list began where the chips end and clipped there, so rows scrolled up and were cut off in a straight line under
+// the chips, leaving a black band over the top of the page (the list {0, 52} in a stack at y=91). Now the list is as
+// tall as the whole page, from its top edge, with the bar and the chips as its top inset, so rows run on up under the
+// glass chips and the title as they do in the library. The chips are drawn above the list by their layer's zPosition
+// (their place in the stack is untouched), and the list gives up the touches that fall on the chips, which it would
+// otherwise take, being over them.
 //
-// The chips of a filter that has just been picked (Clear filter, Saved, Played, trees/continuous/5.txt, 6.txt) are made
-// by Spotify after the page's own layout, which never met them, so they stayed flat grey. The row they are made
-// in is watched for its own layout, and every chip in it is dressed as it comes.
+// The chips of a filter that has just been picked (Clear filter, Saved, Played) are made by Spotify after the page's
+// own layout, which never met them, so they stayed flat grey. The row they are made in is watched for its own layout,
+// and every chip in it is dressed as it comes.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Pages.h"

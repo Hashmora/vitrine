@@ -1,11 +1,11 @@
 // Redesign: Spotify's outlined capsule buttons (LegacyUI_ECMCoreKit.CallToActionButton: Follow on an artist row in Search
 // and on the artist's About card, See more under the artist's popular tracks) are a 1 pt white ring on nothing, the one
-// control of Spotify's own look left on those pages (the phone, 2026-10-23). Here the ring goes and the button stands on a
-// glass capsule, as the chips do (SGRChips.h). A button Spotify fills (a solid call to action) keeps its paint.
+// control of Spotify's own look left on those pages. Here the ring goes and the button stands on a glass capsule, as the
+// chips do (SGRChips.h). A button Spotify fills (a solid call to action) keeps its paint.
 //
-// Tree (the phone, 2026-10-23): CallToActionButton 72.5x34, r=17, clips, layer.borderWidth 1, background clear, a
-// UIButtonLabel inside it. Spotify sets the ring again as the button changes state, with a layout, so every pass of the
-// button's takes it off again.
+// Tree: CallToActionButton 72.5x34, r=17, clips, layer.borderWidth 1, background clear, a UIButtonLabel inside it.
+// Spotify sets the ring again as the button changes state, with a layout, so every pass of the button's takes it off
+// again.
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "SGRChips.h"

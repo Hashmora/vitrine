@@ -1,11 +1,11 @@
 // Spotify's in-app browser (SPTWebViewControllerImplementation, opened from Settings > About and from links in the app),
 // the redesign's buttons on glass.
 //
-// Tree (trees/continuous/19.txt): a form sheet holding a navigation controller of its own, with SPNavigationBar 390x56
-// over the page and Spotify's blur (#1C1C1C@0.73) behind it. The bar's content view holds a stack at the leading edge
-// with the close button, a stack at the trailing edge with one more, and the title control: the page's title and its host
-// in two labels between Back and Forward (id=webviewcontroller-backbutton, -forwardbutton), two 24x24 buttons that are the
-// title control's own, not the bar's. Every one of them is a bare glyph.
+// Tree: a form sheet holding a navigation controller of its own, with SPNavigationBar 390x56 over the page and Spotify's
+// blur (#1C1C1C@0.73) behind it. The bar's content view holds a stack at the leading edge with the close button, a stack
+// at the trailing edge with one more, and the title control: the page's title and its host in two labels between Back and
+// Forward (id=webviewcontroller-backbutton, -forwardbutton), two 24x24 buttons that are the title control's own, not the
+// bar's. Every one of them is a bare glyph.
 //
 // Each gets a glass circle behind its glyph, a child of the control that draws it (SGRGlassInside), so the circle goes
 // where the control goes, takes its alpha (Back and Forward dim when there is nowhere to go) and answers its press.

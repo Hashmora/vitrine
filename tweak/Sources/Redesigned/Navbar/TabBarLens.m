@@ -170,8 +170,8 @@ static const CGFloat kPlayStep = 1.0 / 120;
 }
 
 // Whether a finger lifts the pill into the glass bubble. With the legacy glass off the bubble's pane is a plain dark blur,
-// opaque, and held over the tabs it hid the icon under it (the phone, 2026-10-23): then the dark pill stays a pill,
-// under the icons, and slides with the finger from tab to tab on the same springs, as it did before the bubble.
+// opaque, and held over the tabs it hid the icon under it: then the dark pill stays a pill, under the icons, and slides
+// with the finger from tab to tab on the same springs, as it did before the bubble.
 static BOOL bubbles(void) {
     return SGUseLegacyGlass();
 }

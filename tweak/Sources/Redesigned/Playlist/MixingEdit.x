@@ -1,5 +1,5 @@
 // Playlist redesign, iOS < 26: the Mix transition window, the full-screen page of a Smart Reorder transition with its
-// manual effects (PlaylistMixing_MixingUIImpl.MixingEditViewController, trees/continuous/2.txt - 7.txt), on glass.
+// manual effects (PlaylistMixing_MixingUIImpl.MixingEditViewController), on glass.
 //
 // Tree: a black page (id=MixingEditViewController.View) in a navigation controller of its own, under an SPNavigationBar
 // that holds the Back arrow in a _UIButtonBarButton at the leading edge and, in a stack at the trailing one, the Beta
@@ -8,11 +8,11 @@
 // (#464646, r=12) in the middle of the waveform, and the bar picker and the jog buttons are MixingBorderedButtons
 // (#303030, r=12). Under the waveform sit the presets (Custom, Auto, Fade...) and, in a card, the "New effects are
 // here" promo (MixingProductOptInPromo.Card, #1F1F1F r=16, with a Primary "Try out"). Each of the effect rows below
-// (Volume, EQ, Looping, Effects, Filter; 3.txt, 7.txt) opens a pager of cards over the page: a black
-// MixingDismissableView the width of the screen holding, one per effect, a MixingBottomSheetContainerElement whose
-// MixingDismissableView is a 350pt card (#2A2A2A, r=16) with a grabber, the effect's title with a Tertiary Customize
-// button and its presets. The bar picker (4 bars, 8 bars; 4.txt) opens the same container as a sheet the width of the
-// screen (#1F1F1F, square) along the bottom.
+// (Volume, EQ, Looping, Effects, Filter) opens a pager of cards over the page: a black MixingDismissableView the width
+// of the screen holding, one per effect, a MixingBottomSheetContainerElement whose MixingDismissableView is a 350pt
+// card (#2A2A2A, r=16) with a grabber, the effect's title with a Tertiary Customize button and its presets. The bar
+// picker (4 bars, 8 bars) opens the same container as a sheet the width of the screen (#1F1F1F, square) along the
+// bottom.
 //
 //  - The bar's two backings go and the page shows through. Back is pinned over the bar as the glass circle every
 //    redesigned page has (SGRPinnedBackOf), at the page's corner and level with the bar's buttons. It is pinned in the
@@ -21,11 +21,11 @@
 //  - More and Save are glass capsules where they are, as the filter chips are, Save with the accent over the glass,
 //    since its label is black. They are dressed from the page's own passes too, not only from their layout: the
 //    buttons are made after the page's first layout, before the navigation controller was known to this file, and
-//    were never laid out again (no glass on either in 2.txt - 5.txt).
+//    were never laid out again.
 //  - The Play button is a glass capsule, brighter than the rest (prominent), around the same glyph in the same place.
 //    Its element sits in the middle of the waveform's own container (a 370pt UIView) and goes up with it when the
 //    page scrolls to make room for a card; Spotify moved it to the bottom of the container meanwhile (y=338 against
-//    169, 3.txt, 7.txt), so it stayed under the card instead of on the effect. Its y is held at the middle.
+//    169), so it stayed under the card instead of on the effect. Its y is held at the middle.
 //  - The bordered buttons are glass.
 //  - The cards and the bar picker's sheet are glass the way the queue is (SGRThickenSheetGlass): the grey of their
 //    MixingDismissableView goes and a glass pane of its own corners stands behind the grabber, the title and the
@@ -129,16 +129,16 @@ static void dressBordered(UIView *button) {
 #pragma mark - the Play button stays on the effect
 
 // The Play button of the transition in the middle of the waveform: the button inside its ElementView inside a
-// LazyElementView, which Spotify's layout puts in the 370pt container of the waveform (2.txt: {171, 169}, 48x32).
+// LazyElementView, which Spotify's layout puts in the 370pt container of the waveform ({171, 169}, 48x32).
 static UIView *playElement(void) {
     UIView *element = sg_mixPlay.superview.superview;
     if (!element || ![NSStringFromClass(element.class) containsString:@"MixingPlayButtonElement"]) return nil;
     return element;
 }
 
-// The middle of the container, whatever Spotify's layout meant by the bottom of it (y=338 with a card open, 3.txt,
-// 7.txt, where the bar picker's slot is). The container is the one that scrolls up with the waveform, so a button held at
-// its middle goes up with the effect. Rounded to the pixel as UIKit lays it out.
+// The middle of the container, whatever Spotify's layout meant by the bottom of it (y=338 with a card open, where the bar
+// picker's slot is). The container is the one that scrolls up with the waveform, so a button held at its middle goes up
+// with the effect. Rounded to the pixel as UIKit lays it out.
 static CGRect pinnedPlayFrame(UIView *element, CGRect frame) {
     UIView *holder = element.superview;
     if (!holder || object_getClass(holder) != UIView.class || holder.bounds.size.height < 100) return frame;
@@ -275,7 +275,7 @@ static void dressCustomize(UIView *button) {
     if (button.clipsToBounds) button.clipsToBounds = NO;
 }
 
-// "New effects are here": the card the promo sits in, #1F1F1F r=16 (5.txt).
+// "New effects are here": the card the promo sits in, #1F1F1F r=16.
 static void dressPromoCard(UIView *card) {
     glassBacking(card, &kPromoGlassKey, kCardRadius, kAllCorners);
 }

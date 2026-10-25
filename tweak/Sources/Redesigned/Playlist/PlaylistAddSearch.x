@@ -1,14 +1,13 @@
 // Playlist redesign, iOS < 26: the Add songs sheet's own search (the "What would you like to add?" page behind the
 // Add songs row, and the Find page it opens) on glass, the way the Search tab's field is.
 //
-// Tree (trees/continuous/13.txt:2249-2257, 14.txt:2188-2200): a plain UIView 358x48 bg=#282828 r=24
-// id=AssistedCuration.SearchBar, pinned over the bottom of the sheet inside an AssistedCurationSearchBarElement, holding
-// the magnifier, the label (on the Find page the text field) and the clear button. It is the grey box a search field is
-// elsewhere in the redesign, so it gets the same glass (SGRGlassFlatBox): cleared, round, glass inside it, its
-// contents above. Spotify paints the grey again as the field is focused, so SGRRepaint.x keeps it clear
-// (sgr_addSongsSearchBar).
+// Tree: a plain UIView 358x48 bg=#282828 r=24 id=AssistedCuration.SearchBar, pinned over the bottom of
+// the sheet inside an AssistedCurationSearchBarElement, holding the magnifier, the label (on the Find page the text
+// field) and the clear button. It is the grey box a search field is elsewhere in the redesign, so it gets the same glass
+// (SGRGlassFlatBox): cleared, round, glass inside it, its contents above. Spotify paints the grey again as the field is
+// focused, so SGRRepaint.x keeps it clear (sgr_addSongsSearchBar).
 //
-// The Find page's navigation bar (8.txt:2264-2284) is UIKit's: a _UIButtonBarButton with a bare chevron
+// The Find page's navigation bar is UIKit's: a _UIButtonBarButton with a bare chevron
 // (_UIModernBarButton) and the title. It is dressed the way the profile lists' is (Profile/ProfileListBar.x): the
 // bar of Pages/PageBar.m, whose Back is the glass circle the playlist, album and artist pages pin to their corner.
 // (Glass put inside UIKit's own button, 40x20 in a 48pt one, threw its layout off.) The bar belongs to the sheet's
@@ -32,9 +31,9 @@ static Class sg_findClass;
 #pragma mark - the search bar
 
 // The grey wash Spotify lays over the list behind the pinned bar (AssistedCuration_RecommendationsImpl.GradientView on
-// the add songs page, AssistedCuration_SearchImpl.GradientView on the Find page, 120pt, a sibling of the bar's element,
-// 17.txt, continuous/3.txt): the bar is glass now, and the wash showed as a dark band under it.
-// Drawn by nothing, as the album's gradients are: an empty mask survives Spotify fading it by alpha.
+// the add songs page, AssistedCuration_SearchImpl.GradientView on the Find page, 120pt, a sibling of the bar's element):
+// the bar is glass now, and the wash showed as a dark band under it. Drawn by nothing, as the album's gradients are: an
+// empty mask survives Spotify fading it by alpha.
 static void clearWash(UIView *bar) {
     UIView *level = bar;
     for (int i = 0; level && i < 5; i++, level = level.superview) {

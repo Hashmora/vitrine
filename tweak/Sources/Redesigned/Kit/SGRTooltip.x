@@ -1,11 +1,11 @@
 // Redesign, iOS < 26: Spotify's tooltips ("You can ask people to join the Jam on your phone", "Listening on this
 // iPhone") on glass.
 //
-// Tree (trees/continuous/12.txt:822-829, 14.txt:822-832): a Messaging_TooltipPresenterImpl.PassthroughView over the
-// now playing bar, holding a TooltipContainerView {390 wide}. In it, the arrow first: a white UIView, a 9pt square turned
-// 45 degrees (12.7pt across its frame), centred on the card's bottom edge at the x of the control it points to. Then the
-// card: a UIView #FFFFFF r=8 clips, with a SwiftUI hosting view in it, whose _UIGraphicsView is white as well and whose text
-// is drawn by CGDrawingViews (black), with the action ("Got it") drawn the same way and, in 14, a Lottie play indicator.
+// Tree: a Messaging_TooltipPresenterImpl.PassthroughView over the now playing bar, holding a
+// TooltipContainerView {390 wide}. In it, the arrow first: a white UIView, a 9pt square turned 45 degrees (12.7pt across its
+// frame), centred on the card's bottom edge at the x of the control it points to. Then the card: a UIView #FFFFFF r=8 clips,
+// with a SwiftUI hosting view in it, whose _UIGraphicsView is white as well and whose text is drawn by CGDrawingViews
+// (black), with the action ("Got it") drawn the same way and, on some, a Lottie play indicator.
 //
 // The card is dressed the way the toasts are (Kit/SGRSnackbar.x): its white goes, a glass pane and the faint white film
 // stand behind the content, the corners are a capsule's (up to kMaxRadius), and the black text turns white (Kit/SGRDrawnText.h).

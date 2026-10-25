@@ -1,15 +1,14 @@
 // Redesign, iOS < 26: the plus of "Add account" on glass: the one in the left menu's facepile and in both lists of accounts
 // Spotify has.
 //
-// The facepile (trees/continuous/3.txt:1516-1523, AccountSwitching_AccountSwitchingUIImpl.FacepileEntryView at the right of
-// the menu's profile row) ends with the plus, an Encore FacepileIconView 32x32 holding the SPTEncoreIconView that draws it.
-// A glass circle goes inside it, behind the icon, the way a top bar button has one.
+// The facepile (AccountSwitching_AccountSwitchingUIImpl.FacepileEntryView at the right of the menu's profile
+// row) ends with the plus, an Encore FacepileIconView 32x32 holding the SPTEncoreIconView that draws it. A glass circle
+// goes inside it, behind the icon, the way a top bar button has one.
 //
-// Tree (trees/continuous/4.txt:1102-1110): the left menu's list of accounts (AccountSwitching_AccountSwitchingUIImpl.
-// AddAccountCell, 72x79) holds a plain UIView 48x48 bg=#FFFFFF@0.07 r=24 and, after it, the SPTEncoreIconView that draws the
-// plus. The page the app shows after signing out of an account, "Who's listening?" (trees/continuous/5.txt:15-18,
-// AccountSwitching_AccountPickerImpl.AccountPickerAddAccountTableViewCell, a table row), has the same two views at 64x64
-// r=32 bg=#FFFFFF@0.07, beside the "Add account" label.
+// Tree: the left menu's list of accounts (AccountSwitching_AccountSwitchingUIImpl.AddAccountCell, 72x79) holds a plain
+// UIView 48x48 bg=#FFFFFF@0.07 r=24 and, after it, the SPTEncoreIconView that draws the plus. The page the app shows after
+// signing out of an account, "Who's listening?" (AccountSwitching_AccountPickerImpl.AccountPickerAddAccountTableViewCell,
+// a table row), has the same two views at 64x64 r=32 bg=#FFFFFF@0.07, beside the "Add account" label.
 //
 // The grey disc goes and a glass disc stands in it, with the faint white film the redesign's floating controls carry
 // (the disc was a 7% white plate; plain glass over the list's black would read as nothing). The icon above it is
@@ -18,8 +17,7 @@
 //
 // The left menu's row is not laid out the way the picker's is: the disc sits in an Encore Box, 2 views below the cell, and is
 // sized by that Box's pass or after it, so the cell's own layout and its move to the window met a disc of no size and the
-// disc stayed the grey of trees/continuous/4.txt:1110. The Box's pass dresses the cell it is in, and a cell not dressed yet
-// is tried again a moment later.
+// disc stayed grey. The Box's pass dresses the cell it is in, and a cell not dressed yet is tried again a moment later.
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"

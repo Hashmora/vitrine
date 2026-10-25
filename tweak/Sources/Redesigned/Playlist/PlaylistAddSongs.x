@@ -1,7 +1,7 @@
 // Playlist redesign, iOS < 26: the Add songs row over a playlist's tracks (Liked Songs, a playlist of the user's
 // own), its square on glass.
 //
-// Tree (trees/continuous/1.txt:131-148): a cell holding CurateContextPluginImpl's AddMoreSectionElement, a view
+// Tree: a cell holding CurateContextPluginImpl's AddMoreSectionElement, a view
 // id=PlaylistCuration.AddButton with an ImageViewHolder 48x48 that carries the plus on a plain view painted
 // #1F1F1F, and the label beside it. The grey box is what a search field's grey box is elsewhere in the
 // redesign, so it gets the same glass (SGRGlassFlatBox): cleared, round, glass inside it, the plus above.

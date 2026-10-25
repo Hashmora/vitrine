@@ -3,18 +3,18 @@
 // gets what they get: Back and ⋯ as glass circles pinned to the corners of the page, level with each other, and the
 // name in the bar on a glass capsule (Playlist/PlaylistBar.x, which takes a dressed profile as it takes an album).
 //
-// Tree (trees/continuous/2.txt): ProfileView holds the list and, over it, a LegacyUI_ECMCoreKit.HeaderLayout
-// (id=Components.UI.ProfileHeader) with the HeaderNavigationBar (a GradientView, the name, Components.Header.UI.BackButton
-// and a stack with Components.UI.NavigationBarContextMenuButton) and, in the content beside the name, a ⋯ of the
-// header's own (Components.UI.ContextMenuButton).
+// Tree: ProfileView holds the list and, over it, a LegacyUI_ECMCoreKit.HeaderLayout (id=Components.UI.ProfileHeader) with
+// the HeaderNavigationBar (a GradientView, the name, Components.Header.UI.BackButton and a stack with
+// Components.UI.NavigationBarContextMenuButton) and, in the content beside the name, a ⋯ of the header's own
+// (Components.UI.ContextMenuButton).
 //
 // Nothing here is a control of the redesign's own making: the pinned ⋯ fires Spotify's ⋯ (SGRPinnedMore), so the menu is
 // Spotify's own sheet, which the redesign dresses; below iOS 26 no page's ⋯ opens the system menu (ContextMenu/ContextMenu.x).
 // Both of Spotify's ⋯ are concealed under the pinned one, not removed.
 //
 // The row of Follow / Message / Share under the name used to sit still under the pill as the page scrolled, though
-// nothing in the bar needs it any more (trees/continuous/13.txt): it fades out over the first kActionsFade points of
-// scroll, followed from the list's own -setContentOffset:.
+// nothing in the bar needs it any more: it fades out over the first kActionsFade points of scroll, followed from the
+// list's own -setContentOffset:.
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
@@ -36,7 +36,7 @@ UIView *SGRProfilePageOf(UIView *view) {
 }
 
 // The row holding Follow / Message / Share: the widest ancestor of the Share button that is still no taller than a
-// button's row, below the header's content stack (13.txt: 44pt rows under a 241pt stack).
+// button's row, below the header's content stack (44pt rows under a 241pt stack).
 static UIView *actionsRowOf(UIView *header) {
     UIView *row = SGRFindByIdentifier(header, @"Components.UI.ShareButton", &kShareKey);
     for (int i = 0; row && i < 6; i++) {

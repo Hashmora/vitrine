@@ -37,8 +37,8 @@
 // keeps the status bar and the back button legible on a bright picture. The playlist's and the album's.
 static const CGFloat kDissolve = 0.46, kTopScrim = 140, kTopScrimAlpha = 0.28;
 // A photo bright across its top (a white studio wall) turned the pinned Back and ⋯ into white discs with their white glyphs
-// lost in them (the phone, 2026-10-23): the scrim grows with the top's brightness, from kTopScrimAlpha at kBrightFrom up to
-// kBrightScrimAlpha for a white top.
+// lost in them: the scrim grows with the top's brightness, from kTopScrimAlpha at kBrightFrom up to kBrightScrimAlpha for a
+// white top.
 static const CGFloat kBrightFrom = 0.45, kBrightScrimAlpha = 0.62;
 // A photo view narrower than this is a placeholder glyph, and a picture shorter than this one mid load.
 static const CGFloat kMinCover = 80, kMinHero = 120;
@@ -304,7 +304,7 @@ static UIView *keepBar(UIView *header) {
         if ([NSStringFromClass(sub.class) containsString:@"HeaderForegroundView"]) foreground = sub;
     }
     // On every pass: Spotify adds the bar's gradient as the page scrolls, after the first pass has looked
-    // (trees/continuous/5.txt: scrolled, the bar's GradientView had no mask).
+    // (scrolled, the bar's GradientView had no mask).
     if (foreground) SGForEachView(foreground, ^(UIView *v) { maskGradient(v); });
     return foreground;
 }

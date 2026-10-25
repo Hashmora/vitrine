@@ -1,10 +1,10 @@
 // Made For You (SPTMadeForYouHubViewController, a Hub page): the redesign's bar over the list (Pages/PageBar.m),
 // Spotify's header gone, the title "Made For You" on a glass capsule and Back a glass circle.
 //
-// Tree (trees/continuous/27.txt): HUBContainerView holds a HUBCollectionView the size of the screen on #000000 with
-// the rows of cards (a HUGSCarouselComponentView each, :22), and over it the navigation controller's blur
-// (390x91, #1C1C1C@0.73, :280) and SPNavigationBar with Back and the title control, a UILabel "Made For You" (:303-305).
-// The list already runs under the bar, so only the bar changes.
+// Tree: HUBContainerView holds a HUBCollectionView the size of the screen on #000000 with the rows of cards (a
+// HUGSCarouselComponentView each), and over it the navigation controller's blur (390x91, #1C1C1C@0.73) and
+// SPNavigationBar with Back and the title control, a UILabel "Made For You". The list already runs under the bar, so
+// only the bar changes.
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"

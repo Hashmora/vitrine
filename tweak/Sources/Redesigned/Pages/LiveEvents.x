@@ -1,12 +1,12 @@
 // Live Events, the concerts hub (LiveEvents_LiveEventsPageImpl.LiveEventsPageViewController): the header's title and
 // buttons on glass over the header's own gradient, and the list run on under the tab bar.
 //
-// Tree (trees/continuous/23.txt): the page is a plain view holding the list (LiveEventsPage.ContentScrollView, a
-// UICollectionView on #000000) and the header, a LegacyUI_ECMCoreKit.HeaderLayout (Components.UI.EventHeaderHubPage) with
-// the gradient behind it and, in its foreground, the HeaderNavigationBar the playlist, album and artist pages have: its
-// own GradientView, the name "Live Events" as a label, Back (Components.Header.UI.BackButton) and, in a stack at the
-// trailing edge, Saved and Notifications (Encore Tertiary buttons, 48x48). The list was 689pt high, ending where the
-// now playing bar begins, so under the glass tab bar there was the page's black instead of the last events.
+// Tree: the page is a plain view holding the list (LiveEventsPage.ContentScrollView, a UICollectionView on #000000) and
+// the header, a LegacyUI_ECMCoreKit.HeaderLayout (Components.UI.EventHeaderHubPage) with the gradient behind it and, in
+// its foreground, the HeaderNavigationBar the playlist, album and artist pages have: its own GradientView, the name "Live
+// Events" as a label, Back (Components.Header.UI.BackButton) and, in a stack at the trailing edge, Saved and
+// Notifications (Encore Tertiary buttons, 48x48). The list was 689pt high, ending where the now playing bar begins, so
+// under the glass tab bar there was the page's black instead of the last events.
 //
 // The header keeps its gradient. Its buttons are the page's pinned glass circles (Back at the leading corner,
 // Notifications in the trailing one and Saved beside it), as on the playlist, album and artist pages: Spotify's own are
@@ -19,9 +19,9 @@
 //
 // The pages Live Events opens (LiveEvents_GalleryPageImpl.GalleryPageViewController: Popular events in ..., Your top pop
 // events, Venues, All events, Live events just for you) have the same header and a list of their own
-// (GalleryPage.ContentScrollView, trees/continuous/7.txt to 11.txt, 705pt of a 844pt page). They get the playlist pages'
-// look: Back on the pinned glass circle, the header's gradients gone (Playlist/PlaylistBar.x refuses them on a Gallery
-// page, SGRGalleryPageOf), the name in the bar on the glass capsule, and the list as tall as the page, under the bars.
+// (GalleryPage.ContentScrollView, 705pt of a 844pt page). They get the playlist pages' look: Back on the pinned glass
+// circle, the header's gradients gone (Playlist/PlaylistBar.x refuses them on a Gallery page, SGRGalleryPageOf), the
+// name in the bar on the glass capsule, and the list as tall as the page, under the bars.
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"

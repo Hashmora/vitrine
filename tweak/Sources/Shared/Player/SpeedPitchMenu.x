@@ -46,7 +46,7 @@ static const CGFloat kRowHeight = 56, kSliderBlockHeight = 72, kSwitchRowHeight 
 static const CGFloat kSideMargin = 16, kGrid = 8;
 // The panel's room over its first slider. Below iOS 26 it stands on the mod's glass, which reaches to the popover's
 // edge with no inset of the system's, and the Speed label all but touched the top; at 16pt its letters still stood
-// 13pt under the edge, closer than the side margin under the popover's large corners (the phone, 2026-10-23).
+// 13pt under the edge, closer than the side margin under the popover's large corners.
 static CGFloat panelTop(void) {
     return SGBelowiOS26() ? 3 * kGrid : kGrid;
 }

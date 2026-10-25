@@ -3,12 +3,12 @@
 //
 //   the morph    a control that gives way to another flows into it: a glass shape of the old one's place and corners
 //                springs to the new one's, and the new one's own drawing comes in under it as the shape fades
-//                (the Photos app's Select, which flows into ⋯ and ✕, ScreenRecording 2026-10-24, 2 s: about 0.2 s)
+//                (as the Photos app's Select flows into ⋯ and ✕ on iOS 26: about 0.2 s)
 //   the bubble   a menu opened from a control leaves it as a small drop that flies to the middle of the menu,
 //                growing as a circle on the way, and opens out into the menu's shape with a little overshoot: the
 //                drop is the menu itself, cut to that shape, its glass and rows showing through it all the way
-//                (the same recording, 5 s: the drop is off the button 0.15 s after the tap, a circle half the menu's
-//                size 0.07 s later, the menu whole by 0.35 s)
+//                (on iOS 26 the drop is off the button 0.15 s after the tap, a circle half the menu's size 0.07 s
+//                later, the menu whole by 0.35 s)
 //
 // The morph is drawn on views of the mod's own laid over the window, and the bubble is a mask on the menu taken off when
 // it ends; what arrives is only faded in by animations added to its layer, whose model values stay as they were: nothing

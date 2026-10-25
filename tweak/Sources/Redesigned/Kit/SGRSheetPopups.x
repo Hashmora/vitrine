@@ -218,9 +218,9 @@ static void clearSaveInView(UIView *view) {
 }
 
 // Each playlist row of Save in (Encore's ListRow, id=Playlist.Row.AddToPlaylist) draws its own fill as a shape layer the
-// size of the row, under the row's views: not a background colour, so no clearing of paint reached it, and the rows,
-// one under the next, covered the whole list in black over the glass (the tree with sublayers, 2026-10-23: a
-// CAShapeLayer 390x64 in every row, and a second one inset by 4 at opacity 0, the press highlight, which stays).
+// size of the row, under the row's views: not a background colour, so no clearing of paint reached it, and the rows, one
+// under the next, covered the whole list in black over the glass (a CAShapeLayer 390x64 in
+// every row, and a second one inset by 4 at opacity 0, the press highlight, which stays).
 static void clearSaveInRow(UIView *row) {
     if (![row.accessibilityIdentifier isEqualToString:@"Playlist.Row.AddToPlaylist"] || !SGRSheetPaneOf(row)) return;
     CGRect bounds = row.layer.bounds;
@@ -273,9 +273,9 @@ static void pickerChrome(UIViewController *controller) {
 
 #pragma mark - the library's Sort by
 
-// The Recents button opens SPTSortingFilteringPickerViewController as a card under its own presentation controller
-// (trees/continuous/2.txt). The same picker inside a Navigation sheet (a playlist's, Liked Songs') already has the
-// sheet's pane, and a second one would lay glass inside glass.
+// The Recents button opens SPTSortingFilteringPickerViewController as a card under its own presentation
+// controller. The same picker inside a Navigation sheet (a playlist's, Liked Songs') already has the sheet's pane,
+// and a second one would lay glass inside glass.
 static void sortChrome(UIViewController *controller) {
     if (SGRSheetPaneOf(controller.viewIfLoaded)) return;
     UIPresentationController *presentation = controller.presentationController;
@@ -286,9 +286,9 @@ static void sortChrome(UIViewController *controller) {
 
 #pragma mark - the podcast speed popup
 
-// PodcastPlaybackSpeed_UIImpl.PlaybackSpeedView (trees/continuous/22.txt) has a strip beside it with the grabber
-// and Spotify's Done button; Done goes (alpha, since a hidden Encore view can crash its stack), the swipe and the
-// dimmed area close the popup. The round speed buttons are glass circles.
+// PodcastPlaybackSpeed_UIImpl.PlaybackSpeedView has a strip beside it with the grabber and Spotify's Done button;
+// Done goes (alpha, since a hidden Encore view can crash its stack), the swipe and the dimmed area close the
+// popup. The round speed buttons are glass circles.
 static char kDoneKey;
 
 static void hideDone(UIView *sheet) {
@@ -332,8 +332,8 @@ static char kRoundGlassKey;
 
 #pragma mark - Report a problem, and Rate show
 
-// Transcript_ReadAlongImpl.ReportReadAlongView (trees/continuous/24.txt): the controller's own view is the pane; its
-// layer mask of Spotify's corners would cut the glass, so it goes.
+// Transcript_ReadAlongImpl.ReportReadAlongView: the controller's own view is the pane; its layer mask of Spotify's
+// corners would cut the glass, so it goes.
 static void reportChrome(UIViewController *controller) {
     UIView *sheet = controller.viewIfLoaded;
     if (!sheet || sheet.bounds.size.width < 1) return;
@@ -341,8 +341,8 @@ static void reportChrome(UIViewController *controller) {
     SGRGlassSheetView(sheet);
 }
 
-// Ratings_CommonImpl's Rate show page (23.txt), a page sheet: the page loader's view around the controller's is the
-// pane. The footer's fade to #121212 would lay a dark bar over the glass, so the gradient is concealed.
+// Ratings_CommonImpl's Rate show page, a page sheet: the page loader's view around the controller's is the pane.
+// The footer's fade to #121212 would lay a dark bar over the glass, so the gradient is concealed.
 static void rateChrome(UIViewController *controller) {
     UIView *pane = controller.viewIfLoaded.superview;
     if (!pane || pane.bounds.size.width < 300) return;

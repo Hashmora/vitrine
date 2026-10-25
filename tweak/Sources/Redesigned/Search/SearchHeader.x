@@ -4,8 +4,8 @@
 // and Cancel are glass capsules floating over the page and the chips are glass the way the Library's are
 // (Library/LibraryHeader.x takes them: it answers to this row's identifier too).
 //
-// Tree (trees/continuous/14.txt:511-610): Search_FeatureImpl.HeaderViewController's view is a plain UIView
-// 390x143 bg=#1F1F1F, holding at {0, 47} a 96pt UIView with a vertical UIStackView of
+// Tree: Search_FeatureImpl.HeaderViewController's view is a plain UIView 390x143 bg=#1F1F1F,
+// holding at {0, 47} a 96pt UIView with a vertical UIStackView of
 //
 //     a 32pt row   MultilineSearchBarContainer (id=SearchBarSearch) > UIView 358x32 > the field's fill, a plain
 //                  UIView 304x32 bg=#FFFFFF@0.10 r=16 clips holding the text view and the clear button, and
@@ -19,11 +19,11 @@
 // held clear by SGRRepaint.x (sgr_searchHeaderRoot, sgr_searchFieldFill), which Spotify puts back on its passes,
 // and the page behind it is black already.
 //
-// Spotify lays the field out and rebuilds its fill on passes that never reach the controller (the recents under it
-// coming and going, the keyboard, a focus change), so the field is also dressed from the layout of its own container
-// (MultilineSearchBarContainer, trees/continuous/1.txt:1544), and the controller's passes are repeated a moment after the
-// page appears. The glass carries a white film (SGRGlassFlatBox, prominent): the header has no backing, so the recents and the
-// results scroll under the field, and plain glass over them read as no plate at all.
+// Spotify lays the field out and rebuilds its fill on passes that never reach the controller (the recents under it coming and
+// going, the keyboard, a focus change), so the field is also dressed from the layout of its own container
+// (MultilineSearchBarContainer), and the controller's passes are repeated a moment after the page appears. The glass
+// carries a white film (SGRGlassFlatBox, prominent): the header has no backing, so the recents and the results scroll under
+// the field, and plain glass over them read as no plate at all.
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"

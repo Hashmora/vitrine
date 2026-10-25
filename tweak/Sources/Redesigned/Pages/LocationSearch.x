@@ -2,18 +2,18 @@
 // (LiveEvents_LiveEventsImpl.LocationSearchViewController): the title on a glass capsule, Back a glass circle and the
 // search field on glass, over a header that is no longer opaque.
 //
-// Tree (trees/continuous/43.txt): the page has no navigation bar (SPNavigationBar is not on screen, Spotify's blur is
-// 390x0 and hidden). Its view, LocationSearchView, holds a plain UIView 390x143 painted #000000, the table
-// (LocationSearchView.tableView, from y=143), and LocationSearchHeaderView (Components.UI.LocationHeaderSearch, 390x96
-// at y=47): a 48pt row with the title label "Preferred Location" and Back (an Encore Tertiary button, 32x32, a11y
-// "Back"), then the field (Components.Header.UI.Toolbar.SearchField, a 358x32 text field, #FFFFFF@0.14 r=4).
+// Tree: the page has no navigation bar (SPNavigationBar is not on screen, Spotify's blur is 390x0 and hidden). Its
+// view, LocationSearchView, holds a plain UIView 390x143 painted #000000, the table (LocationSearchView.tableView,
+// from y=143), and LocationSearchHeaderView (Components.UI.LocationHeaderSearch, 390x96 at y=47): a 48pt row with the
+// title label "Preferred Location" and Back (an Encore Tertiary button, 32x32, a11y "Back"), then the field
+// (Components.Header.UI.Toolbar.SearchField, a 358x32 text field, #FFFFFF@0.14 r=4).
 //
 // So the black plate is taken off, the title label gets the capsule the other pages' titles have (Pages/PageBar.m,
 // the same padding and height, white), Back is pinned to the corner as on every redesigned page (the Encore button is
 // concealed and fired by the glass circle), and the field is glass the way Liked Songs' find field is (SGRGlassFlatBox;
 // SGRRepaint.x keeps Spotify's grey off it as it is focused, as it does for the podcast search field).
 //
-// Trees (trees/continuous/4.txt): the header and the field are on glass already. Three things were left:
+// Trees: the header and the field are on glass already. Three things were left:
 //  - The plate behind the header (the 414x144 UIView, hidden) stays hidden with nothing in its place: the header as a whole
 //    has no glass behind it, only the title capsule, the Back circle and the field have their own.
 //  - The cross of a recent search (the Encore Tertiary button "Clear" in each LocationRowSearch row, 32x32) is on a glass circle.

@@ -102,9 +102,9 @@ static UILabel *titleIn(UIStackView *row) {
 }
 
 // The header's own block, the ElementView the toolbar row and the field sit in, a child of the page beside the list:
-// Spotify paints it black, so the field scrolled over the cards stood on a black band rather than on glass alone (the
-// phone, 2026-10-24). Its fill is taken off, the view's own colour too (a view puts that back on its layer), and held
-// clear for every block of its class, as Home's header is (HomeHeader.x). The page behind it is black already.
+// Spotify paints it black, so the field scrolled over the cards stood on a black band rather than on glass alone. Its
+// fill is taken off, the view's own colour too (a view puts that back on its layer), and held clear for every block
+// of its class, as Home's header is (HomeHeader.x). The page behind it is black already.
 static void clearHeaderBlock(UIStackView *row, UIView *page) {
     UIView *block = row;
     while (block.superview && block.superview != page) block = block.superview;
@@ -121,8 +121,8 @@ static void clearHeaderBlock(UIStackView *row, UIView *page) {
 }
 
 // The plate Spotify lays over the top of the page behind the status bar: a plain view the page's width and the status
-// bar's height (48pt on a 414pt phone), black, the page's last child, over the list (the phone, 2026-10-24). It goes the
-// way the header's block does, so only the field's glass stands over the cards as they scroll under it.
+// bar's height (48pt on a 414pt phone), black, the page's last child, over the list. It goes the way the header's block
+// does, so only the field's glass stands over the cards as they scroll under it.
 static void clearStatusPlate(UIView *page) {
     CGFloat width = page.bounds.size.width;
     for (UIView *sub in page.subviews) {
@@ -136,8 +136,8 @@ static void clearStatusPlate(UIView *page) {
 
 // The title and the avatar scroll away with the page, as Home's do (HomeHeader.x, followScroll): they rise with what is
 // under them and fade over the row's height. Spotify slid and faded the row itself on earlier builds; on this one it
-// stays, and with the black plate gone (clearStatusPlate) the two stood over the cards scrolling under them (the phone,
-// 2026-10-24). The avatar's glass takes no alpha (SGRGlass.h): it goes once the row is half faded and comes back with it.
+// stays, and with the black plate gone (clearStatusPlate) the two stood over the cards scrolling under them. The avatar's
+// glass takes no alpha (SGRGlass.h): it goes once the row is half faded and comes back with it.
 static __weak UIView *sg_face;
 static BOOL sg_faceGlassShown = YES;
 
@@ -182,7 +182,7 @@ static void layoutHeader(UIStackView *row) {
     }
     [row layoutIfNeeded];
     // The avatar on a glass circle as large as the other pages' corner buttons, as Home's sits in its pill: bare, it was the
-    // one control of the header with nothing behind it (the phone, 2026-10-23).
+    // one control of the header with nothing behind it.
     if (face && SGBelowiOS26()) SGRGlassInside(face, &kFaceGlassKey, 44);
     sg_face = face;
 

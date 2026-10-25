@@ -3,19 +3,18 @@
 // text, a capsule button filled with the accent for the main action and one of 10% white for the rest) and the system
 // draws as its own glass alert from iOS 26 on.
 //
-//   Get smoother transitions     trees/continuous/8.txt:1731   id=PopUp.Dialog, white r=8
-//   Discard changes?             trees/continuous/9.txt:1805   id=PopUp.Dialog
-//   Make this playlist private?  trees/continuous/10.txt:1253  id=PopUp.Dialog
-//   Update preferred location    trees/continuous/12.txt:472   id=PopUpConfirmationDialog, a grey r=16 card with
-//                                                              the Cancel button under it, in a window of its own
-//   Want this playlist to        trees/continuous/5.txt:435    id=PlaylistsProfileVisibility.MakePublicDialog, an
-//   appear on your profile?                                    Encore Dialog, white r=8, with Encore.Button.Primary
-//                                                              and Encore.Button.Tertiary instead of Components.UI's
+//   Get smoother transitions     id=PopUp.Dialog, white r=8
+//   Discard changes?             id=PopUp.Dialog
+//   Make this playlist private?  id=PopUp.Dialog
+//   Update preferred location    id=PopUpConfirmationDialog, a grey r=16 card with
+//                                the Cancel button under it, in a window of its own
+//   Want this playlist to        id=PlaylistsProfileVisibility.MakePublicDialog, an
+//   appear on your profile?      Encore Dialog, white r=8, with Encore.Button.Primary
+//                                and Encore.Button.Tertiary instead of Components.UI's
 //
 // Each lives in a UIWindow of level 1000 over a 54% black dim, and is not a UIAlertController, so SGRAlertHook.x never
-// sees it. Repainting Spotify's views (what this file did before) showed the white dialog for a moment and then
-// redrew it, because Spotify lays the dialog out and fills it in after it is attached. So nothing of Spotify's is
-// repainted now:
+// sees it. Repainting Spotify's views would show the white dialog for a moment and then redraw it, because Spotify
+// lays the dialog out and fills it in after it is attached. So nothing of Spotify's is repainted:
 //
 //  1. The moment a dialog's view comes into its window, the window is made invisible (alpha 0, and hidden from
 //     VoiceOver), in the same turn of the run loop, before the first frame is drawn.
@@ -31,7 +30,7 @@
 // The window is made visible again a second after the dialog is gone, so a window Spotify keeps and uses for the next
 // dialog is not left invisible. If Spotify takes the dialog down itself while the alert is up, the alert goes too.
 //
-// Create cover art > Cancel > "Are you sure" (trees/continuous/11.txt) is a web page, not a view of Spotify's: nothing to replace.
+// Create cover art > Cancel > "Are you sure" is a web page, not a view of Spotify's: nothing to replace.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Settings/SGPageStyle.h"
@@ -91,10 +90,10 @@ static void clearPaint(UIView *view, UIView *glass, int depth) {
 }
 
 // Update preferred location: the dialog's stack holds the card's content (the text and Confirm, 24pt of air under
-// Confirm) and then Cancel after 16pt more, flush with the bottom edge of the dialog (trees/continuous/3.txt: Confirm
-// ends at 258.7, Cancel runs 298.7 to 346.7 in a 346.7 card). Cancel moves up to kCancelGap under Confirm, and the
-// room that frees goes under it as the stack's bottom margin, so the card keeps its height and Cancel keeps its air.
-// The spacing and the margin are properties of the stack, so Spotify's own layout keeps them.
+// Confirm) and then Cancel after 16pt more, flush with the bottom edge of the dialog (Confirm ends at 258.7, Cancel
+// runs 298.7 to 346.7 in a 346.7 card). Cancel moves up to kCancelGap under Confirm, and the room that frees goes
+// under it as the stack's bottom margin, so the card keeps its height and Cancel keeps its air. The spacing and the
+// margin are properties of the stack, so Spotify's own layout keeps them.
 static const CGFloat kCancelGap = 12, kCancelBottom = 28;
 static char kCancelUnderKey;
 

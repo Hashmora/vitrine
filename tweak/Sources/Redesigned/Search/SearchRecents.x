@@ -1,10 +1,10 @@
 // Redesign: the cross of each recent search on glass.
 //
-// Tree (trees/continuous/1.txt:35-87): a row of the Search tab's "Recent searches" (SwipeView, id=Components.UI.RecentItemRowSearch,
-// 390x64) ends with a LegacyUI_ECMCoreKit EncoreButton 48x48, id=Components.UI.ClearButton, a11y "Remove", with the 16x16 UIImageView
-// that draws the cross at its middle. A glass circle goes inside the button, behind the cross (first in its subviews, Kit/SGRGlass.h),
-// with the faint white film the redesign's floating controls carry: plain glass over the list's black would read as nothing.
-// Rows are made again as the list scrolls, so every pass of a button dresses it; the glass is made once per button.
+// Tree: a row of the Search tab's "Recent searches" (SwipeView, id=Components.UI.RecentItemRowSearch, 390x64) ends with a
+// LegacyUI_ECMCoreKit EncoreButton 48x48, id=Components.UI.ClearButton, a11y "Remove", with the 16x16 UIImageView that draws the cross
+// at its middle. A glass circle goes inside the button, behind the cross (first in its subviews, Kit/SGRGlass.h), with the faint white
+// film the redesign's floating controls carry: plain glass over the list's black would read as nothing. Rows are made again as the
+// list scrolls, so every pass of a button dresses it; the glass is made once per button.
 //
 // The button's class carries a private discriminator in its name (P33_...), so it is found from the trees' spelling by its ending,
 // and only the buttons of a recent search row are touched: the same class is every Encore button of Spotify's legacy components.

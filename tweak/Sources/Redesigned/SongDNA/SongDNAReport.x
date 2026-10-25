@@ -1,8 +1,8 @@
-// SongDNA redesign, iOS < 26: the Data Sources card of the Report sheet on the sheet's glass. The sheet is
-// glass already (SGRGlassSheetChrome), but its card (SongDNA_ReportPageImpl.DataSourcesCardView, #2A2A2A, r=8,
-// id=song-dna-report-data-sources-card, trees/continuous/19.txt) is drawn as an opaque grey, and being a rounded
-// card narrower than the sheet the chrome leaves it as it is. It is painted the translucent white the device
-// picker's cards have (SGRSheetCardFill) instead: a slight lightening of the block against the sheet.
+// SongDNA redesign, iOS < 26: the Data Sources card of the Report sheet on the sheet's glass. The sheet is glass
+// already (SGRGlassSheetChrome), but its card (SongDNA_ReportPageImpl.DataSourcesCardView, #2A2A2A, r=8,
+// id=song-dna-report-data-sources-card) is drawn as an opaque grey, and being a rounded card narrower than the
+// sheet the chrome leaves it as it is. It is painted the translucent white the device picker's cards have
+// (SGRSheetCardFill) instead: a slight lightening of the block against the sheet.
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"

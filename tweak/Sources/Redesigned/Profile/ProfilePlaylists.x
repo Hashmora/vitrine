@@ -1,14 +1,14 @@
-// Profile, iOS < 26: the page that adds playlists to a person's profile ("Add playlist" in one's own profile),
-// the same page that removes them again. A SwiftUI page, PlaylistEditing_PlaylistsProfileVisibilityPageImpl, under UIKit's own
-// navigation bar (trees/continuous/6.txt, 7.txt).
+// Profile, iOS < 26: the page that adds playlists to a person's profile ("Add playlist" in one's own profile), the same page
+// that removes them again. A SwiftUI page, PlaylistEditing_PlaylistsProfileVisibilityPageImpl, under UIKit's own navigation
+// bar.
 //
-// Tree (6.txt, 7.txt): the hosting view holds the list on #000000 at the full height of the screen. In the
-// navigation controller's view over it, a plain UIView 390x91 painted #000000 with Spotify's blur in it (the black header), then
-// SPNavigationBar with Back (_UIButtonBarButton) and a _UINavigationBarTitleControl 172x22 holding a SwiftUI bar item
-// (UIKitBarItemHost) with nothing in it: the page has no title. And, once something is chosen, at the foot of the hosting view
-// (7.txt:107-112): a fade 390x24, a SwiftUI._UIGraphicsView 390x94, and over it the green capsule with "Remove from profile",
-// 8 below the top of the plate and 38 above its bottom edge (the plate runs through the home indicator's inset). While the plate
-// slides in (6.txt:107-109) it is 390x60, painted #000000, and its bottom edge is still below the screen's.
+// Tree: the hosting view holds the list on #000000 at the full height of the screen. In the navigation controller's view over
+// it, a plain UIView 390x91 painted #000000 with Spotify's blur in it (the black header), then SPNavigationBar with Back
+// (_UIButtonBarButton) and a _UINavigationBarTitleControl 172x22 holding a SwiftUI bar item (UIKitBarItemHost) with nothing in
+// it: the page has no title. And, once something is chosen, at the foot of the hosting view: a fade 390x24, a
+// SwiftUI._UIGraphicsView 390x94, and over it the green capsule with "Remove from profile", 8 below the top of the plate and 38
+// above its bottom edge (the plate runs through the home indicator's inset). While the plate slides in it is 390x60,
+// painted #000000, and its bottom edge is still below the screen's.
 //
 //  - The bar is the bar of Pages/PageBar.m, as the profile's lists have it (ProfileListBar.x): the black header gone, Back a
 //    glass circle pinned to the corner. The title control held a capsule 209x44 all the same, wrapped round the empty item, so
@@ -25,8 +25,8 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Redesigned/Pages/Pages.h"
 
-// A part of the name of the page's own controller (7.txt:511-512, the hosting controller of PlaylistsProfileVisibilityContentView)
-// and of the hosting view that holds its list (8.txt:20).
+// A part of the name of the page's own controller (the hosting controller of PlaylistsProfileVisibilityContentView) and
+// of the hosting view that holds its list.
 static NSString *const kPageMarker = @"PlaylistsProfileVisibilityPageImpl";
 
 static char kPlateKey;
@@ -72,8 +72,8 @@ static UIView *actionIn(UIView *plate) {
 }
 
 // `view` is the black plate behind the page's action at the foot of the hosting view: as wide as it, a plate and not a screen
-// high, painted the base black, ending at its bottom edge or, as it slides in, below it (6.txt). Nothing else of SwiftUI's is all
-// of these, and the hosting view's name says whose it is. Called from every layout pass of such a view, so the cheap tests come
+// high, painted the base black, ending at its bottom edge or, as it slides in, below it. Nothing else of SwiftUI's is all of
+// these, and the hosting view's name says whose it is. Called from every layout pass of such a view, so the cheap tests come
 // first.
 static void dressPlate(UIView *view) {
     BOOL dressed = objc_getAssociatedObject(view, &kPlateKey) != nil;

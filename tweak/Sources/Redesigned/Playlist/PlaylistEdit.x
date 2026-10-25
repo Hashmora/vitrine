@@ -1,12 +1,11 @@
 // Playlist redesign, iOS < 26: the Edit playlist page sheet on glass, the way the queue and the other sheets are.
 //
-// Tree (trees/continuous/19.txt:1242-1730, 21.txt, 22.txt, 23.txt): a page sheet whose pane is the black view of
-// Tome_PageTemplateImpl's loader (the navigation controller's superview), holding SPNavigationController with
-// EditItemsViewController: the list (#1F1F1F) under a 56pt SPNavigationBar (Cancel, the title, Save) that Spotify backs
-// with its own blur plate (#1C1C1C@0.73), and a StackedActionToolbarElement along the bottom (ToolbarContainerView,
-// #1F1F1F) with Encore Primary buttons: Select and Smart Reorder, then in select mode the exit cross, Move and Remove,
-// then Back, To top and To bottom. While tracks are dragged the bar's title holds an undo / redo pill
-// (UndoRedoBarElement, #FFFFFF@0.10, 23.txt).
+// Tree: a page sheet whose pane is the black view of Tome_PageTemplateImpl's loader (the navigation
+// controller's superview), holding SPNavigationController with EditItemsViewController: the list (#1F1F1F) under a 56pt
+// SPNavigationBar (Cancel, the title, Save) that Spotify backs with its own blur plate (#1C1C1C@0.73), and a
+// StackedActionToolbarElement along the bottom (ToolbarContainerView, #1F1F1F) with Encore Primary buttons: Select and
+// Smart Reorder, then in select mode the exit cross, Move and Remove, then Back, To top and To bottom. While tracks are
+// dragged the bar's title holds an undo / redo pill (UndoRedoBarElement, #FFFFFF@0.10).
 //
 //  - The pane gets the queue's glass and the screen's top corners (SGRGlassSheetView), darkened a little (kEditDim) so
 //    the bright page under it does not wash out the rows. The grey of the list and of the
@@ -14,7 +13,7 @@
 //  - The bar's blur plate goes, and the bar and the list are moved down 10pt: with the screen's corner radius on the
 //    pane the Cancel and Save at 8pt from the edge, 6pt from the top, would be cut.
 //  - With the plate gone the rows scrolled up under Cancel, the title and Save, and everything ran together
-//    (trees/continuous/8.txt: the table is the whole height of the sheet under the bar). The view holding the table
+//    (the table is the whole height of the sheet under the bar). The view holding the table
 //    and the toolbar is masked from the bar's bottom down, so the rows end where the header does.
 //  - Every button of the toolbar and the undo / redo pill is a glass capsule (SGRGlassFlatBox).
 //  - The two Smart Reorder popups (get smoother transitions, you have custom transitions) are Navigation sheets and are
@@ -22,12 +21,11 @@
 //    custom transitions) is glass tinted with the accent here, since its label is black.
 //  - The undo / redo pill is dressed from its own layout passes (PillStackView), not only from the bar's: it is made
 //    inside the title control as the first track is dragged, after the bar's pass that would have found it, so its glass
-//    came only once the list was scrolled and the bar laid out again (trees/continuous/5.txt, 6.txt: the pill with no
-//    glass in it).
-//  - The row that is being dragged is lifted on a #2A2A2A plate, r=8 (trees/continuous/1.txt: a plain UIView in the main
+//    came only once the list was scrolled and the bar laid out again.
+//  - The row that is being dragged is lifted on a #2A2A2A plate, r=8 (a plain UIView in the main
 //    window, scaled up a little, around a UIView with that fill that clips and holds a copy of the row). The plate's
-//    color is a preview parameter of Spotify's, set clear while the sheet is up; that alone did not take (the grey was
-//    still there in 1.txt), so the plate itself is cleared as well, when it comes into the window and as it is painted.
+//    color is a preview parameter of Spotify's, set clear while the sheet is up; that alone does not take, so the
+//    plate itself is cleared as well, when it comes into the window and as it is painted.
 //    The track is lifted bare.
 // Threading: main thread only.
 #import "Core/SGCore.h"
@@ -38,8 +36,8 @@
 static const CGFloat kEditShift = 10;
 
 // How much black the pane's glass carries over its body (SGRDimSheetGlass). The sheet floats over the playlist page,
-// whose artwork field is bright, and the plain glass read nearly white with the rows on it hard to make out
-// (trees/continuous/2.txt); the same dim the dialogs carry, a little lighter.
+// whose artwork field is bright, and the plain glass read nearly white with the rows on it hard to make out; the
+// same dim the dialogs carry, a little lighter.
 static const CGFloat kEditDim = 0.4;
 
 static char kToolbarGlassKey, kPopupGlassKey, kPillKey, kPillGlassKey;
@@ -155,8 +153,8 @@ static void dressButton(UIView *button) {
 // its backgroundColor) and on the plate itself. Only Spotify's grey, and only while the Edit playlist sheet is up.
 static char kLiftPlateKey;
 
-// The plate in the main window (trees/continuous/1.txt): a plain UIView that clips, r=8, inside a plain UIView that is
-// a child of the window itself (the holder the drag scales up). Nothing else of the app sits like that.
+// The plate in the main window: a plain UIView that clips, r=8, inside a plain UIView that is a child of the window
+// itself (the holder the drag scales up). Nothing else of the app sits like that.
 static BOOL isLiftPlate(UIView *view) {
     if (!sg_editNavigation.viewIfLoaded.window) return NO;
     if (object_getClass(view) != UIView.class) return NO;

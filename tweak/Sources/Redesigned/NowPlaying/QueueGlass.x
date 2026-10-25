@@ -6,11 +6,11 @@
 // clear.
 //
 // Reshuffle (and any other move of rows) leaves the rows that changed place painted #1F1F1F again, the cell and the
-// stack inside it (trees/continuous/1.txt: every played-through QueueCell and its TrackRowQueue.Cell stack, visible
-// and hidden, still grey with the glass clear around them) until a scroll lays the rows out anew. The sheet-wide hooks
-// of SGRRepaint.x did not catch that paint, and a row that only changes place gets no layout pass of its own, so
-// nothing cleared it. The cells clear their own grey now, as it is painted, as they are selected, attached or laid out,
-// and the table's reloads and moves run a few passes over its rows.
+// stack inside it (every played-through QueueCell and its TrackRowQueue.Cell stack, visible and hidden, still grey with
+// the glass clear around them) until a scroll lays the rows out anew. The sheet-wide hooks of SGRRepaint.x did not
+// catch that paint, and a row that only changes place gets no layout pass of its own, so nothing cleared it. The cells
+// clear their own grey now, as it is painted, as they are selected, attached or laid out, and the table's reloads and
+// moves run a few passes over its rows.
 //
 // The queue is built and painted after its first layout pass, so a chrome pass that runs only from
 // viewDidLayoutSubviews missed the bar of Shuffle / Repeat / Timer and the edit toolbar (both #1F1F1F)
@@ -82,9 +82,9 @@ static void glassClose(UIView *root) {
 // (prominent) and reads a step brighter than Clear and Edit instead of vanishing into the sheet.
 //
 // Encore draws the button's fill as a shape layer the size of the button in the plain view over the glass, not as a
-// background colour (trees/continuous/1.txt: SGLegacyGlassView first, then a 89.5x32 UIView with a CAShapeLayer), so
-// the capsule still read as Spotify's flat black one with the glass under it. That layer is hidden, not given a clear
-// fill, since Encore sets the fill again as the button is pressed and let go.
+// background colour (SGLegacyGlassView first, then a 89.5x32 UIView with a CAShapeLayer), so the capsule still read
+// as Spotify's flat black one with the glass under it. That layer is hidden, not given a clear fill, since Encore
+// sets the fill again as the button is pressed and let go.
 static void glassReshuffle(UIView *root) {
     UIView *button = SGRFindByIdentifier(root, @"reshuffle-button", &kReshuffleKey);
     UIView *glass = SGRGlassFlatBox(button, &kReshuffleGlassKey, YES);
@@ -98,8 +98,8 @@ static void glassReshuffle(UIView *root) {
     }
 }
 
-// The Now playing row's play / pause button (id=header-play-button, 15.txt): Spotify draws a dark grey shadow
-// under it that runs down over the glass. Taken off its layers, and again whenever Spotify lays it out.
+// The Now playing row's play / pause button (id=header-play-button): Spotify draws a dark grey shadow under
+// it that runs down over the glass. Taken off its layers, and again whenever Spotify lays it out.
 static void flattenPlay(UIView *button) {
     if (button.layer.shadowOpacity > 0) button.layer.shadowOpacity = 0;
     for (UIView *v in button.subviews) flattenPlay(v);

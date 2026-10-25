@@ -14,7 +14,7 @@
 
 // The corners UIKit cuts a menu with. Rounder ones, as iOS 26's menus have, were tried (24 pt): UIKit's own shape under
 // the platter (its shadow and cut-out) kept its 14 pt corners, and the glass's rim light ran round the rounder ones over
-// them (the phone, 2026-10-24), so the menu keeps UIKit's.
+// them, so the menu keeps UIKit's.
 static const CGFloat kMenuRadius = 14;
 static char kMenuGlassKey;
 
@@ -107,7 +107,7 @@ static void bubbleMenu(UIView *list) {
 %end
 
 // A long menu (a playlist's, some twenty rows) runs nearly the height of the screen, and still scrolls; it is held to a
-// shorter list that scrolls, so it stays a menu by the button rather than a sheet over the page (the phone, 2026-10-24).
+// shorter list that scrolls, so it stays a menu by the button rather than a sheet over the page.
 static const CGFloat kMenuMaxShare = 0.55;
 
 static void holdHeight(UIView *menuView) {

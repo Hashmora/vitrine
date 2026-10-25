@@ -12,11 +12,11 @@
 // The header is 142pt and holds no filter chips, so there is nothing here to close up: LibraryHeader.x shrinks
 // a header only where chips leave a band behind.
 //
-// Below iOS 26 the field and Cancel hold no glass of Spotify's (trees/continuous/11.txt: the field a flat
-// #FFFFFF@0.14 box, Cancel a grey label), so they get the glass every other search field of the redesign has
-// (SGRGlassFlatBox); Spotify paints the field's grey again as it is focused, which SGRRepaint.x keeps clear
-// (sgr_showSearchField). Cancel's label stands in a 40pt button at the trailing end of a 48pt box, 8pt in, so its
-// capsule is made inside that button, wider than it, and the boxes above stop clipping for it.
+// Below iOS 26 the field and Cancel hold no glass of Spotify's (the field a flat #FFFFFF@0.14 box, Cancel a grey
+// label), so they get the glass every other search field of the redesign has (SGRGlassFlatBox); Spotify paints
+// the field's grey again as it is focused, which SGRRepaint.x keeps clear (sgr_showSearchField). Cancel's label
+// stands in a 40pt button at the trailing end of a 48pt box, 8pt in, so its capsule is made inside that button,
+// wider than it, and the boxes above stop clipping for it.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Redesigned/Kit/SGRRepaint.h"
@@ -24,9 +24,9 @@
 
 static char kFieldKey, kCancelKey, kCancelButtonKey, kFieldGlassKey, kCancelGlassKey;
 
-// Room Cancel's capsule takes beside its label on each side, and its height (the field's). The capsule keeps
-// kEdgeInset from the screen's edge (the header's own inset) and kFieldGap from the field, so it narrows
-// and slides in before it reaches past either (trees/continuous/1.txt: the 60pt capsule ended at 392 on a 390pt screen).
+// Room Cancel's capsule takes beside its label on each side, and its height (the field's). The capsule keeps kEdgeInset
+// from the screen's edge (the header's own inset) and kFieldGap from the field, so it narrows and slides in before it
+// reaches past either (the 60pt capsule ended at 392 on a 390pt screen).
 static const CGFloat kCancelPadding = 10, kCancelHeight = 32, kEdgeInset = 8, kFieldGap = 6;
 
 static UIView *childNamed(UIView *host, NSString *marker) {
@@ -53,7 +53,7 @@ static void glassSearch(UIView *page, UIView *field, UIView *cancel) {
         UIView *glass = SGRGlassFlatBox(field, &kFieldGlassKey, NO);
         // Spotify grows the field from its collapsed size to the full row as the page opens, and the page's own
         // pass does not run again for that: the glass made at the collapsed size stayed 50pt wide in the middle of
-        // a 318pt field (trees/continuous/1.txt). It follows the field's bounds itself.
+        // a 318pt field. It follows the field's bounds itself.
         if (glass) {
             UIViewAutoresizing follow = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             if (glass.autoresizingMask != follow) glass.autoresizingMask = follow;

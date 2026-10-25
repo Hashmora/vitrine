@@ -1,9 +1,9 @@
 // Redesign, iOS < 26: Spotify's toasts (Added to Queue, Saved in Liked Songs and the rest) on glass.
 //
-// Tree (trees/continuous/26.txt:1459-1466): SPTSnackbarView id=SPTSnackbarView {8, 639} 374x50, in the main
-// content view above the now playing bar, holding a UIView #FFFFFF r=6 clips (the card), which holds an
-// SPTSnackbarWithActionView #FFFFFF around the label (13pt #000000) and, when the toast has an action, an
-// SPTSnackbarTextActionButton (id=SPTSnackbarTextButton, "Open" 13pt #19B551).
+// Tree: SPTSnackbarView id=SPTSnackbarView {8, 639} 374x50, in the main content view above the
+// now playing bar, holding a UIView #FFFFFF r=6 clips (the card), which holds an SPTSnackbarWithActionView
+// #FFFFFF around the label (13pt #000000) and, when the toast has an action, an SPTSnackbarTextActionButton
+// (id=SPTSnackbarTextButton, "Open" 13pt #19B551).
 //
 // The card is dressed the way the now playing bar is (Redesigned/NowPlayingBar): its white goes, a glass pane and
 // the faint white film that keeps a floating card from sinking into the page stand behind the content, and the
@@ -14,36 +14,36 @@
 // 374pt wide the toast ran over the controls at either edge of the page (the buttons of a header, the rows' trailing
 // buttons) and left a gap of nothing beside a short label, so the card is as wide as what it holds (the label, the
 // action and an even padding), centred in the view and never wider than kSideInset short of either edge. Spotify
-// lays the label and the button out for the 374, so the mod places both itself, also when the content lays out
-// again (trees/continuous/12.txt:1459-1470: the button's glass ran 26pt past a 342pt card). The strips of the view
-// that are left bare do not take touches.
+// lays the label and the button out for the 374, so the mod places both itself, also when the content lays out again
+// (the button's glass ran 26pt past a 342pt card). The strips of the view that are left bare do not take
+// touches.
 //
-// Spotify lays the content out for the 374 again whenever it lays out, whatever size the mod gave it (trees/continuous/6.txt:
-// 1459-1470: the content 374pt wide in a card of 193, the Open button at x=330 past the card's edge, so it was never
-// seen, and the card first drawn for the label alone). So the content is held to the card's size from its own layout,
-// and the action is measured by its word, not by a frame Spotify has not given it yet. A frame Spotify sets on the
-// content is held to the card's as well (setFrame:), so no pass of its own can put the button past the card's edge.
+// Spotify lays the content out for the 374 again whenever it lays out, whatever size the mod gave it (the content
+// 374pt wide in a card of 193, the Open button at x=330 past the card's edge, so it was never seen, and the card first drawn
+// for the label alone). So the content is held to the card's size from its own layout, and the action is measured by its
+// word, not by a frame Spotify has not given it yet. A frame Spotify sets on the content is held to the card's as well
+// (setFrame), so no pass of its own can put the button past the card's edge.
 //
-// A toast without an action (Removed from Liked Songs, trees/continuous/7.txt:1459-1466) holds an
-// SPTSimpleSnackbarContentView with only the label, and is dressed the same way: the card is as wide as the label.
+// A toast without an action (Removed from Liked Songs) holds an SPTSimpleSnackbarContentView with only
+// the label, and is dressed the same way: the card is as wide as the label.
 //
 // Spotify puts the toast above the now playing bar where the bar stands with the tab bar expanded. In the minimized
 // tab bar the bar moves down into the row (NowPlayingBar.x, by a transform Spotify does not know), and the toast
 // kept its height in the air above nothing. The card follows the bar by the same shift, in the animation of the tab bar.
 //
-// A multi-line label ran out of the card's right edge (trees/continuous/20.txt:1181-1188: the card 321pt wide, the
-// SPTEncoreLabel in it 281pt, the UILabel inside it still the 342pt Spotify laid it out for, so the text wrapped for 342
-// and ran 61pt past the card). Spotify does not size the inner label to the Encore label's frame, so the mod does, and
-// the label clips to its own bounds as a last line.
+// A multi-line label ran out of the card's right edge (the card 321pt wide, the SPTEncoreLabel in it 281pt,
+// the UILabel inside it still the 342pt Spotify laid it out for, so the text wrapped for 342 and ran 61pt past the
+// card). Spotify does not size the inner label to the Encore label's frame, so the mod does, and the label clips to its
+// own bounds as a last line.
 //
-// Some toasts are SwiftUI, in an SPTSnackbarViewFactoryView instead of an SPTSnackbarView ("You're now logged in as ...",
-// trees/continuous/11.txt:710-714): the same 374x50 view and plain card, but its content is a hosting view whose text is
-// drawn, not a label, and which paints the white itself. That card is dressed the same, its text is turned white as
-// Kit/SGRDrawnText.h says, and it is as wide as what the hosting view drew plus an even padding.
+// Some toasts are SwiftUI, in an SPTSnackbarViewFactoryView instead of an SPTSnackbarView ("You're now logged in as
+// ..."): the same 374x50 view and plain card, but its content is a hosting view whose text is drawn, not a label,
+// and which paints the white itself. That card is dressed the same, its text is turned white as Kit/SGRDrawnText.h says,
+// and it is as wide as what the hosting view drew plus an even padding.
 //
 // The shift into the minimized tab bar's row is the card's only where the toast stands over the bar. A toast raised from a
-// popup is laid out by Spotify at the bottom of the screen, with no bar under it (trees/continuous/18.txt:1834: the toast
-// at y=752 to 802, the bar at 697); the 68pt shift put the card at 820, below the screen's edge, where it was not seen.
+// popup is laid out by Spotify at the bottom of the screen, with no bar under it (the toast at y=752 to 802, the bar
+// at 697); the 68pt shift put the card at 820, below the screen's edge, where it was not seen.
 //
 // The toast is laid out as it comes up, so the pass runs from its layout; it runs again a moment later in case
 // Spotify paints the white back with the content.
@@ -62,8 +62,8 @@ static const CGFloat kActionHitX = 10, kActionHitY = 8;
 // The card's padding left of the label, and right of the label when the toast has no action.
 static const CGFloat kPadLeft = 20, kPadRight = 20;
 // The glass round the action stands this far inside the card's edge: (50 - kActionHeight) / 2, so the two capsules
-// are concentric and the glass never reaches the card's rim (trees/continuous/1.txt:1409-1418, 6.txt:1637-1646: the
-// glass ended on the card's edge, and its corners stood out of the card's).
+// are concentric and the glass never reaches the card's rim (the glass ended on the card's edge,
+// and its corners stood out of the card's).
 static const CGFloat kActionInset = 9;
 // The space between the label and the glass round the action.
 static const CGFloat kLabelGap = 16;

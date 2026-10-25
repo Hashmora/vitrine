@@ -1,11 +1,11 @@
 // Profile, iOS < 26: the Edit profile sheet on glass, as the Edit playlist sheet is (Playlist/PlaylistEdit.x).
 //
-// Tree (trees/continuous/6.txt:685-728): a page sheet whose pane is the black view of Tome_PageTemplateImpl's loader
-// (the navigation controller's superview), holding a UINavigationController with
-// Profile_CommonImpl.EditProfileViewController: EditProfileView (#000000) with the photo, the Name row and a 1pt rule,
-// under a 56pt UINavigationBar that Spotify backs with a black _UIBarBackground. The bar holds Cancel (a
-// _UIButtonBarButton at the leading edge), Save (the trailing one, #37F200@0.30 while there is nothing to save) and the
-// title "Edit Profile" in a _UINavigationBarTitleControl, all plain text.
+// Tree: a page sheet whose pane is the black view of Tome_PageTemplateImpl's loader (the navigation
+// controller's superview), holding a UINavigationController with Profile_CommonImpl.EditProfileViewController:
+// EditProfileView (#000000) with the photo, the Name row and a 1pt rule, under a 56pt UINavigationBar that Spotify
+// backs with a black _UIBarBackground. The bar holds Cancel (a _UIButtonBarButton at the leading edge), Save (the
+// trailing one, #37F200@0.30 while there is nothing to save) and the title "Edit Profile" in a
+// _UINavigationBarTitleControl, all plain text.
 //
 //  - The pane is left black, as Spotify draws it: it gets no glass and no corners (it had the queue's, which showed for a
 //    beat and then gave way to black). Whatever glass the page loader put on it while it showed its spinner is taken off.

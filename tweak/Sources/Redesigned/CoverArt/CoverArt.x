@@ -1,6 +1,6 @@
 // Redesign: glass for the controls of three small screens that were still Spotify's flat ones.
 //
-//   Eat this playlist   PlaylistCuration_CoverArtSnakeImpl.SnakeViewController (trees/continuous/9.txt): the two
+//   Eat this playlist   PlaylistCuration_CoverArtSnakeImpl.SnakeViewController: the two
 //                       buttons of its navigation bar become the playlist's own glass circles (Kit/SGRActionRow.h:
 //                       SGRPinnedBackOf and SGRPinnedTrailing, pinned to the page's corners and firing Spotify's
 //                       buttons), and the green Try again button becomes green glass. The circles were once glass
@@ -8,14 +8,14 @@
 //                       bar button is 51pt wide with its glyph inset to one side of it, and the glass is centred in
 //                       the button. Copying Spotify's own cross into the mirror left it off the middle too (its canvas
 //                       is padded unevenly), so the cross is the system's, drawn centred (SGRMirrorButton.ownGlyph).
-//   Spotify code        Scannables_ScannablesImpl.ScannablesImageViewController, in the ⋯ sheet (28.txt): Save to
+//   Spotify code        Scannables_ScannablesImpl.ScannablesImageViewController, in the ⋯ sheet: Save to
 //                       photos becomes white glass.
-//   Create cover art    PlaylistArtwork_EditPlaylistCoverArtPageImpl.EditPlaylistCoverArtView (30.txt): the Back
+//   Create cover art    PlaylistArtwork_EditPlaylistCoverArtPageImpl.EditPlaylistCoverArtView: the Back
 //                       cross becomes a glass circle and Create cover art white glass.
 //
-// Not here: the third window of Create cover art with its Save popup and its Text / Image labels (33.txt, 34.txt).
-// That screen is a web page (TheStage_VtecImpl, a WKWebView whose whole content is WKCompositingViews), so there is no
-// native control to put glass behind and nothing is done to it.
+// Not here: the third window of Create cover art with its Save popup and its Text / Image labels. That screen is a web
+// page (TheStage_VtecImpl, a WKWebView whose whole content is WKCompositingViews), so there is no native control to
+// put glass behind and nothing is done to it.
 //
 // Every control is Spotify's own and keeps its action and its accessibility: the glass is a subview of the control
 // (Kit/SGRGlass.h), the control's own fill is cleared, and the label is recolored for the material. The bar buttons of
@@ -104,8 +104,8 @@ static void dressSnakeBar(UIViewController *page) {
     if (add) SGRPinnedBackOf(view, add);
     UIView *close = SGRBarStackButton(content, NO);
     if (close) {
-        // Spotify's own cross has uneven padding in its canvas and sat off the middle of the circle once copied (9.txt),
-        // so the mirror draws the system cross at its own size, centred.
+        // Spotify's own cross has uneven padding in its canvas and sat off the middle of the circle once copied, so the
+        // mirror draws the system cross at its own size, centred.
         static UIImage *closeGlyph;
         if (!closeGlyph) {
             closeGlyph = [UIImage systemImageNamed:@"xmark"

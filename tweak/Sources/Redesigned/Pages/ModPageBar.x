@@ -1,11 +1,11 @@
 // The mod's own pages under the redesign, iOS < 26: Mod Settings and every page SGModPage draws, the bar of Listening
 // stats' over them (Pages/PageBar.m).
 //
-// Tree (trees/continuous/8.txt): the page is a UITableView the size of the screen on #000000, directly on
-// the SPNavigationController's stack (no hosting controller), so the list already runs under the bar. Over it
-// the navigation controller's blur (a plain 390x91 view holding a UIVisualEffectView), then SPNavigationBar with
-// Back, the title ("Vitrine") and an empty trailing stack. So the blur goes, Back is pinned to the page as a glass
-// circle and the title sits on a glass capsule; there is no ⋯ to carry (SGRDressBarPageBackOnly).
+// Tree: the page is a UITableView the size of the screen on #000000, directly on the SPNavigationController's
+// stack (no hosting controller), so the list already runs under the bar. Over it the navigation controller's blur
+// (a plain 390x91 view holding a UIVisualEffectView), then SPNavigationBar with Back, the title ("Vitrine") and an
+// empty trailing stack. So the blur goes, Back is pinned to the page as a glass circle and the title sits on a
+// glass capsule; there is no ⋯ to carry (SGRDressBarPageBackOnly).
 //
 // The page is the mod's own, so it dresses its own bar (SGDressPageBar, called from SGModPage's passes) instead of
 // being found by a hook on Spotify's controllers. The bar's own passes are watched too: UIKit makes its Back and

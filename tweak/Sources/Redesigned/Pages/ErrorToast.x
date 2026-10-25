@@ -1,17 +1,17 @@
 // Redesign, iOS < 26: the page loader's error toast, "Something went wrong / Have another go?" with its Reload button,
 // on glass like Spotify's other toasts (Kit/SGRSnackbar.x), Reload itself as Spotify made it.
 //
-// Tree (trees/continuous/3.txt): not an SPTSnackbarView. Tome_MusicClientPageLoaderViewKit.DefaultErrorToastView,
-// id=default-error-toast-view, 358x128 at the foot of a page that failed to load, #FFFFFF r=8 clips, holding two
-// Encore labels in black 16pt and 13pt and an Encore.Button.Primary "Reload" (74x32, its word 13pt black). The snackbar's
-// hooks never met it, so it stayed a flat white card in the middle of the glass look.
+// Tree: not an SPTSnackbarView. Tome_MusicClientPageLoaderViewKit.DefaultErrorToastView, id=default-error-toast-view,
+// 358x128 at the foot of a page that failed to load, #FFFFFF r=8 clips, holding two Encore labels in black 16pt and 13pt
+// and an Encore.Button.Primary "Reload" (74x32, its word 13pt black). The snackbar's hooks never met it, so it stayed a
+// flat white card in the middle of the glass look.
 //
-// It is dressed the way the snackbar's card is: the white goes, a glass pane and the faint film that keeps a floating
-// card from sinking into the page stand behind the content, the corners are rounder (kRadius), and the black text turns
-// white. Reload is left as Spotify draws it, its green and its black word: a glass capsule round it showed as a white rim
-// either side of the green (trees/continuous/2.txt:1221-1226), so the button takes none and nothing of its own is touched.
-// The cross at the top-left of the page (a Tertiary button beside the toast, 24x48) gets the round glass every top bar
-// button has (Kit/SGRGlass.h), the way the cover art page's does.
+// It is dressed the way the snackbar's card is: the white goes, a glass pane and the faint film that keeps a floating card
+// from sinking into the page stand behind the content, the corners are rounder (kRadius), and the black text turns white.
+// Reload is left as Spotify draws it, its green and its black word: a glass capsule round it showed as a white rim either
+// side of the green, so the button takes none and nothing of its own is touched. The cross at the top-left of
+// the page (a Tertiary button beside the toast, 24x48) gets the round glass every top bar button has (Kit/SGRGlass.h), the
+// way the cover art page's does.
 // Threading: main thread only.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"

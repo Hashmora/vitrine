@@ -6,7 +6,7 @@
 // How long a noted control waits for what replaces it: the two are shown and hidden in one pass of Spotify's, a turn of
 // the run loop apart at most, and a morph from a control that went long ago would fly from nowhere.
 static const CFTimeInterval kLeavingLife = 0.4;
-// The shape's spring and its fade (the recording: the new controls are whole about 0.2 s after the tap, settled by 0.35).
+// The shape's spring and its fade (as on iOS 26: the new controls are whole about 0.2 s after the tap, settled by 0.35).
 static const NSTimeInterval kMorphDuration = 0.38, kMorphFadeDelay = 0.2, kMorphFadeDuration = 0.16;
 static const CGFloat kMorphDamping = 0.8;
 // The arriving control's own drawing comes in under the shape, from a little smaller.
@@ -16,12 +16,11 @@ static const CGFloat kArriveScale = 0.9;
 static const NSTimeInterval kBarStagger = 0.04;
 static const CGFloat kBarScale = 0.86;
 
-// The bubble: the drop leaves the control at most this big across and grows to this share of the menu's shorter side
-// as it flies, then opens out this far past the menu's edge before it settles. The flight takes the first share of the
-// time and the opening out reaches past the edge at the second (the recording: off the button by 0.15 s, a circle half
-// the menu by 0.22, the menu whole by 0.35, so about 0.4 s in all).
-// Stronger than the recording's timings alone gave: at a 4 pt overshoot and a quick flight it read as the menu fading in
-// (the phone, 2026-10-24), so the circle stays a circle a little longer and opens out further past the edge.
+// The bubble: the drop leaves the control at most this big across and grows to this share of the menu's shorter side as
+// it flies, then opens out this far past the menu's edge before it settles. The flight takes the first share of the time
+// and the opening out reaches past the edge at the second: about 0.4 s in all, as on iOS 26. The circle stays a circle
+// a little longer and opens out further past the edge than iOS 26's timings alone give, since with a small overshoot
+// and a quick flight the menu reads as fading in.
 static const CGFloat kBubbleMinDrop = 30, kBubbleMaxDrop = 56, kBubbleGrowShare = 0.55, kBubbleOvershoot = 9;
 static const NSTimeInterval kBubbleDuration = 0.5, kBubbleRowsDelay = 0.16;
 static const double kBubbleFlightShare = 0.46, kBubblePastShare = 0.78;
@@ -200,7 +199,7 @@ void SGRGlassBubbleOpen(UIView *target, CGFloat targetRadius) {
         // The menu itself is the bubble, as iOS 26's is: a mask cut from it starts as a drop over the button, flies to
         // its middle growing as a circle, and opens out into its shape a little past it before it settles. Its glass and
         // its rows show through the whole way. A drop of glass laid over the menu instead hid it until the end and read
-        // as a flat disc of the page's colour (the phone, 2026-10-24).
+        // as a flat disc of the page's colour.
         CGPathRef start = roundedPath(around(from, drop), drop / 2);
         CGPathRef flown = roundedPath(around(middle, grown), grown / 2);
         CGPathRef past = roundedPath(CGRectInset(bounds, -kBubbleOvershoot, -kBubbleOvershoot), targetRadius + kBubbleOvershoot);

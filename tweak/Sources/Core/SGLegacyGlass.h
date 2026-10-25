@@ -42,8 +42,8 @@ BOOL SGLegacyGlassAvailable(void);
 @property (nonatomic) CGFloat lensScale;
 
 // Clear glass, the system's .clear as a held control's thumb wears it: what is behind keeps its own colours (no
-// saturation; the panes' boost turned a switch's green track into a neon blob under its thumb, the phone, 2026-10-23)
-// and is barely blurred (adaptive_liquid_glass's clearDark: saturation 0.96, blur sigma 1.23). NO by default.
+// saturation; the panes' boost turned a switch's green track into a neon blob under its thumb) and is barely blurred
+// (adaptive_liquid_glass's clearDark: saturation 0.96, blur sigma 1.23). NO by default.
 @property (nonatomic) BOOL clear;
 
 // The backdrop at the screen's scale rather than at 1x, so what shows through is as sharp as the screen (the tab bar's

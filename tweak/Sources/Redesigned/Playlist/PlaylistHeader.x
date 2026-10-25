@@ -446,7 +446,7 @@ static void applyToolbar(UIView *headerRoot) {
     static char kFieldKey, kSortBoxKey, kFieldGlassKey, kSortGlassKey;
     SGRPinnedBack(SGRPlaylistPageOf(headerRoot), headerRoot);
     // A playlist's field and its Sort button share Components.Header.UI.Toolbar.Content. Your Episodes has the
-    // field alone, straight in the header (trees/continuous/3.txt).
+    // field alone, straight in the header.
     UIView *toolbar = SGRFindByIdentifier(headerRoot, @"Components.Header.UI.Toolbar.Content", &kToolbarKey);
     UIView *field = SGRFindByIdentifier(toolbar ?: headerRoot, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey);
     SGRGlassFlatBox(field, &kFieldGlassKey, NO);

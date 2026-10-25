@@ -1,14 +1,15 @@
-// Redesign, iOS < 26: the body of the AI playlist's chat on glass (AIPlaylist_PlaylistCreationPageImpl.PlaylistCreationView,
-// trees/continuous/4.txt, 5.txt). The header's buttons are AIPlaylistGlass.x, the ⋯'s popup AIPlaylistMore.x.
+// Redesign, iOS < 26: the body of the AI playlist's chat on glass
+// (AIPlaylist_PlaylistCreationPageImpl.PlaylistCreationView). The header's buttons are AIPlaylistGlass.x, the ⋯'s popup
+// AIPlaylistMore.x.
 //
 //   Responses       every message of Spotify AI is a glass plate, the one the chat pins above the footer and the ones in its list (the
-//                   "Great, let me look through our catalog..." that stands in while a request is answered, trees/continuous/2.txt:165, and
-//                   the replies, 4.txt:1008): bubbles painted #2A2A2A, told from the user's own (#000000, 320 wide, 2.txt:176), which stay
+//                   "Great, let me look through our catalog..." that stands in while a request is answered, and
+//                   the replies): bubbles painted #2A2A2A, told from the user's own (#000000, 320 wide), which stay
 //                   Spotify's. The plate carries the Kit's white film, since plain glass over the black page is a hole, not a plate, and
 //                   no border of its own or Spotify's.
 //   Last response   the message the chat pins above the footer ("Here's a playlist of your top played songs..."):
 //                   Components.UI.ChatItemOverlayRow.Button, a plain view 390 x 76 that is the page's own child, holding a fade
-//                   to black (two GradientViews and a 16pt black strip, 4.txt:1596-1600), the ChatBubble #2A2A2A and the
+//                   to black (two GradientViews and a 16pt black strip), the ChatBubble #2A2A2A and the
 //                   button over it. The bubble is the view's full width, but what shows is its mask: the same 358pt plate
 //                   16pt in from each side that the text's 32pt inset comes from. The mask goes (glass drawn under a layer mask
 //                   is cut off or not drawn, as in the transcript's Report a problem popup, Kit/SGRSheetPopups.x) and the plate
@@ -22,13 +23,13 @@
 //                   behind: nothing but the page is opaque there now, and the glass shows the list scrolling under it.
 //   Refine field    the white capsule (a stack #FFFFFF r=24, 227 x 48) is a glass capsule with the Kit's white film
 //                   (SGRGlassFillBox), not a flat white. The glass is the box's own size by autoresizing, as Create narrows the box
-//                   from 358 to 227pt (a pane sized from outside stayed 358 wide, 3.txt:903), and it answers no press: the grown,
+//                   from 358 to 227pt (a pane sized from outside stayed 358 wide), and it answers no press: the grown,
 //                   stretched glass of one lagged behind a finger on a field that is typed into. Its dark text goes light, as the
 //                   placeholder (#5A5A5A) and the icon, which were drawn for white, and the 13pt GradientView along its top, a fade
-//                   white to clear for text scrolling under it, is concealed: on glass it is a white band (1.txt:131).
+//                   white to clear for text scrolling under it, is concealed: on glass it is a white band.
 //   Try asking      Components.UI.PromptsCarouselRow.CardButton, 212 x 120: a view #FFFFFF@0.07 r=16 inside the button, which
 //                   goes clear, and a glass card of the same size and radius behind it. The card's text stays Spotify's. The card
-//                   fills its scroll view, and the scroll view and the cell clip to their bounds (1.txt:75-77), so the press's grown
+//                   fills its scroll view, and the scroll view and the cell clip to their bounds, so the press's grown
 //                   glass was cut off at the card's own edge: they are let go of their clip, up to the collection view.
 //
 // The bubble, the cards and the field are dressed from their own layout passes (the collection lays its cells out
@@ -74,7 +75,7 @@ static void clearPaint(UIView *view) {
 }
 
 // The fades and the wide black views under `root`, a few levels down: the footer holds its black in a stack, in a view, in a view
-// of 64pt, above everything the footer draws (4.txt:1560-1566). The field, Create and the text view are deeper or not black.
+// of 64pt, above everything the footer draws. The field, Create and the text view are deeper or not black.
 static void clearPlates(UIView *root, int depth) {
     if (depth > 3) return;
     for (UIView *sub in root.subviews) {
@@ -292,7 +293,7 @@ void SGRAIPlaylistDressChat(UIView *page) {
 %ctor {
     if (!SGRedesignedUI()) return;
     if (!SGBelowiOS26()) return;
-    // The classes by the names the trees print (4.txt:1596, 1465, 5.txt:1481): Swift's, nested or private to a file.
+    // The classes by the names the trees print: Swift's, nested or private to a file.
     Class bubble = NSClassFromString(@"_TtCOOE17AIPlaylist_ECMKitO19LegacyUI_ECMCoreKit10Components14ChatItemBubble2UI10ChatBubble");
     if (bubble) {
         sBubbleHooked = YES;

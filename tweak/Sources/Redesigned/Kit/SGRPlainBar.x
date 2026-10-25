@@ -1,31 +1,32 @@
 // Redesign, iOS < 26: the pages that sit under UIKit's own navigation bar instead of drawing a header of
 // their own -- Chapters (Show all of an episode's Chapters), Listening stats and its Top artists and Top
-// songs, a track or an artist opened from them, Your Premium and its Manage subscription, and SongDNA (its Share and Close pinned as glass circles, 37.txt). Each is a controller
-// hosted by Navigation_PageAPIIntegrationImpl.MusicAppPageHostingViewController (trees/continuous/9 to 13, 18).
+// songs, a track or an artist opened from them, Your Premium and its Manage subscription, and SongDNA (its
+// Share and Close pinned as glass circles). Each is a controller hosted by
+// Navigation_PageAPIIntegrationImpl.MusicAppPageHostingViewController.
 //
-// So are Messages (Campfire_RecentChatsPageImpl, 7.txt: Back, the title and the compose button, which the ⋯'s pinned
-// button draws in glass) and Settings with all its sections (Settings_PlatformImpl.SettingsListViewController, 9.txt and
-// 11.txt to 18.txt). Settings has no ⋯: its bar is dressed with Back and the title only (SGRDressBarPageBackOnly),
-// whatever else Spotify keeps at the trailing edge.
+// So are Messages (Campfire_RecentChatsPageImpl: Back, the title and the compose button, which the ⋯'s pinned button
+// draws in glass) and Settings with all its sections (Settings_PlatformImpl.SettingsListViewController). Settings
+// has no ⋯: its bar is dressed with Back and the title only (SGRDressBarPageBackOnly), whatever else Spotify keeps at
+// the trailing edge.
 //
 // The bar is dressed by Pages/PageBar.m, as Recents' and Your Updates' are: Spotify's blur behind it drawn by
 // nothing, its Back and its Share pinned to the page as glass circles at the corners, the title on a glass
 // capsule in white. Pinned, and not a glass put inside the bar's own buttons: the Back of the bar is UIKit's, and
-// the swipe back moves its chevron and its mask about and builds it again, so a circle inside it ended up on
-// one layer with the chevron on another, under it and off centre (device, 2026-10-15, trees/continuous/9.txt,
-// 11.txt). The chevron the bar draws sits 6pt left of the middle of its button besides.
+// the swipe back moves its chevron and its mask about and builds it again, so a circle inside it ended up on one
+// layer with the chevron on another, under it and off centre. The chevron the bar draws sits 6pt left of the
+// middle of its button besides.
 //
 // It is dressed from the bar's own layout passes as well as the page's: the page's child controller is made once
 // its data has loaded, which no pass of the hosting controller follows, so a page opened at the top of its list
-// showed Spotify's bar until it was scrolled (9.txt).
+// showed Spotify's bar until it was scrolled.
 //
 // Its blur is kept off from the push (SGRSyncBarBlur, Pages/PageAppearance.x), not from the first pass that finds the bar.
 //
 // And the page itself is made dark. Under the redesign these lists drew a white UICollectionView under
-// their white labels until the app was left and entered again (device, 2026-10-14), so every hosted page
-// is given the dark appearance, which Spotify has everywhere, and the two Stats lists are cleared of the
-// white they were painted. Manage subscription paints a black band as high as the bar over its list
-// (13.txt:100), which is drawn by nothing here.
+// their white labels until the app was left and entered again, so every hosted page is given the dark
+// appearance, which Spotify has everywhere, and the two Stats lists are cleared of the white they were
+// painted. Manage subscription paints a black band as high as the bar over its list, which is drawn by
+// nothing here.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Redesigned/Pages/Pages.h"

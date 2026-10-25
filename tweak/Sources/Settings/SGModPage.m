@@ -1042,8 +1042,8 @@ static void showWaiting(UITableViewCell *cell, BOOL waiting, NSString *switchTit
 
 // A UISwitch or an SGGlowSwitch, both answering isOn.
 // Reloads the table once no slider on it is under a finger. A reload mid-drag gave the dragged slider's cell to another
-// row, so the finger went on moving that row's slider instead (the phone, 2026-10-24: Music Haptics' Strength, dragged
-// just after the switch over it was turned on, handed the drag to Controls' Strength above it).
+// row, so the finger went on moving that row's slider instead (a Strength slider dragged just after the switch over it
+// was turned on handed the drag to the Strength slider above it).
 static BOOL sliderHeld(UIView *view) {
     if ([view isKindOfClass:UISlider.class] && ((UISlider *)view).isTracking) return YES;
     for (UIView *sub in view.subviews) if (sliderHeld(sub)) return YES;

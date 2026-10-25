@@ -328,13 +328,13 @@ static UIMenu *inlineGroup(NSArray<UIMenuElement *> *children) {
 
 @implementation SGRMenuAnchor
 
-// iOS 26's menu takes the place of the button it opens from: the button goes as the menu comes out of it and is back
-// as the menu goes. Below iOS 26 the ⋯ under the menu is faded out for as long as the menu is up (the phone, 2026-10-24:
-// it stayed beside the menu). Its alpha before is put back, whatever the page had it at.
+// iOS 26's menu takes the place of the button it opens from: the button goes as the menu comes out of it and is back as
+// the menu goes. Below iOS 26 the ⋯ under the menu is faded out for as long as the menu is up, rather than standing
+// beside it. Its alpha before is put back, whatever the page had it at.
 static char kFadedAlphaKey;
 
 // iOS 26 opens a button's menu from the button's top, where the button was; below iOS 26 UIKit hangs it from the
-// button's middle, a half button lower. It hangs from the top here (the phone, 2026-10-24).
+// button's middle, a half button lower. It hangs from the top here.
 - (CGPoint)menuAttachmentPointForConfiguration:(UIContextMenuConfiguration *)configuration {
     CGPoint point = [super menuAttachmentPointForConfiguration:configuration];
     if (@available(iOS 26.0, *)) return point;
