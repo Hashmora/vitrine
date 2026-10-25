@@ -670,8 +670,8 @@ static void showWaiting(UITableViewCell *cell, BOOL waiting, NSString *switchTit
 }
 
 // Waiting through the switch it waits on too: a row under a switch that itself waits on another (Music Haptics >
-// Everywhere > On the lock screen) is grayed while either is off, not only its own (the phone, 2026-10-24: On the
-// lock screen stayed live with Music Haptics off). A few steps at most, so a loop of rows cannot hang the page.
+// Everywhere > On the lock screen) is grayed while either is off, not only its own (On the lock screen stayed
+// live with Music Haptics off). A few steps at most, so a loop of rows cannot hang the page.
 - (BOOL)isWaiting:(SGModRow *)row {
     SGModRow *at = row;
     for (int step = 0; step < 4 && at.waitsOn; step++) {

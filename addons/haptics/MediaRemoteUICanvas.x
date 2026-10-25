@@ -1,7 +1,7 @@
 // Vitrine Addon in MediaRemoteUI, the lock screen's Canvas below iOS 26: MediaRemoteUI draws the lock screen's player
 // and, when its cover is tapped, the large cover over the lock screen, in a window of its own
 // (MediaRemoteUI.SecureWindow, full screen) holding MediaRemoteUI.CoverSheetBackgroundView: an MTKView for the coloured
-// field and the large MRUArtworkView, 352pt on a 414pt phone (the phone's tree, 2026-10-24). The player's own small
+// field and the large MRUArtworkView, 352pt on a 414pt phone. The player's own small
 // cover is in its other window, and the system takes it away as the large one opens.
 //
 // While the large cover is open, Spotify's switch is on (kSGRelayLockArtOn) and SpringBoard has shared the song's clip
@@ -10,7 +10,7 @@
 // A clip that comes later takes the cover's place as it comes; with none the system's cover stays as it is, and closed,
 // everything of the system's comes back. The clip holds still while the song is paused.
 //
-// MediaRemoteUI gives the large cover its alpha back as it animates (the phone, 2026-10-25: the cover stayed over the clip
+// MediaRemoteUI gives the large cover its alpha back as it animates (the cover would stay over the clip
 // until the screen had gone off and on a few times), so a hidden cover keeps alpha 0 whatever it is set to, and gets the
 // last alpha MediaRemoteUI asked for back. A tap that closes the large cover (the field's own, heard alongside it) gives
 // the cover back at once, for MediaRemoteUI to shrink it into the player as it does with no clip, and fades the clip out

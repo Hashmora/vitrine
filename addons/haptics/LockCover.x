@@ -1,12 +1,12 @@
 // Vitrine Addon in SpringBoard, the lock screen's Canvas below iOS 26: SpringBoard's share of it. The lock screen's
 // player and its large cover are drawn by MediaRemoteUI, which only shows in SpringBoard's lock screen as a scene of its
-// own (the phone, 2026-10-24: the cover sheet's tree had neither, MediaRemoteUI's had both), so the clip is put in the
+// own (the cover sheet has neither, MediaRemoteUI has both), so the clip is put in the
 // large cover's place there (MediaRemoteUICanvas.x). Here:
 //
 //   the clip    Spotify's for the song (kSGRelayLockClip), read through the data container of the now playing app and
 //               copied to the jailbreak's shared caches (SGLockSharedClipPath), where MediaRemoteUI, sandboxed, can read
 //               it; MediaRemoteUI is told by kSGRelayLockClipShared. kSGRelayLockClipNone comes from Spotify to both.
-//   the widgets the row under the clock (CSProminentEmptyElementView, the phone's cover sheet, 2026-10-24) hidden while
+//   the widgets the row under the clock (CSProminentEmptyElementView) hidden while
 //               MediaRemoteUI shows the clip (kSGRelayLockShowing), and given back as it stops.
 //
 // Nothing is walked or hooked on the lock screen's layout: the widgets' row is looked for only as it is to be hidden.

@@ -74,7 +74,7 @@ static inline NSString *SGLockSharedClipPath(void) {
 #define kSGRelayLockOff kSGRelayPrefix "lockscreen.0"
 // A rumble that is on is posted again at least this often, unchanged or not, and the add-on stops one it has not heard
 // of for kSGRelayRumbleLapse: a Spotify that went away mid-rumble (another copy of it opened, the app killed) left the
-// last level vibrating with nothing to stop it (the phone, 2026-10-24).
+// last level vibrating with nothing to stop it.
 #define kSGRelayRumbleKeepalive 0.2
 #define kSGRelayRumbleLapse 0.6
 
