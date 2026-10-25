@@ -41,7 +41,7 @@ static UIColor *barFilmColor(void) {
 // The bar is a floating capsule, not a full-width slab.
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
-// The capsule itself, never the safe-area room under it: glassHeight() can be 83pt on a Face ID phone
+// The capsule itself, never the safe-area room under it: SGRTabBarGlassHeight() can be 83pt on a Face ID phone
 // (harness/tabbar/README.md) because it includes the home-indicator strip. 64pt is Telegram's pill (a 56pt
 // item row with 4pt inside, TabBarComponent.swift). Without labels it is shorter, and UIKit still lays the
 // icon out as if one sat below it, so the icon is nudged down by kNavIconOnlyImageShift (the two are tuned
@@ -55,7 +55,6 @@ static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its it
 static const CGFloat kSelPillInset = 3;     // gap between the selection pill and the capsule's edge
 static const CGFloat kLensOverhang = 3;     // how far the held bubble stands out of the capsule's rim, above and below
 static __weak UIView *sg_stockBar;
-static CGFloat sg_room, sg_glassHeight;   // see "room for the glass bar"
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
 static BOOL sg_minimized;
 static CGRect sg_leadFrame, sg_trailFrame;
@@ -153,6 +152,7 @@ static void followCreateClose(UIView *stockBar);
 #pragma mark - the compact bar's circles
 
 static UIColor *openTabColor(void);
+static BOOL tintedTabs(void);
 
 // The disc's mask with the plus cut out of it, turned as the open plus is: the disc in the accent shows the glass
 // through the plus, the way it looked before Tabs in the accent, rather than a plus of its own on top.
@@ -179,7 +179,7 @@ static CALayer *discHole(UIImage *glyph, CGFloat size) {
 // With Tabs in the accent the disc is the accent's and the plus is cut out of it.
 static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
     UIColor *accent = openTabColor();
-    BOOL tinted = ![accent isEqual:UIColor.whiteColor];
+    BOOL tinted = tintedTabs();
     disc.backgroundColor = tinted ? accent : UIColor.whiteColor;
     UIImage *image = [glyph isKindOfClass:UIImageView.class] ? ((UIImageView *)glyph).image : nil;
     disc.layer.mask = tinted ? discHole(image, disc.bounds.size.width) : nil;
@@ -420,14 +420,12 @@ static void pruneStrayButtons(UITabBar *bar) {
 
 // The tabs' color: the accent with Tabs in the accent on (SGRKeyTabAccent), else white. Every tab takes it; the open
 // one stands out by its filled glyph, as it does in white.
-static UIColor *openTabColor(void) {
-    if (!SGFlag(SGRKeyTabAccent, NO)) return UIColor.whiteColor;
-    NSInteger rgb = SGRAccentRGB();
-    return [UIColor colorWithRed:((rgb >> 16) & 0xFF) / 255.0 green:((rgb >> 8) & 0xFF) / 255.0 blue:(rgb & 0xFF) / 255.0 alpha:1];
-}
-
 static BOOL tintedTabs(void) {
     return SGFlag(SGRKeyTabAccent, NO);
+}
+
+static UIColor *openTabColor(void) {
+    return tintedTabs() ? SGRAccent() : UIColor.whiteColor;
 }
 
 // The bar's appearance, every tab in openTabColor, set again only when that changes: with an appearance set, tintColor
@@ -468,7 +466,7 @@ static void paintGlyphs(UITabBar *bar) {
     if (!items.count || buttons.count != items.count) return;
     applyTabColors(bar);
     UIColor *open = openTabColor();
-    BOOL tinted = ![open isEqual:UIColor.whiteColor];
+    BOOL tinted = tintedTabs();
     for (NSUInteger i = 0; i < items.count; i++) {
         UITabBarItem *item = items[i];
         UIView *button = buttons[i];
@@ -811,7 +809,7 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
     UIEdgeInsets insets = [super safeAreaInsets];
     // The host stands kNavGlassBottomMargin above the real safe area, which UITabBar would read as extra
     // home-indicator padding and push the icons off-centre, so it is cancelled out.
-    insets.bottom = MAX(0, insets.bottom - sg_room - kNavGlassBottomMargin);
+    insets.bottom = MAX(0, insets.bottom - SGRTabBarRoom() - kNavGlassBottomMargin);
     return insets;
 }
 
@@ -823,63 +821,19 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
 }
 @end
 
-@interface SGRLegacyHomeHold : UILongPressGestureRecognizer
-@end
-
-@implementation SGRLegacyHomeHold
-+ (void)held:(SGRLegacyHomeHold *)hold {
-    if (hold.state == UIGestureRecognizerStateBegan) SGOpenModSettings(hold.view);
-}
-@end
-
-// On Spotify's own bar a hold that begins fails the item's tap recognizer, so Home is not tapped too.
-static void holdHome(UIView *stockBar) {
-    UIView *home = SGRowIn(stockBar).arrangedSubviews.firstObject;
-    if (!home) return;
-    for (UIGestureRecognizer *recognizer in home.gestureRecognizers) {
-        if ([recognizer isKindOfClass:SGRLegacyHomeHold.class]) return;
-    }
-    [home addGestureRecognizer:[[SGRLegacyHomeHold alloc] initWithTarget:SGRLegacyHomeHold.class action:@selector(held:)]];
-}
-
 #pragma mark - room for the glass bar
 
-// The glass bar is taller than Spotify's 49 pt row over the bottom safe area of TabBarContainerImpl's view, which
-// sets the heights of the tab bar, the now playing bar and the pages. A phone with a home button, or Spotify's
-// message bar (Offline, Private Session) taking the inset, leaves the two bars mismatched, so the view gets the
-// difference as additional safe area and Spotify lays everything out for the glass bar.
-static const CGFloat kStockRow = 49;
-
-// What UIKit's bar asks for with no room made. SGRLegacyTabBarHost keeps the room out of it, so it is kept and not
-// asked again, or the bar would ask for more every pass.
-static CGFloat glassHeight(UITabBar *bar, UIView *stockBar) {
-    if (sg_room < 0.5 || sg_glassHeight <= 0) sg_glassHeight = [bar sizeThatFits:CGSizeMake(stockBar.bounds.size.width, kStockRow)].height;
-    return sg_glassHeight;
-}
-
+// The room itself is TabBarRoom.m's, shared with TabBar.x.
 static void makeRoom(UIViewController *container) {
     UIView *stockBar = sg_stockBar;
-    UITabBar *bar = stockBar ? objc_getAssociatedObject(stockBar, &kBarKey) : nil;
-    if (!bar.window || !container.isViewLoaded || ![stockBar isDescendantOfView:container.view]) return;
-    UIEdgeInsets extra = container.additionalSafeAreaInsets;
-    CGFloat inset = container.view.safeAreaInsets.bottom - extra.bottom;
-    CGFloat height = glassHeight(bar, stockBar);
-    // Spotify's regular width bar is a fixed 76 pt that ignores the inset.
-    BOOL compact = container.traitCollection.horizontalSizeClass == UIUserInterfaceSizeClassCompact;
-    CGFloat room = compact ? MAX(0, ceil(height - kStockRow - inset)) : 0;
-    if (fabs(extra.bottom - room) < 0.5) return;
-    sg_room = extra.bottom = room;
-    container.additionalSafeAreaInsets = extra;
+    SGRMakeTabBarRoom(container, stockBar, stockBar ? objc_getAssociatedObject(stockBar, &kBarKey) : nil);
 }
 
-// Create's menu closing is not announced (it pushes nothing), so it is polled for. Matched by id, by class name and
-// by anything presented over the container, so one changed id does not stop it from ever firing.
+// Create's menu closing is not announced (it pushes nothing), so it is polled for: the menu itself, or anything
+// presented over the container, so one changed id does not stop it from ever firing. The presentation is asked first,
+// as it costs nothing.
 static BOOL createMenuIsUp(UIView *stockBar) {
-    __block BOOL up = NO;
-    SGForEachView(stockBar.window ?: stockBar, ^(UIView *v) {
-        up = up || [v.accessibilityIdentifier isEqualToString:@"CreateMenu"] || [NSStringFromClass(v.class) containsString:@"CreateMenuView"];
-    });
-    return up || containerOf(stockBar).presentedViewController != nil;
+    return containerOf(stockBar).presentedViewController != nil || SGRCreateMenuUp(stockBar);
 }
 
 // Once the menu is gone the selection follows Spotify if the menu took it to another tab, and otherwise goes back to
@@ -893,7 +847,7 @@ static void settleAfterCreate(UIView *stockBar) {
     BOOL sameTab = open == bar.sourceBeforeCreate || (open && bar.labelBeforeCreate.length && [labelIn(open).text isEqualToString:bar.labelBeforeCreate]);
     if (open && !sameTab) {
         // The menu took Spotify to another tab: that brings the full bar back, as any other tab does.
-        SGRLegacySetTabBarMinimized(NO, YES);
+        SGRSetTabBarMinimized(NO, YES);
         syncBarExternalChange(stockBar);
         return;
     }
@@ -1066,7 +1020,7 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
             // opens nothing (passed on, the tap would take Spotify's stack to its root).
             lead.onTap = ^{
                 if (sg_minimized) {
-                    SGRLegacySetTabBarMinimized(NO, YES);
+                    SGRSetTabBarMinimized(NO, YES);
                     return;
                 }
                 tapItem(weakStock, weakLead.item);
@@ -1165,25 +1119,9 @@ BOOL SGRLegacyTabBarMinimized(void) {
     return sg_minimized;
 }
 
-// The scroll asks from inside -[UIScrollView setContentOffset:], which Spotify can call inside an animation of
-// its own, and the spring would then take that animation's length (TabBar.x, "minimized"). So a change asked for
-// inside one is made on the main queue's next turn, outside it, and only if nothing was asked for since; one asked
-// for outside any is made at once, and one with no animation stays at once too.
-static NSUInteger sg_request;
-
-void SGRLegacySetTabBarMinimized(BOOL minimized, BOOL animated) {
-    NSUInteger request = ++sg_request;
-    if (!animated) {
-        [UIView performWithoutAnimation:^{ setMinimized(minimized, NO); }];
-        return;
-    }
-    if (UIView.areAnimationsEnabled && UIView.inheritedAnimationDuration <= 0) {
-        setMinimized(minimized, YES);
-        return;
-    }
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (request == sg_request) setMinimized(minimized, YES);
-    });
+// When the change is made, inside an animation of Spotify's or not, is SGRSetTabBarMinimized's (TabBar.x).
+void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated) {
+    setMinimized(minimized, animated);
 }
 
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height) {
@@ -1389,7 +1327,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     CGFloat width = bounds.size.width;
     // The host is as tall as the room (the bar asks for up to 83 pt, mostly home-indicator strip); only the bar and
     // its glass are pinned to the platter's height. It floats kNavGlassBottomMargin off the bottom edge.
-    CGFloat height = MAX(bounds.size.height, glassHeight(bar, stockBar));
+    CGFloat height = MAX(bounds.size.height, SGRTabBarGlassHeight(bar, stockBar));
     CGRect frame = CGRectMake(0, CGRectGetMaxY(bounds) - height - kNavGlassBottomMargin, width, height);
     if (!CGRectEqualToRect(host.frame, frame)) host.frame = frame;
 
@@ -1481,7 +1419,7 @@ static void itemDidLayOut(UIView *item) {
     UIView *bar = tabBarOf(item);
     if (!bar) return;
     SGRComposeTabBar(bar);
-    holdHome(bar);
+    SGRHoldHomeForModSettings(bar);
     syncBar(bar);
 }
 
@@ -1494,7 +1432,7 @@ static void itemDidLayOut(UIView *item) {
     for (UIView *sub in ((UIView *)self).subviews) {
         if (![sub isKindOfClass:SGRLegacyTabBarHost.class]) [sub layoutIfNeeded];
     }
-    holdHome((UIView *)self);
+    SGRHoldHomeForModSettings((UIView *)self);
     syncBar((UIView *)self);
 }
 %end
@@ -1523,7 +1461,7 @@ static void itemDidLayOut(UIView *item) {
         // and hides nothing of it, so the bar stays while the menu is up (settleAfterCreate looks again after).
         UIView *bar = sg_stockBar;
         SGRLegacyTabBar *legacy = bar ? objc_getAssociatedObject(bar, &kBarKey) : nil;
-        if (!(sg_minimized && bar && (legacy.awaitingCreateClose || createMenuIsUp(bar)))) SGRLegacySetTabBarMinimized(NO, YES);
+        if (!(sg_minimized && bar && (legacy.awaitingCreateClose || createMenuIsUp(bar)))) SGRSetTabBarMinimized(NO, YES);
         if (bar) syncBarExternalChange(bar);
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{

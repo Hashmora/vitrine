@@ -23,7 +23,6 @@
 
 static char kBarKey, kApartBarKey, kHostKey, kFadeKey;
 static __weak UIView *sg_stockBar;
-static CGFloat sg_room, sg_glassHeight;   // see "room for the glass bar"
 // See "minimized". sg_keepApart holds the second bar on screen while the main one grows back under it.
 static BOOL sg_minimized, sg_keepApart;
 
@@ -205,29 +204,10 @@ void SGRShrinkTabTitles(UIView *bar) {
 @implementation SGRTabBarHost
 - (UIEdgeInsets)safeAreaInsets {
     UIEdgeInsets insets = [super safeAreaInsets];
-    insets.bottom = MAX(0, insets.bottom - sg_room);
+    insets.bottom = MAX(0, insets.bottom - SGRTabBarRoom());
     return insets;
 }
 @end
-
-@interface SGRHomeHold : UILongPressGestureRecognizer
-@end
-
-@implementation SGRHomeHold
-+ (void)held:(SGRHomeHold *)hold {
-    if (hold.state == UIGestureRecognizerStateBegan) SGOpenModSettings(hold.view);
-}
-@end
-
-// On Spotify's own bar a hold that begins fails the item's tap recognizer, so Home is not tapped too.
-static void holdHome(UIView *stockBar) {
-    UIView *home = SGRowIn(stockBar).arrangedSubviews.firstObject;
-    if (!home) return;
-    for (UIGestureRecognizer *recognizer in home.gestureRecognizers) {
-        if ([recognizer isKindOfClass:SGRHomeHold.class]) return;
-    }
-    [home addGestureRecognizer:[[SGRHomeHold alloc] initWithTarget:SGRHomeHold.class action:@selector(held:)]];
-}
 
 static void logBarOnce(UITabBar *bar) {
     static dispatch_once_t once;
@@ -277,43 +257,10 @@ static void placeFade(UIView *stockBar, CGRect glass) {
 
 #pragma mark - room for the glass bar
 
-// UIKit's glass bar asks for 83 pt, the platter the top 62 of it, over no more safe area than a Face ID
-// phone's 34 (simulator, iOS 26.5 and 27). Spotify's bar is its 49 pt row over the bottom safe area of
-// TabBarContainerImpl's view: a guide from 49 pt above the safe area's bottom to the view's bottom sets
-// its height (its viewDidLoad, 0x100840a2c), the now playing bar stands on that guide's top
-// (MainUIContainer's chrome bottom anchor, 0x100ae0178), the bar slides away by the inset plus 49 when
-// Spotify hides it (0x1037169a4) and the pages get 49 on top of the inset (0x10707bde4). A Face ID
-// phone gives the view 34 and the two bars match. A phone with a home button gives it none, and so does
-// Spotify's message bar (LimitedExperienceIndicatorBar: Offline, Private Session) coming in under the
-// tab bar, which takes the home indicator's inset for itself: the glass bar stood 34 pt above
-// Spotify's, over the now playing bar. So the view gets the rest of the glass bar's height as safe
-// area, and Spotify lays its bar, the now playing bar, the pages and the hide out for the glass bar
-// itself, and moves them all with the message bar.
-static const CGFloat kStockRow = 49;
-
-// UIKit asks for 62 + max(21, inset) on a phone with a home button, max(83, 49 + inset) on a Face ID
-// phone, by the safe area of the view the bar stands in. SGRTabBarHost keeps the room out of that; if
-// it ever reached the bar again, the bar would ask for more room every pass, so what it asks for with
-// no room made is what is kept.
-static CGFloat glassHeight(UITabBar *bar, UIView *stockBar) {
-    if (sg_room < 0.5 || sg_glassHeight <= 0) sg_glassHeight = [bar sizeThatFits:CGSizeMake(stockBar.bounds.size.width, kStockRow)].height;
-    return sg_glassHeight;
-}
-
+// The room itself is TabBarRoom.m's, shared with the capsule bar below iOS 26.
 static void makeRoom(UIViewController *container) {
     UIView *stockBar = sg_stockBar;
-    UITabBar *bar = stockBar ? objc_getAssociatedObject(stockBar, &kBarKey) : nil;
-    if (!bar.window || !container.isViewLoaded || ![stockBar isDescendantOfView:container.view]) return;
-    UIEdgeInsets extra = container.additionalSafeAreaInsets;
-    CGFloat inset = container.view.safeAreaInsets.bottom - extra.bottom;
-    CGFloat height = glassHeight(bar, stockBar);
-    // Spotify's regular width bar is a fixed 76 pt that ignores the inset.
-    BOOL compact = container.traitCollection.horizontalSizeClass == UIUserInterfaceSizeClassCompact;
-    CGFloat room = compact ? MAX(0, ceil(height - kStockRow - inset)) : 0;
-    if (fabs(extra.bottom - room) < 0.5) return;
-    sg_room = extra.bottom = room;
-    container.additionalSafeAreaInsets = extra;
-    SGLog(@"tab bar: %.0f pt of room made under Spotify's bar for the glass bar's %.0f, over an inset of %.0f", room, height, inset);
+    SGRMakeTabBarRoom(container, stockBar, stockBar ? objc_getAssociatedObject(stockBar, &kBarKey) : nil);
 }
 
 static SGRSystemTabBar *makeBar(UIView *stockBar) {
@@ -448,7 +395,7 @@ static void syncBar(UIView *stockBar) {
 
     CGRect bounds = stockBar.bounds;
     CGFloat width = bounds.size.width;
-    CGFloat height = MAX(bounds.size.height, glassHeight(bar, stockBar));
+    CGFloat height = MAX(bounds.size.height, SGRTabBarGlassHeight(bar, stockBar));
     CGRect frame = CGRectMake(0, CGRectGetMaxY(bounds) - height, width, height);
     if (!CGRectEqualToRect(host.frame, frame)) host.frame = frame;
     placeFade(stockBar, frame);
@@ -508,22 +455,26 @@ static void setMinimized(BOOL minimized, BOOL animated);
 // down to it (harness/tabbar, `nested`). So an animated change asked for inside an animation is made on the main
 // queue's next turn, outside it, and only if nothing was asked for since; one asked for outside any is made at
 // once. A change with no animation stays at once too: the player's transition takes its pictures of the bars
-// right after asking.
+// right after asking. The same for the capsule bar below iOS 26 (TabBarLegacy.x), which makes the change itself.
 static NSUInteger sg_request;
 
+static void applyMinimized(BOOL minimized, BOOL animated) {
+    if (SGRLegacyTabBarOn()) SGRLegacyApplyTabBarMinimized(minimized, animated);
+    else setMinimized(minimized, animated);
+}
+
 void SGRSetTabBarMinimized(BOOL minimized, BOOL animated) {
-    if (SGRLegacyTabBarOn()) { SGRLegacySetTabBarMinimized(minimized, animated); return; }   // the capsule bar (TabBarLegacy.x) minimizes itself
     NSUInteger request = ++sg_request;
     if (!animated) {
-        [UIView performWithoutAnimation:^{ setMinimized(minimized, NO); }];
+        [UIView performWithoutAnimation:^{ applyMinimized(minimized, NO); }];
         return;
     }
     if (UIView.areAnimationsEnabled && UIView.inheritedAnimationDuration <= 0) {
-        setMinimized(minimized, YES);
+        applyMinimized(minimized, YES);
         return;
     }
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (request == sg_request) setMinimized(minimized, YES);
+        if (request == sg_request) applyMinimized(minimized, YES);
     });
 }
 
@@ -759,7 +710,7 @@ static BOOL sg_itemsLaidOut;
     if (sg_itemsLaidOut) SGRComposeTabBar(bar);
     sg_passBar = outer;
     sg_itemsLaidOut = outerLaidOut;
-    holdHome(bar);
+    SGRHoldHomeForModSettings(bar);
     syncBar(bar);
     SGRLogTabBarRow(bar);
 }
@@ -775,7 +726,7 @@ static void itemDidLayOut(UIView *item) {
         return;
     }
     SGRComposeTabBar(bar);
-    holdHome(bar);
+    SGRHoldHomeForModSettings(bar);
     syncBar(bar);
     SGRLogTabBarRow(bar);
 }

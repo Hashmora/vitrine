@@ -46,10 +46,21 @@ BOOL SGRLegacyTabBarOn(void);
 // (the split one counted), and stands on its round button only while it is minimized.
 #define SGRLegacyFoldLimit 3
 // TabBarLegacy.x's own minimized bar, the same three as below for the capsule bar: TabBar.x's functions hand over
-// to them where SGRLegacyTabBarOn() says that bar is the one in place.
+// to them where SGRLegacyTabBarOn() says that bar is the one in place. SGRLegacyApplyTabBarMinimized makes the change
+// at once; SGRSetTabBarMinimized decides when it is made, for both bars.
 BOOL SGRLegacyTabBarMinimized(void);
-void SGRLegacySetTabBarMinimized(BOOL minimized, BOOL animated);
+void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated);
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height);
+
+// TabBarRoom.m, the same for both bars. The hold on Spotify's Home that opens Mod Settings, added once.
+void SGRHoldHomeForModSettings(UIView *stockBar);
+// The room made under Spotify's bar for the taller bar of the mod's (see "room for the glass bar" there): the bottom
+// safe area `container` (TabBarContainerImpl) is given, and what UIKit's `bar` asks for with no room made.
+CGFloat SGRTabBarRoom(void);
+CGFloat SGRTabBarGlassHeight(UITabBar *bar, UIView *stockBar);
+void SGRMakeTabBarRoom(UIViewController *container, UIView *stockBar, UITabBar *bar);
+// Whether Create's menu is on screen in the window `view` is in.
+BOOL SGRCreateMenuUp(UIView *view);
 // Whether a tab of the composed row is one of the split tabs at its trailing end, for TabBar.x's second bar.
 BOOL SGRTabIsApart(UIView *item);
 // The tab of the mod's own whose page is on screen, which the glass bar shows selected; nil when none is.

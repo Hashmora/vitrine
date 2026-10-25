@@ -615,21 +615,11 @@ static void styleNowPlayingBar(UIViewController *container) {
 // The page the bar stands in passes touches outside the bar through, and the bar in the tab bar's row is
 // below the page's bounds: a touch there reaches the bar only through this. Only the narrowed card takes
 // one: the container's view keeps the screen's width, and took the touches meant for the tab bar's circles.
-// Create's menu (or any sheet of its kind) is on screen.
-static BOOL createMenuUp(UIView *view) {
-    __block BOOL up = NO;
-    SGForEachView(view.window ?: view, ^(UIView *v) {
-        if (up) return;
-        up = [v.accessibilityIdentifier isEqualToString:@"CreateMenu"] || [NSStringFromClass(v.class) containsString:@"CreateMenuView"];
-    });
-    return up;
-}
-
 %hook _TtC22NowPlaying_BarPageImplP33_CCC0D2EEA6D4725EECD8965E8C38C86D20TouchPassthroughView
 // Spotify hides the bar while Create's menu is up, because the menu covers the bar's place above the tab bar. The
 // card in the minimized row is below the menu, so it stays: the minimized bar does not go away with the menu.
 - (void)setHidden:(BOOL)hidden {
-    if (hidden && sg_inline && [sg_inline isDescendantOfView:(UIView *)self] && SGRTabBarMinimized() && createMenuUp((UIView *)self)) {
+    if (hidden && sg_inline && [sg_inline isDescendantOfView:(UIView *)self] && SGRTabBarMinimized() && SGRCreateMenuUp((UIView *)self)) {
         %orig(NO);
         return;
     }
