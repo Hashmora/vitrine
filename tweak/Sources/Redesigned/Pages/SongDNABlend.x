@@ -24,35 +24,20 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Pages.h"
 
-// The page's list: the collection view as wide as the page.
-static UICollectionView *listIn(UIView *view) {
-    __block UICollectionView *list = nil;
-    SGForEachView(view, ^(UIView *v) {
-        if (!list && [v isKindOfClass:UICollectionView.class] && v.bounds.size.width >= view.bounds.size.width * 0.9) list = (UICollectionView *)v;
-    });
-    return list;
-}
-
-static void extendList(UIView *page, UICollectionView *list) {
-    UIView *host = list.superview;
-    if (!host || host.bounds.size.height < 1) return;
-    SGRListRoom room = SGRListRoomOf(list);
-    SGRSetOwnFrame(list, CGRectMake(list.frame.origin.x, 0, list.frame.size.width, host.bounds.size.height));
-    SGRSetListInsets(list, UIEdgeInsetsMake(room.top, 0, MAX(room.below, page.safeAreaInsets.bottom), 0));
-}
+static char kListKey;
 
 static void dress(UIViewController *page) {
     SGRDressBarPage(page);
     UIView *view = page.viewIfLoaded;
     if (!view.window) return;
-    UICollectionView *list = listIn(view);
+    UICollectionView *list = SGRPageListIn(view, &kListKey);
     if (!list) return;
-    extendList(view, list);
+    SGRRunListToFoot(list, view, 0, YES);
     __weak UIViewController *weakPage = page;
     SGRWatchLayout(list.superview, ^(UIView *laidOut) {
         UIView *root = weakPage.viewIfLoaded;
-        UICollectionView *found = root ? listIn(root) : nil;
-        if (found) extendList(root, found);
+        UICollectionView *found = root ? SGRPageListIn(root, &kListKey) : nil;
+        if (found) SGRRunListToFoot(found, root, 0, YES);
     });
 }
 

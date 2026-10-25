@@ -55,6 +55,12 @@ void SGRSetOwnFrame(UIView *view, CGRect frame);
 // The list's insets set to `inset`, with no safe area of its own on top, its rows kept where they were: a list at its
 // top stays there, and one a reload sent back to offset 0 (the first row under the bar) is put back under it.
 void SGRSetListInsets(UIScrollView *list, UIEdgeInsets inset);
+// The two together: `list` run on to the foot of its superview, from where it starts or, `fromTop`, from the superview's
+// top, with `top` over its rows (and where it started, from the top) and the bars below as its bottom inset, at least
+// `page`'s safe area.
+void SGRRunListToFoot(UIScrollView *list, UIView *page, CGFloat top, BOOL fromTop);
+// The page's list: the first collection view under `view` nearly as wide as it, kept on `view` under `key`.
+UICollectionView *SGRPageListIn(UIView *view, const void *key);
 
 // The first view under `root` (itself included) with the accessibility identifier, depth first. The
 // answer is kept weakly on `root` under `cacheKey` and searched for again only when it is gone, has

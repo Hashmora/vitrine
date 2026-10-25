@@ -29,18 +29,6 @@
 
 static char kListKey, kHeaderKey;
 
-// The page's list, found once: the one collection view as wide as the page.
-static UICollectionView *listIn(UIView *view) {
-    UICollectionView *cached = objc_getAssociatedObject(view, &kListKey);
-    if (cached && [cached isDescendantOfView:view]) return cached;
-    __block UICollectionView *list = nil;
-    SGForEachView(view, ^(UIView *v) {
-        if (!list && [v isKindOfClass:UICollectionView.class] && v.bounds.size.width >= view.bounds.size.width * 0.9) list = (UICollectionView *)v;
-    });
-    if (list) objc_setAssociatedObject(view, &kListKey, list, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    return list;
-}
-
 // What shares the stack with the list: the row of chips.
 static UIView *chipsBesides(UIView *list) {
     for (UIView *sub in list.superview.subviews) {
@@ -90,7 +78,7 @@ static void dress(UIViewController *page) {
     SGRDressBarPage(page);
     UIView *view = page.viewIfLoaded;
     if (!view.window) return;
-    UICollectionView *list = listIn(view);
+    UICollectionView *list = SGRPageListIn(view, &kListKey);
     if (!list) return;
     UIView *chips = chipsBesides(list);
     SGRGlassChipsIn(chips);
@@ -102,7 +90,7 @@ static void dress(UIViewController *page) {
     for (UIView *watched in @[list.superview.superview ?: view, list.superview]) {
         SGRWatchLayout(watched, ^(UIView *laidOut) {
             UIView *root = weakPage.viewIfLoaded;
-            UICollectionView *found = root ? listIn(root) : nil;
+            UICollectionView *found = root ? SGRPageListIn(root, &kListKey) : nil;
             if (found) extendRecentsList(root, found);
         });
     }

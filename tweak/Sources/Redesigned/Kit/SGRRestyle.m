@@ -530,3 +530,20 @@ void SGRSetListInsets(UIScrollView *list, UIEdgeInsets inset) {
     list.verticalScrollIndicatorInsets = inset;
     if (atTop && !moving) list.contentOffset = CGPointMake(0, -inset.top);
 }
+
+void SGRRunListToFoot(UIScrollView *list, UIView *page, CGFloat top, BOOL fromTop) {
+    UIView *host = list.superview;
+    CGFloat height = host.bounds.size.height;
+    if (!host || height < 1) return;
+    SGRListRoom room = SGRListRoomOf(list);
+    CGFloat y = fromTop ? 0 : list.frame.origin.y;
+    SGRSetOwnFrame(list, CGRectMake(list.frame.origin.x, y, list.frame.size.width, height - y));
+    SGRSetListInsets(list, UIEdgeInsetsMake(top + (fromTop ? room.top : 0), 0, MAX(room.below, page.safeAreaInsets.bottom), 0));
+}
+
+UICollectionView *SGRPageListIn(UIView *view, const void *key) {
+    CGFloat wide = view.bounds.size.width * 0.9;
+    return (UICollectionView *)SGFindRemembered(view, key, ^BOOL(UIView *v) {
+        return [v isKindOfClass:UICollectionView.class] && v.bounds.size.width >= wide;
+    });
+}

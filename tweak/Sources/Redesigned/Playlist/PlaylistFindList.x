@@ -35,9 +35,6 @@ static void extendFindList(UIView *page, UICollectionView *list) {
     CGFloat pageHeight = page.bounds.size.height;
     if (pageHeight < 1 || list.bounds.size.width < 1) return;
 
-    // What Spotify took off the list's foot.
-    CGFloat taken = SGRListRoomOf(list).below;
-
     // The top as Spotify had it, before the automatic adjustment goes.
     NSNumber *top = objc_getAssociatedObject(list, &kTopKey);
     if (!top) {
@@ -48,8 +45,7 @@ static void extendFindList(UIView *page, UICollectionView *list) {
         objc_setAssociatedObject(list, &kTopKey, top, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 
-    SGRSetOwnFrame(list, CGRectMake(list.frame.origin.x, list.frame.origin.y, list.frame.size.width, pageHeight - list.frame.origin.y));
-    SGRSetListInsets(list, UIEdgeInsetsMake(top.doubleValue, 0, MAX(taken, page.safeAreaInsets.bottom), 0));
+    SGRRunListToFoot(list, page, top.doubleValue, NO);
 }
 
 static void dress(UIViewController *controller) {
