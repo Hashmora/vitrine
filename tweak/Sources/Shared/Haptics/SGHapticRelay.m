@@ -91,7 +91,7 @@ static void offerUpdate(void) {
     if ([defaults integerForKey:kUpdateOfferedKey] >= kSGRelayAddonBuild) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UIViewController *top = SGTopController();
-        if (!top || !SGHapticAddonOutdated() || SGIsAlertController(top)) return;
+        if (!top || !SGHapticAddonOutdated() || [top isKindOfClass:UIAlertController.class]) return;
         [defaults setInteger:kSGRelayAddonBuild forKey:kUpdateOfferedKey];
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Update Vitrine Addon"
             message:@"This Vitrine comes with a newer Vitrine Addon than the one installed. Tap Update, pick Sileo or Filza, install it, then respring."
