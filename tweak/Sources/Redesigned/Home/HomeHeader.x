@@ -432,13 +432,16 @@ static char kLiftedKey, kExtraKey;
 // and the feed's safe area then.
 static CGFloat sg_firstTop;
 
+// Room between the header's row (the title and the pill) and the first row of cards, which sat right under it.
+static const CGFloat kFeedGap = 12;
+
 // The feed's top inset is Spotify's own plus what keeps its first content at sg_firstTop under the safe area it has
 // now. The safe area changes after the container rises (8pt became 56pt, and a lift worked out once left Home 48pt
 // low), so it is worked out again on every pass and every scroll; Spotify's own part is what the inset holds less what
 // was added last.
 static void insetFeed(UIScrollView *feed) {
     if (sg_firstTop <= 0 || !feed) return;
-    CGFloat extra = MAX(0, sg_firstTop - feed.safeAreaInsets.top);
+    CGFloat extra = MAX(0, sg_firstTop - feed.safeAreaInsets.top) + kFeedGap;
     CGFloat added = [objc_getAssociatedObject(feed, &kExtraKey) doubleValue];
     if (fabs(extra - added) < 0.5) return;
     BOOL atRest = feed.contentOffset.y <= -feed.adjustedContentInset.top + 1;
