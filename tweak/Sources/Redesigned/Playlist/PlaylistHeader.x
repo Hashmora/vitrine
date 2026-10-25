@@ -449,8 +449,8 @@ static void applyToolbar(UIView *headerRoot) {
     // field alone, straight in the header (trees/continuous/3.txt).
     UIView *toolbar = SGRFindByIdentifier(headerRoot, @"Components.Header.UI.Toolbar.Content", &kToolbarKey);
     UIView *field = SGRFindByIdentifier(toolbar ?: headerRoot, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey);
-    SGRGlassFlatBox(field, &kFieldGlassKey);
-    if (toolbar) SGRGlassFlatBox(SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.ButtonContainer", &kSortBoxKey), &kSortGlassKey);
+    SGRGlassFlatBox(field, &kFieldGlassKey, NO);
+    if (toolbar) SGRGlassFlatBox(SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.ButtonContainer", &kSortBoxKey), &kSortGlassKey, NO);
     static BOOL logged;
     if (!logged && field.window) {
         logged = YES;

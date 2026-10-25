@@ -60,7 +60,7 @@ static void clearQueueRows(UIView *scope) {
 // Clear and Edit: wherever QueueHeaderView has put them this pass.
 static void glassPills(UIView *root) {
     SGForEachView(root, ^(UIView *view) {
-        if ([NSStringFromClass(view.class) isEqualToString:kPillButtonClass]) SGRGlassFlatBox(view, &kPillGlassKey);
+        if ([NSStringFromClass(view.class) isEqualToString:kPillButtonClass]) SGRGlassFlatBox(view, &kPillGlassKey, NO);
     });
 }
 
@@ -68,7 +68,7 @@ static void glassPills(UIView *root) {
 // identifier and glassed one superview up.
 static void glassChip(UIView *root, NSString *buttonIdentifier, const void *cacheKey) {
     UIView *button = SGRFindByIdentifier(root, buttonIdentifier, cacheKey);
-    if (button && button.superview) SGRGlassFlatBox(button.superview, &kChipGlassKey);
+    if (button && button.superview) SGRGlassFlatBox(button.superview, &kChipGlassKey, NO);
 }
 
 // The edit mode's close cross (id=queue-close-edit-button, top right, 32pt): a glass circle like the other round controls.
@@ -87,7 +87,7 @@ static void glassClose(UIView *root) {
 // fill, since Encore sets the fill again as the button is pressed and let go.
 static void glassReshuffle(UIView *root) {
     UIView *button = SGRFindByIdentifier(root, @"reshuffle-button", &kReshuffleKey);
-    UIView *glass = SGRGlassFlatBoxFilm(button, &kReshuffleGlassKey);
+    UIView *glass = SGRGlassFlatBox(button, &kReshuffleGlassKey, YES);
     if (!glass) return;
     CGSize size = button.bounds.size;
     for (UIView *sub in button.subviews) {

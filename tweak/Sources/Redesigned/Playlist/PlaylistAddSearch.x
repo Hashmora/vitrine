@@ -54,7 +54,7 @@ static void glassSearchBar(UIViewController *controller) {
     if (!bar || bar.bounds.size.height < 1) return;
     if (sgr_addSongsSearchBar != bar) sgr_addSongsSearchBar = bar;
     if (bar.layer.backgroundColor) bar.layer.backgroundColor = NULL;
-    SGRGlassFlatBox(bar, &kBarGlassKey);
+    SGRGlassFlatBox(bar, &kBarGlassKey, NO);
     clearWash(bar);
 
     static BOOL logged;

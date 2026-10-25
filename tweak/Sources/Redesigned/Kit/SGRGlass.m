@@ -67,7 +67,8 @@ static void keepFilm(UIView *shape, BOOL prominent, SGRGlassMode mode) {
     UIView *content = glassContent(shape);
     if (!film) {
         film = [UIView new];
-        film.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
+        // iOS 26's prominent film is the system glass's own step (0.14); below it, the one film of the Kit's.
+        film.backgroundColor = SGBelowiOS26() ? SGRGlassFilmColor() : [UIColor colorWithWhite:1 alpha:0.14];
         film.userInteractionEnabled = NO;
         film.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         objc_setAssociatedObject(shape, &kFilmKey, film, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -200,7 +201,7 @@ static void clearCapsule(UIView *box, CGSize size) {
     if (box.layer.cornerCurve != kCACornerCurveContinuous) box.layer.cornerCurve = kCACornerCurveContinuous;
 }
 
-static UIView *flatBox(UIView *box, const void *key, BOOL prominent) {
+UIView *SGRGlassFlatBox(UIView *box, const void *key, BOOL prominent) {
     if (@available(iOS 26.0, *)) return nil;
     CGSize size = box.bounds.size;
     if (!box || size.width < 1 || size.height < 1) return nil;
@@ -209,14 +210,6 @@ static UIView *flatBox(UIView *box, const void *key, BOOL prominent) {
     BOOL grows = SGUseLegacyGlass();
     if (box.layer.masksToBounds != !grows) box.layer.masksToBounds = !grows;
     return SGRGlassCapsuleInside(box, key, size, prominent);
-}
-
-UIView *SGRGlassFlatBox(UIView *box, const void *key) {
-    return flatBox(box, key, NO);
-}
-
-UIView *SGRGlassFlatBoxFilm(UIView *box, const void *key) {
-    return flatBox(box, key, YES);
 }
 
 static char kAccentFilmKey;
@@ -231,7 +224,7 @@ UIView *SGRGlassEncoreButton(UIView *button, const void *key, BOOL accent) {
         && inner.layer.backgroundColor && CGColorGetAlpha(inner.layer.backgroundColor) > 0.05) {
         inner.layer.backgroundColor = NULL;
     }
-    UIView *glass = SGRGlassFlatBox(button, key);
+    UIView *glass = SGRGlassFlatBox(button, key, NO);
     if (!accent) return glass;
     if (!film) {
         film = [UIView new];
@@ -316,7 +309,7 @@ UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radiu
     if (@available(iOS 26.0, *)) return nil;
     UIView *film = SGLazyChild(host, key, ^UIView *{
         UIView *view = [UIView new];
-        view.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
+        view.backgroundColor = SGRGlassFilmColor();
         view.userInteractionEnabled = NO;
         view.layer.cornerCurve = kCACornerCurveContinuous;
         view.layer.masksToBounds = YES;

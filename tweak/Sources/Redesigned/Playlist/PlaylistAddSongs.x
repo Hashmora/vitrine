@@ -27,7 +27,7 @@ static BOOL isAddCell(UIView *cell) {
     SGForEachView(cell, ^(UIView *v) {
         if (!box && [v isMemberOfClass:UIView.class] && [NSStringFromClass(v.superview.class) hasSuffix:@"ImageViewHolder"]) box = v;
     });
-    SGRGlassFlatBox(box, &kBoxGlassKey);
+    SGRGlassFlatBox(box, &kBoxGlassKey, NO);
     // The legacy glass grows under a finger (SGGlassInteractive), and the 48pt ImageViewHolder around the square
     // clips to its bounds, which cut the capsule off at its edges while it was held.
     UIView *holder = box.superview;

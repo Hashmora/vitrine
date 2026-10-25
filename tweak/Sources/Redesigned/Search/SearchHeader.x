@@ -22,7 +22,7 @@
 // Spotify lays the field out and rebuilds its fill on passes that never reach the controller (the recents under it
 // coming and going, the keyboard, a focus change), so the field is also dressed from the layout of its own container
 // (MultilineSearchBarContainer, trees/continuous/1.txt:1544), and the controller's passes are repeated a moment after the
-// page appears. The glass carries a white film (SGRGlassFlatBoxFilm): the header has no backing, so the recents and the
+// page appears. The glass carries a white film (SGRGlassFlatBox, prominent): the header has no backing, so the recents and the
 // results scroll under the field, and plain glass over them read as no plate at all.
 // Threading: main thread only.
 #import "Core/SGCore.h"
@@ -83,7 +83,7 @@ static UIView *dressField(UIView *container) {
     UIView *fill = fieldFill(container);
     if (!fill) return nil;
     if (sgr_searchFieldFill != fill) sgr_searchFieldFill = fill;
-    SGRGlassFlatBoxFilm(fill, &kFieldGlassKey);
+    SGRGlassFlatBox(fill, &kFieldGlassKey, YES);
     glassCancel(container, fill);
     return fill;
 }

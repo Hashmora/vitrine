@@ -50,7 +50,7 @@ static void glassSearch(UIView *page, UIView *field, UIView *cancel) {
     CGFloat fieldMaxX = 0;
     if (field) {
         if (sgr_showSearchField != field) sgr_showSearchField = field;
-        UIView *glass = SGRGlassFlatBox(field, &kFieldGlassKey);
+        UIView *glass = SGRGlassFlatBox(field, &kFieldGlassKey, NO);
         // Spotify grows the field from its collapsed size to the full row as the page opens, and the page's own
         // pass does not run again for that: the glass made at the collapsed size stayed 50pt wide in the middle of
         // a 318pt field (trees/continuous/1.txt). It follows the field's bounds itself.

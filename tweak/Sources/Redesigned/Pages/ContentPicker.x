@@ -15,7 +15,7 @@
 // capsule behind it would stay): the blur is drawn by nothing and the cross is a glass circle pinned to the corner that
 // fires Spotify's own button, which dismisses the picker where Back would pop nothing. The black plate at the top is left
 // as it is: it is what hides the large title as it scrolls up under the bar. The field's picture goes, the field is glass
-// the way the other search fields are (SGRGlassFlatBoxFilm: it floats over black, where plain glass reads as no plate),
+// the way the other search fields are (SGRGlassFlatBox, prominent: it floats over black, where plain glass reads as no plate),
 // and its text, its placeholder and its magnifier go light.
 // Threading: main thread only.
 #import "Core/SGCore.h"
@@ -33,7 +33,7 @@ static void dressField(UISearchBar *bar) {
     for (UIView *sub in field.subviews) {
         if ([NSStringFromClass(sub.class) containsString:@"ImageBackgroundView"] && sub.alpha != 0) sub.alpha = 0;
     }
-    SGRGlassFlatBoxFilm(field, &kFieldGlassKey);
+    SGRGlassFlatBox(field, &kFieldGlassKey, YES);
 
     UIColor *text = SGRPrimary(), *dim = SGRSecondary();
     if (![field.textColor isEqual:text]) field.textColor = text;

@@ -125,7 +125,7 @@ static void dress(UIViewController *page) {
     UIView *field = SGRFindByIdentifier(root, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey);
     if (field) {
         if (sgr_showSearchField != field) sgr_showSearchField = field;
-        SGRGlassFlatBox(field, &kFieldGlassKey);
+        SGRGlassFlatBox(field, &kFieldGlassKey, NO);
     }
     static BOOL logged;
     if (!logged && field) {

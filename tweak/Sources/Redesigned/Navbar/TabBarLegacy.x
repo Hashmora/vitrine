@@ -29,15 +29,6 @@
 
 static char kBarKey, kHostKey, kNavGlassKey, kNavTintKey, kSelPillKey, kRetriesKey, kGlyphOverlayKey, kOutlineLiveKey, kFilledLiveKey, kCreateDiscKey, kGlyphsTakenKey;
 static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, kTemplateKey;
-// The film over the bar's glass and the minimized bar's circles: the now playing bar's, white at 0.16
-// (NowPlayingBar.x), so the bar, its circles and the player's bar between them read as one material. A grey one
-// (0.4 at 0.25) had made the tab bar a shade apart from the bar above it (the phone, 2026-10-24).
-static UIColor *barFilmColor(void) {
-    static UIColor *color;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ color = [UIColor colorWithWhite:1 alpha:0.16]; });
-    return color;
-}
 // The bar is a floating capsule, not a full-width slab.
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
@@ -224,7 +215,6 @@ static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
     _pane.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     SGGlassInteractive(self, _pane);
     _film = SGRGlassFilm(self, &kCircleFilmKey, _pane, 0);
-    _film.backgroundColor = barFilmColor();
     _glyph = [UIImageView new];
     _glyph.userInteractionEnabled = NO;
     _glyph.contentMode = UIViewContentModeCenter;
@@ -1365,7 +1355,6 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     SGShapeGlass(navGlass, glassFrame.size.height / 2, NO);
 
     UIView *navTint = SGRGlassFilm(host, &kNavTintKey, navGlass, glassFrame.size.height / 2);
-    if (navTint.backgroundColor != barFilmColor()) navTint.backgroundColor = barFilmColor();
     // SGRGlassFilm sets the film's frame from the pane's, which under the morph's transform is the stretched box;
     // the film is given the pane's bounds and center instead, and its transform in placeCompact.
     if (!CGSizeEqualToSize(navTint.bounds.size, glassFrame.size)) navTint.bounds = (CGRect){CGPointZero, glassFrame.size};

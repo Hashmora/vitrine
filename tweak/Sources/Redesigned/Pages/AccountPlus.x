@@ -49,7 +49,7 @@ static BOOL dressPlus(UIView *row) {
     UIView *disc = plusDisc(row);
     if (!disc || disc.bounds.size.width < 1 || disc.bounds.size.height < 1) return NO;
     SGRHoldClear(disc);
-    SGRGlassFlatBoxFilm(disc, &kGlassKey);
+    SGRGlassFlatBox(disc, &kGlassKey, YES);
     return YES;
 }
 

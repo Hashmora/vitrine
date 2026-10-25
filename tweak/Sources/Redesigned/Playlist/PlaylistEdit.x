@@ -86,7 +86,7 @@ static void clipListBelowBar(UIViewController *controller, UINavigationControlle
 static void dressPill(UIView *pill) {
     if (pill.bounds.size.width < 1 || pill.bounds.size.height < 1) return;
     if (pill.layer.backgroundColor) pill.layer.backgroundColor = NULL;
-    SGRGlassFlatBox(pill, &kPillGlassKey);
+    SGRGlassFlatBox(pill, &kPillGlassKey, NO);
     // Encore paints its fill again: it stays clear.
     SGRHoldClear(pill);
 }

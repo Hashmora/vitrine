@@ -48,13 +48,12 @@ CGFloat SGRTitleWidth(UILabel *label);
 // in the caller's animation.
 void SGRShowGlass(UIView *shape, BOOL shown);
 // Glass behind a flat box Spotify draws as a grey rounded rect (a search field, a sort button): the box is
-// cleared and made a capsule, and a glass capsule goes inside it. Safe to call on every pass.
-UIView *SGRGlassFlatBox(UIView *box, const void *key);
-// The same with the white film SGRGlassCapsuleInside lays in a prominent shape, for a box that floats over a page it
-// scrolls above (a search field over the list under it), where plain glass over black or over text reads as no plate at all.
-UIView *SGRGlassFlatBoxFilm(UIView *box, const void *key);
+// cleared and made a capsule, and a glass capsule goes inside it. `prominent` lays in the white film SGRGlassCapsuleInside
+// gives a prominent shape, for a box that floats over a page it scrolls above (a search field over the list under it),
+// where plain glass over black or over text reads as no plate at all. Safe to call on every pass.
+UIView *SGRGlassFlatBox(UIView *box, const void *key, BOOL prominent);
 
-// An Encore button of Spotify's on a glass capsule (SGRGlassFlatBox under `key`): its own fill goes, the button's and
+// An Encore button of Spotify's on a glass capsule (SGRGlassFlatBox under `key`, no film): its own fill goes, the button's and
 // that of the plain view of its size inside it, and with `accent` the accent is laid over the glass under the label,
 // for a button Spotify draws with a black one. Returns the glass. Below iOS 26.
 UIView *SGRGlassEncoreButton(UIView *button, const void *key, BOOL accent);
@@ -67,7 +66,7 @@ UIView *SGRGlassFloatingCard(UIView *card, const void *glassKey, const void *fil
 // A glass capsule that is the whole of `box` and follows it: the box is cleared and made a capsule, and the glass is its first subview with
 // the box's size kept by autoresizing, so a box that is resized (the AI playlist's Refine field, which Create narrows) takes its glass along
 // frame by frame. It answers no press: for a field that is typed into, the grown, stretched glass of a press lags behind the finger and
-// reads as a fault. `prominent` lays the white film in as SGRGlassFlatBoxFilm does. Safe to call on every pass; nil on iOS 26.
+// reads as a fault. `prominent` lays the white film in as SGRGlassFlatBox does. Safe to call on every pass; nil on iOS 26.
 UIView *SGRGlassFillBox(UIView *box, const void *key, BOOL prominent);
 
 // Lays the white film SGRGlassCapsuleInside gives a prominent shape inside any shape of the Kit's (a pane made by SGGlassFor), or takes it

@@ -414,8 +414,8 @@ static void saveInChrome(UIViewController *controller) {
 // looked for from its own root.
 static void glassFindBar(UIView *root) {
     static char kFieldKey, kButtonKey, kFieldGlassKey, kButtonGlassKey;
-    SGRGlassFlatBox(SGRFindByIdentifier(root, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey), &kFieldGlassKey);
-    SGRGlassFlatBox(SGRFindByIdentifier(root, @"Components.Header.UI.Toolbar.ButtonContainer", &kButtonKey), &kButtonGlassKey);
+    SGRGlassFlatBox(SGRFindByIdentifier(root, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey), &kFieldGlassKey, NO);
+    SGRGlassFlatBox(SGRFindByIdentifier(root, @"Components.Header.UI.Toolbar.ButtonContainer", &kButtonKey), &kButtonGlassKey, NO);
 }
 
 // The list's own pass runs on every scroll as well, and the bar is made after the page's first layout.

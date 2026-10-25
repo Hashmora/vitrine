@@ -588,8 +588,8 @@ static void glassAlbumToolbar(UIView *page) {
     SGRMirrorButton *back = SGRPinnedBack(page, page);
     UIView *toolbar = SGRFindByIdentifier(page, @"Components.Header.UI.Toolbar.Content", &kToolbarKey);
     if (toolbar) {
-        SGRGlassFlatBox(SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey), &kFieldGlassKey);
-        SGRGlassFlatBox(SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.ButtonContainer", &kSortBoxKey), &kSortGlassKey);
+        SGRGlassFlatBox(SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey), &kFieldGlassKey, NO);
+        SGRGlassFlatBox(SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.ButtonContainer", &kSortBoxKey), &kSortGlassKey, NO);
     }
     // A podcast's "Find in this show" (trees/continuous/11.txt) is not in that toolbar: it is a row of the page's own,
     // 16pt in from the sides and 36pt high, set 12pt up into the 100pt bar where Spotify's back button was 32pt, so
@@ -598,7 +598,7 @@ static void glassAlbumToolbar(UIView *page) {
     // frame: Spotify's constraints put the frame back at every pass.
     UIView *row = SGRFindByIdentifier(page, @"CreativeWorkPlatform.Components.UI.FindRow", &kRowKey);
     if (!row) return;
-    SGRGlassFlatBox(SGRFindByIdentifier(row, @"Components.Header.UI.Toolbar.SearchField", &kRowFieldKey), &kRowGlassKey);
+    SGRGlassFlatBox(SGRFindByIdentifier(row, @"Components.Header.UI.Toolbar.SearchField", &kRowFieldKey), &kRowGlassKey, NO);
     if (!back || back.hidden) return;
     static const CGFloat kRowGap = 8;
     CGFloat top = row.center.y - row.bounds.size.height / 2;

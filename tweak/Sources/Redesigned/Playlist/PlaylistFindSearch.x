@@ -52,7 +52,7 @@ static void clearBackdrop(UIView *bar) {
     UIView *bar = (UIView *)self;
     if (![bar.accessibilityIdentifier isEqualToString:@"PL.SearchViewController.SearchBar"]) return;
     UIView *box = searchFieldBoxIn(bar);
-    SGRGlassFlatBox(box, &kGlassKey);
+    SGRGlassFlatBox(box, &kGlassKey, NO);
     clearBackdrop(bar);
     UIView *cancel = cancelIn(bar, box);
     if (cancel && box) {

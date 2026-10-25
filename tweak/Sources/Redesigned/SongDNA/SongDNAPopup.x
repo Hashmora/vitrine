@@ -43,7 +43,7 @@ static void dressPopup(UIView *popup) {
             SGRGlassInside(view, &kChevronKey, kChevronSide);
         } else if ([view.accessibilityIdentifier isEqualToString:@"dna-blend-button-cta"]) {
             view.layer.borderWidth = 0;
-            SGRGlassFlatBox(view, &kButtonKey);
+            SGRGlassFlatBox(view, &kButtonKey, NO);
         }
     });
 }

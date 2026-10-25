@@ -38,7 +38,7 @@ static void dress(UIViewController *page) {
             if (v.layer.backgroundColor) v.layer.backgroundColor = NULL;
             break;
         }
-        SGRGlassFlatBox(field, &kFieldGlassKey);
+        SGRGlassFlatBox(field, &kFieldGlassKey, NO);
     }
     if (cancel && cancel.bounds.size.width > 1) {
         SGRUnclipUpTo(cancel, ^BOOL(UIView *v) { return v.superview == root || v.superview == field.superview; });

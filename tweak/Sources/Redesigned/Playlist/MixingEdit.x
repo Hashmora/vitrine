@@ -121,7 +121,7 @@ static void dressPlay(UIView *button) {
 static void dressBordered(UIView *button) {
     if (button.bounds.size.width < 1 || button.bounds.size.height < 1) return;
     clearFill(button);
-    SGRGlassFlatBox(button, &kBorderGlassKey);
+    SGRGlassFlatBox(button, &kBorderGlassKey, NO);
     // Spotify paints it again as it is pressed or let go: it stays clear.
     SGRHoldClear(button);
 }
