@@ -366,16 +366,6 @@ static void followScroll(UIScrollView *scroll) {
     if ([sg_face isDescendantOfView:sg_header]) rise(sg_face, up, alpha);
 }
 
-@interface SGRHomeTitleFollower : NSObject
-@property (nonatomic, weak) UIScrollView *scroll;
-@end
-
-@implementation SGRHomeTitleFollower
-- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
-    followScroll(self.scroll);
-}
-@end
-
 // The feed: the page's outermost scroll view taller than the pills, found once. Not the tallest: a shelf can grow taller
 // than the page, and a shelf's offset never moves the title. Followed by an observer that lives as long as it does.
 static char kFollowerKey;
@@ -385,12 +375,7 @@ static __weak UIView *sg_pageView;
 static void followFeed(UIScrollView *feed) {
     sg_feed = feed;
     insetFeed(feed);
-    if (!objc_getAssociatedObject(feed, &kFollowerKey)) {
-        SGRHomeTitleFollower *follower = [SGRHomeTitleFollower new];
-        follower.scroll = feed;
-        [feed addObserver:follower forKeyPath:@"contentOffset" options:0 context:NULL];
-        objc_setAssociatedObject(feed, &kFollowerKey, follower, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
+    SGRFollowOffset(feed, &kFollowerKey, ^(UIScrollView *scroll) { followScroll(scroll); });
     followScroll(feed);
 }
 

@@ -166,23 +166,6 @@ static void followScroll(UIScrollView *list) {
     }
 }
 
-@interface SGRSearchTitleFollower : NSObject
-@property (nonatomic, weak) UIScrollView *list;
-@end
-
-@implementation SGRSearchTitleFollower
-- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
-    followScroll(self.list);
-}
-@end
-
-static void followList(UIScrollView *list) {
-    if (!list || objc_getAssociatedObject(list, &kFollowerKey)) return;
-    SGRSearchTitleFollower *follower = [SGRSearchTitleFollower new];
-    follower.list = list;
-    [list addObserver:follower forKeyPath:@"contentOffset" options:0 context:NULL];
-    objc_setAssociatedObject(list, &kFollowerKey, follower, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-}
 
 static void layoutHeader(UIStackView *row) {
     vanish(sg_scrim);
@@ -233,7 +216,7 @@ static void layoutHeader(UIStackView *row) {
     if (SGBelowiOS26()) {
         clearHeaderBlock(sg_row, view);
         clearStatusPlate(view);
-        followList(sg_list);
+        SGRFollowOffset(sg_list, &kFollowerKey, ^(UIScrollView *scroll) { followScroll(scroll); });
         followScroll(sg_list);
     }
     SGRSearchCloseGap(sg_list);

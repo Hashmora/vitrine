@@ -93,3 +93,26 @@ void SGRPassSwiftController(NSString *module, NSString *name, SGRControllerPass 
     if (cls) SGRPassController(cls, pass);
     else SGLog(@"class %@.%@ not found, its passes are inactive", module, name);
 }
+
+#pragma mark - following a scroll
+
+@interface SGROffsetFollower : NSObject
+@property (nonatomic, weak) UIScrollView *scroll;
+@property (nonatomic, copy) void (^follow)(UIScrollView *scroll);
+@end
+
+@implementation SGROffsetFollower
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    UIScrollView *scroll = self.scroll;
+    if (scroll) self.follow(scroll);
+}
+@end
+
+void SGRFollowOffset(UIScrollView *scroll, const void *key, void (^follow)(UIScrollView *scroll)) {
+    if (!scroll || !key || !follow || objc_getAssociatedObject(scroll, key)) return;
+    SGROffsetFollower *follower = [SGROffsetFollower new];
+    follower.scroll = scroll;
+    follower.follow = follow;
+    [scroll addObserver:follower forKeyPath:@"contentOffset" options:0 context:NULL];
+    objc_setAssociatedObject(scroll, key, follower, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
