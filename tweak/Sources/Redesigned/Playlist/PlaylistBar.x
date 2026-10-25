@@ -27,8 +27,6 @@
 static char kBubbleKey;
 static BOOL isDressedPage(UIView *bar);
 
-// Side padding of the name inside its capsule; the capsule is as tall as the buttons beside it.
-static const CGFloat kBubblePadding = 18, kBubbleHeight = 44;
 
 static BOOL isLikedSongs(UIViewController *headerVC) {
     SEL controllerSel = NSSelectorFromString(@"headerController"), modelSel = NSSelectorFromString(@"defaultHeaderViewModel"),
@@ -107,9 +105,7 @@ static void apply(UIView *bar) {
     CGFloat middle = [title.superview convertPoint:title.center toView:nil].y;
     CGFloat shift = (bar.window.safeAreaInsets.top + SGRGlassCircleSize / 2) - middle;
     if (title.transform.ty == 0 && shift != 0 && fabs(shift) < 20) title.transform = CGAffineTransformMakeTranslation(0, shift);
-    CGFloat wanted = ceil([text sizeThatFits:CGSizeMake(CGFLOAT_MAX, kBubbleHeight)].width) + 2 * kBubblePadding;
-    CGFloat width = MIN(MAX(wanted, kBubbleHeight), title.bounds.size.width);
-    SGRGlassCapsuleInside(title, &kBubbleKey, CGSizeMake(width, kBubbleHeight), NO);
+    SGRGlassTitleCapsule(title, &kBubbleKey, SGRTitleWidth(text), title.bounds.size.width, nil);
 }
 
 %hook _TtC28EncoreConsumerMobile_BaseKit19HeaderNavigationBar

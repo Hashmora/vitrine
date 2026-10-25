@@ -32,8 +32,8 @@ static char kHeaderKey, kFieldKey, kFieldGlassKey, kTitleGlassKey, kClearGlassKe
 static __weak UIViewController *sg_locationPage;
 static __weak UILabel *sg_titleLabel;
 
-// Side padding of the title in its capsule and its height: the same as every other page's (Pages/PageBar.m).
-static const CGFloat kTitlePadding = 18, kTitleHeight = 44, kCorner = 16, kGap = 8;
+// The room the two corner buttons leave the title: the same as every other page's (Pages/PageBar.m).
+static const CGFloat kCorner = 16, kGap = 8;
 
 static UIView *pageView(UIViewController *page) {
     UIView *view = page.viewIfLoaded;
@@ -92,13 +92,11 @@ static void glassTitle(UIView *root, UIView *title) {
     UIColor *white = SGRPrimary();
     if (![label.textColor isEqual:white]) label.textColor = white;
     CGFloat room = root.bounds.size.width - 2 * (kCorner + SGRGlassCircleSize + kGap);
-    CGFloat wanted = ceil([label sizeThatFits:CGSizeMake(CGFLOAT_MAX, kTitleHeight)].width) + 2 * kTitlePadding;
-    CGFloat width = MIN(MAX(wanted, kTitleHeight), room);
     // The label is as wide as the row gives it and the capsule is a subview that may reach past it.
-    SGRUnclipUpTo(title, ^BOOL(UIView *v) { return v.superview == root; });
-    UIView *shape = SGRGlassCapsuleInside(title, &kTitleGlassKey, CGSizeMake(width, kTitleHeight), NO);
+    UIView *shape = SGRGlassTitleCapsule(title, &kTitleGlassKey, SGRTitleWidth(label), room, ^BOOL(UIView *v) { return v.superview == root; });
     // The row is 48pt high and the pinned Back is 44: the capsule is level with it, at the row's top.
-    CGRect frame = CGRectMake(round((title.bounds.size.width - width) / 2), 0, width, kTitleHeight);
+    CGFloat width = shape.bounds.size.width;
+    CGRect frame = CGRectMake(round((title.bounds.size.width - width) / 2), 0, width, SGRGlassCircleSize);
     if (shape && !CGRectEqualToRect(shape.frame, frame)) shape.frame = frame;
 }
 

@@ -39,9 +39,8 @@ static NSHashTable<UIViewController *> *sg_titleless;
 // The dressed pages whose trailing controls are left alone (SGRDressBarPageBackOnly), weakly too.
 static NSHashTable<UIViewController *> *sg_backOnly;
 
-// Side padding of the title inside its capsule, and the room the two corner buttons leave it: the same as the
-// playlist's name has (Playlist/PlaylistBar.x).
-static const CGFloat kTitlePadding = 18, kTitleHeight = 44, kCorner = 16, kGap = 8;
+// The room the two corner buttons leave the title.
+static const CGFloat kCorner = 16, kGap = 8;
 
 #pragma mark - the controls of the bar
 
@@ -278,7 +277,7 @@ static void glassTitle(UIView *title) {
         // White, whatever the system appearance made of it: the capsule behind it is dark glass.
         UIColor *white = SGRPrimary();
         if (![label.textColor isEqual:white]) label.textColor = white;
-        content = ceil([label sizeThatFits:CGSizeMake(CGFLOAT_MAX, kTitleHeight)].width);
+        content = SGRTitleWidth(label);
     } else {
         // A title that is a picture (Song DNA's logo and its Beta tag, trees/continuous/41.txt): the capsule wraps the control.
         content = ceil(title.bounds.size.width);
@@ -291,11 +290,8 @@ static void glassTitle(UIView *title) {
     BOOL backOnly = topIsIn(sg_backOnly, SGRNavigationOf(title));
     CGFloat places = !backOnly && extraOf(title.superview) ? 2 : 1;
     CGFloat room = screen - 2 * (kCorner + places * (SGRGlassCircleSize + kGap));
-    CGFloat wanted = content + 2 * kTitlePadding;
-    CGFloat width = MIN(MAX(wanted, kTitleHeight), room);
     // The control is as small as its label, and the capsule is a subview that reaches past it.
-    SGRUnclipUpTo(title, ^BOOL(UIView *v) { return [v.superview isKindOfClass:UINavigationBar.class]; });
-    SGRGlassCapsuleInside(title, &kTitleGlassKey, CGSizeMake(width, kTitleHeight), NO);
+    SGRGlassTitleCapsule(title, &kTitleGlassKey, content, room, ^BOOL(UIView *v) { return [v.superview isKindOfClass:UINavigationBar.class]; });
 }
 
 // The title is laid out again as its text arrives, which reaches neither the page nor the bar's content view the

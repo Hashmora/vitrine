@@ -29,9 +29,6 @@
 
 static char kListKey, kBellKey, kSavedKey, kBellPinKey, kSavedPinKey, kTitleGlassKey;
 
-// Side padding of the name inside its capsule, and its height: the same as every other page's (Pages/PageBar.m).
-static const CGFloat kTitlePadding = 18, kTitleHeight = 44;
-
 static Class sg_galleryPage;
 
 UIView *SGRGalleryPageOf(UIView *view) {
@@ -83,10 +80,7 @@ static void glassTitle(UIView *page) {
             if ([inner isKindOfClass:UILabel.class] && ((UILabel *)inner).text.length) text = (UILabel *)inner;
         }
         if (!text || sub.bounds.size.width < 1) continue;
-        CGFloat wanted = ceil([text sizeThatFits:CGSizeMake(CGFLOAT_MAX, kTitleHeight)].width) + 2 * kTitlePadding;
-        CGFloat width = MIN(MAX(wanted, kTitleHeight), sub.bounds.size.width);
-        SGRUnclipUpTo(sub, ^BOOL(UIView *v) { return v.superview == page; });
-        SGRGlassCapsuleInside(sub, &kTitleGlassKey, CGSizeMake(width, kTitleHeight), NO);
+        SGRGlassTitleCapsule(sub, &kTitleGlassKey, SGRTitleWidth(text), sub.bounds.size.width, ^BOOL(UIView *v) { return v.superview == page; });
         return;
     }
 }

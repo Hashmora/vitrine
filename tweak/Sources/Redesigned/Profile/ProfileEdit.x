@@ -22,7 +22,7 @@
 
 static const CGFloat kEditShift = 10;
 // Side padding of a capsule beside its label, and its height (the title's are the other pages': Pages/PageBar.m).
-static const CGFloat kButtonPadding = 12, kButtonHeight = 36, kTitlePadding = 18, kTitleHeight = 44;
+static const CGFloat kButtonPadding = 12, kButtonHeight = 36;
 
 static char kButtonGlassKey, kTitleGlassKey;
 
@@ -68,7 +68,7 @@ static void dressBar(UINavigationController *navigation) {
     }
 
     UIView *title = SGRChildNamed(content, @"_UINavigationBarTitleControl");
-    if (title) glassCapsule(title, labelIn(title), &kTitleGlassKey, kTitlePadding, kTitleHeight, bar);
+    if (title) SGRGlassTitleCapsule(title, &kTitleGlassKey, SGRTitleWidth(labelIn(title)), CGFLOAT_MAX, ^BOOL(UIView *v) { return v.superview == bar; });
 }
 
 static void chrome(UIViewController *controller) {

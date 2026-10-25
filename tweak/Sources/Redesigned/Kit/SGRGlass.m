@@ -628,3 +628,16 @@ void SGRUnclipUpTo(UIView *view, BOOL (^isLast)(UIView *ancestor)) {
         if (isLast(v)) return;
     }
 }
+
+#pragma mark - a name on glass
+
+CGFloat SGRTitleWidth(UILabel *label) {
+    return ceil([label sizeThatFits:CGSizeMake(CGFLOAT_MAX, SGRGlassCircleSize)].width);
+}
+
+UIView *SGRGlassTitleCapsule(UIView *holder, const void *key, CGFloat content, CGFloat room, BOOL (^isLast)(UIView *ancestor)) {
+    if (!holder || content < 1) return nil;
+    CGFloat width = MIN(MAX(content + 2 * SGRTitlePadding, SGRGlassCircleSize), room);
+    if (isLast) SGRUnclipUpTo(holder, isLast);
+    return SGRGlassCapsuleInside(holder, key, CGSizeMake(width, SGRGlassCircleSize), NO);
+}

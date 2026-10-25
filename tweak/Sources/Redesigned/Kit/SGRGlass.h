@@ -33,6 +33,15 @@ UIView *SGRGlassGroupPill(UIView *host, NSArray<UIView *> *controls, const void 
 // does): a capsule wider than its control, or the legacy glass's press, which grows past it, would be cut off.
 void SGRUnclipUpTo(UIView *view, BOOL (^isLast)(UIView *ancestor));
 
+// The glass capsule a name sits on at the top of a page (a bar's title, a header's name), level with the glass circles
+// beside it: SGRGlassCircleSize tall, SGRTitlePadding of glass each side of `content` (the name's width,
+// SGRTitleWidth), never narrower than it is tall and at most `room` wide. It goes inside `holder` under `key`
+// (SGRGlassCapsuleInside); with `isLast` the views from `holder` up stop clipping as SGRUnclipUpTo has it, for a holder
+// as small as its name. Returns the capsule, nil for no content.
+UIView *SGRGlassTitleCapsule(UIView *holder, const void *key, CGFloat content, CGFloat room, BOOL (^isLast)(UIView *ancestor));
+// The width `label`'s text takes on one line, rounded up.
+CGFloat SGRTitleWidth(UILabel *label);
+
 // Shows or hides a shape of the Kit's by its effect, never by an alpha on it or on a view above it
 // (Redesigned/Player/PlayerMotion.x): UIKit draws the material wrongly or not at all under a fading alpha.
 // The solid shape Reduce Transparency puts in its place has no effect and fades by its own alpha. Animates
