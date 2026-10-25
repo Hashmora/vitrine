@@ -98,10 +98,8 @@ static void glassPill(UIView *root) {
 
 static void chrome(UIViewController *controller) {
     UINavigationController *navigation = controller.navigationController;
-    UIView *pane = navigation.view.superview;
-    if (!navigation || !pane || pane.bounds.size.width < 300) return;
-    // A sheet is a card with a gap above it, never as tall as the screen.
-    if (pane.bounds.size.height >= UIScreen.mainScreen.bounds.size.height - 1) return;
+    UIView *pane = SGRSheetPaneOfNavigation(navigation);
+    if (!pane) return;
     if (sg_editNavigation != navigation) sg_editNavigation = navigation;
     if (pane.layer.mask) pane.layer.mask = nil;
     UIView *glass = SGRGlassSheetView(pane);

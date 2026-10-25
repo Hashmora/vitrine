@@ -44,19 +44,12 @@ static UIView *pillOf(UIView *chip) {
     return nil;
 }
 
-// A selected chip is painted a solid colour of its own; an unselected one a translucent white, or on the radio's
-// chips (SessionControl, trees/continuous/4.txt) Spotify's opaque #2A2A2A, which is a dark grey and no colour.
-static BOOL pillIsSelected(UIView *pill) {
-    CGColorRef color = pill.layer.backgroundColor;
-    return color && CGColorGetAlpha(color) > 0.3 && !SGRIsSheetSurface(color);
-}
-
 static void glassChip(UIView *chip) {
     // A chip grows under a finger with the legacy glass (SGGlassInteractive), and every view up to the row clips to
     // its bounds, which cut the grown capsule off at its edges.
     if (SGUseLegacyGlass()) SGRUnclipUpTo(chip.superview, ^BOOL(UIView *v) { return [NSStringFromClass(v.class) isEqualToString:kRowClass]; });
     UIView *pill = pillOf(chip);
-    SGRGlassChip(chip, pill, pill && pillIsSelected(pill), &kChipGlassKey);
+    SGRGlassChip(chip, pill, pill && SGRPillIsSelected(pill), &kChipGlassKey);
 }
 
 static void watchChip(UIView *chip) {

@@ -1,4 +1,5 @@
 #import "SGLegacyGlass.h"
+#import "SGRuntime.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -18,13 +19,6 @@ BOOL SGLegacyGlassAvailable(void) {
 
 #pragma mark - backdrop layer and its filters
 
-static id SGMakeFilter(NSString *type) {
-    Class filterClass = NSClassFromString(@"CAFilter");
-    SEL sel = NSSelectorFromString(@"filterWithType:");
-    if (![filterClass respondsToSelector:sel]) return nil;
-    return ((id (*)(Class, SEL, NSString *))objc_msgSend)(filterClass, sel, type);
-}
-
 // Saturation and contrast boost under the blur, as Telegram does, so the backdrop is not just a flat blur.
 static id SGSaturationFilter(void) {
     static const float matrix[20] = {
@@ -33,14 +27,14 @@ static id SGSaturationFilter(void) {
         -0.3297f, -1.1084f, 2.8881f, 0.0f, 0.049999997f,
         0.0f, 0.0f, 0.0f, 1.0f, 0.0f,
     };
-    id filter = SGMakeFilter(@"colorMatrix");
+    id filter = SGFilterOfType(@"colorMatrix");
     [filter setValue:[NSValue valueWithBytes:matrix objCType:"{CAColorMatrix=ffffffffffffffffffff}"] forKey:@"inputColorMatrix"];
     [filter setValue:@YES forKey:@"inputBackdropAware"];
     return filter;
 }
 
 static id SGBlurFilter(CGFloat radius) {
-    id filter = SGMakeFilter(@"gaussianBlur");
+    id filter = SGFilterOfType(@"gaussianBlur");
     [filter setValue:@(radius) forKey:@"inputRadius"];
     return filter;
 }

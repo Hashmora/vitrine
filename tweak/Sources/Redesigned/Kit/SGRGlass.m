@@ -634,3 +634,12 @@ UIView *SGRGlassTitleCapsule(UIView *holder, const void *key, CGFloat content, C
     if (isLast) SGRUnclipUpTo(holder, isLast);
     return SGRGlassCapsuleInside(holder, key, CGSizeMake(width, SGRGlassCircleSize), NO);
 }
+
+#pragma mark - a sheet's pane
+
+UIView *SGRSheetPaneOfNavigation(UINavigationController *navigation) {
+    UIView *pane = navigation.view.superview;
+    if (!navigation || !pane || pane.bounds.size.width < 300) return nil;
+    if (pane.bounds.size.height >= UIScreen.mainScreen.bounds.size.height - 1) return nil;
+    return pane;
+}

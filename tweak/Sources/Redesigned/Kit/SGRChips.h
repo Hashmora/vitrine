@@ -37,4 +37,7 @@ void SGRDressedChipPainted(UIView *chip);
 BOOL SGRSheetPillsLive(void);   // a pill has been dressed; false until then, so a hook need not look
 BOOL SGRIsSheetPill(UIView *view);
 BOOL SGRIsPillGrey(CGColorRef color);
+// Whether a pill or a chip is the selected one: Spotify paints it a solid colour of its own, the others a translucent
+// white or a dark grey (SGRIsPillGrey).
+BOOL SGRPillIsSelected(UIView *pill);
 void SGRSheetPillPainted(UIView *pill);

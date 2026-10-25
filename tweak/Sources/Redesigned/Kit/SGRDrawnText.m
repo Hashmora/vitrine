@@ -46,10 +46,7 @@ static SGRInk inkOf(UIView *view) {
 }
 
 static void invert(UIView *view) {
-    Class filterClass = NSClassFromString(@"CAFilter");
-    SEL make = NSSelectorFromString(@"filterWithType:");
-    if (![filterClass respondsToSelector:make]) return;
-    id filter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(filterClass, make, @"colorInvert");
+    id filter = SGFilterOfType(@"colorInvert");
     if (filter) view.layer.filters = @[filter];
 }
 

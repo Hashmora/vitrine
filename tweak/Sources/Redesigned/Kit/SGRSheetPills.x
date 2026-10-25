@@ -33,8 +33,7 @@ BOOL SGRIsPillGrey(CGColorRef color) {
     return c[0] <= 0.35 && fabs(c[0] - c[1]) < 0.03 && fabs(c[1] - c[2]) < 0.03;
 }
 
-// A selected pill carries a paint that is not the grey and is solid.
-static BOOL pillIsSelected(UIView *pill) {
+BOOL SGRPillIsSelected(UIView *pill) {
     CGColorRef paint = pill.layer.backgroundColor;
     return paint && CGColorGetAlpha(paint) > 0.3 && !SGRIsPillGrey(paint);
 }
@@ -44,7 +43,7 @@ static BOOL pillIsSelected(UIView *pill) {
 // shows nothing that was not on screen already. The pill is its own fill.
 static void glassPill(UIView *pill) {
     if (SGUseLegacyGlass()) SGRUnclipUpTo(pill.superview, ^BOOL(UIView *v) { return [NSStringFromClass(v.class) hasSuffix:@"PillScrollView"]; });
-    SGRGlassChip(pill, pill, pillIsSelected(pill), &kPillGlassKey);
+    SGRGlassChip(pill, pill, SGRPillIsSelected(pill), &kPillGlassKey);
 }
 
 static void dressPill(UIView *pill) {

@@ -84,6 +84,9 @@ UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radiu
 // at that list and leaves its rows alone. Also records the sheet in sgr_sheetChromeRoot (SGRRepaint.h), whose
 // hook keeps the fill clear when Spotify paints it back.
 UIView *SGRGlassSheetChrome(UIView *content);
+// The pane of the sheet `navigation` is presented in (its view's superview): a card at least 300pt wide with a gap
+// above it, never as tall as the screen. Nil for a navigation controller that is not in such a sheet.
+UIView *SGRSheetPaneOfNavigation(UINavigationController *navigation);
 // The pane of Navigation's sheet `view` stands in (id=sheet-view), `view` itself included; nil outside one.
 UIView *SGRSheetPaneOf(UIView *view);
 // The same for a sheet that carries no "sheet-view" identifier, handed over as the view that is the pane itself
