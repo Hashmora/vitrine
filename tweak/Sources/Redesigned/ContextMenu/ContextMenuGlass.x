@@ -110,10 +110,15 @@ static void bubbleMenu(UIView *list) {
 // shorter list that scrolls, so it stays a menu by the button rather than a sheet over the page.
 static const CGFloat kMenuMaxShare = 0.55;
 
+// Never while a submenu is open: a list held to its height under a submenu UIKit lays out round the full one moves
+// and cuts the two.
 static void holdHeight(UIView *menuView) {
     CGFloat most = round(menuView.window.bounds.size.height * kMenuMaxShare);
     if (most < 100) return;
     Class list = NSClassFromString(@"_UIContextMenuListView");
+    NSUInteger lists = 0;
+    for (UIView *sub in menuView.subviews) if ([sub isKindOfClass:list]) lists++;
+    if (lists > 1) return;
     for (UIView *sub in menuView.subviews) {
         if (![sub isKindOfClass:list] || sub.bounds.size.height <= most + 0.5) continue;
         CGRect frame = sub.frame;
@@ -131,12 +136,48 @@ static void holdHeight(UIView *menuView) {
     }
 }
 
+// A submenu open (the player's More) stands alone, as on iOS 26: the menu under it, which UIKit below iOS 26 leaves slid
+// down and dimmed behind it, fades out while it is up and back as it closes. The lists are laid one over the other, the
+// submenu's last; only alpha is touched, on views of UIKit's own menu, which UIKit puts back as it lays them out again.
+static const NSTimeInterval kSubmenuFade = 0.2;
+// A submenu this much shorter than it was at its tallest is closing back into its row.
+static const CGFloat kClosingShare = 0.8;
+static char kUnderKey, kTallestKey;
+
+static void fadeList(UIView *list, BOOL under) {
+    BOOL was = [objc_getAssociatedObject(list, &kUnderKey) boolValue];
+    if (under == was && (!under || list.alpha < 0.01)) return;
+    objc_setAssociatedObject(list, &kUnderKey, @(under), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // Back at once and quickly: the menu has to be there as the submenu shrinks into its row, not after.
+    [UIView animateWithDuration:under ? kSubmenuFade : kSubmenuFade / 2 delay:0 options:UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{ list.alpha = under ? 0 : 1; } completion:nil];
+}
+
+static void hideUnder(UIView *menuView) {
+    Class list = NSClassFromString(@"_UIContextMenuListView");
+    NSMutableArray<UIView *> *lists = [NSMutableArray array];
+    for (UIView *sub in menuView.subviews) if ([sub isKindOfClass:list]) [lists addObject:sub];
+    UIView *top = lists.lastObject;
+    // The submenu's tallest so far: UIKit sets a closing list's frame to its row's at once and animates the rest, so a
+    // shorter one is a submenu on its way out, and the menu under it comes back as it starts to go rather than once it
+    // has gone, which would leave More's row alone in the air a moment.
+    BOOL closing = NO;
+    if (lists.count > 1) {
+        CGFloat height = top.bounds.size.height;
+        CGFloat tallest = MAX(height, [objc_getAssociatedObject(top, &kTallestKey) doubleValue]);
+        objc_setAssociatedObject(top, &kTallestKey, @(tallest), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        closing = height < tallest * kClosingShare;
+    }
+    for (UIView *each in lists) fadeList(each, each != top && !closing);
+}
+
 // The menu's own view lays out as a submenu comes in or goes out, which reaches the lists it holds.
 %hook _UIContextMenuView
 - (void)layoutSubviews {
     %orig;
     holdHeight((UIView *)self);
     glassLists((UIView *)self);
+    hideUnder((UIView *)self);
 }
 %end
 
