@@ -14,7 +14,7 @@
 //     SGRHeaderInfo.h a page header's title, creator, length, row and description, the Music app's
 //     SGRChips.h     Encore's filter chips on glass (Liked Songs, Recents)
 //     SGRRestyle.h   keeping Spotify's views restyled: suppress, digits, lookups, shadows, firing
-//                    controls, taking a list cell's paint off the field
+//                    controls, taking a list cell's paint off the field, a hard top edge (SGREdgeEffect.x)
 //     SGRBridges.h   player state, now playing artwork, the player's open and close
 //     SGRAlertScreen.h  the system alert and action sheet as Telegram draws them (iOS < 26; SGRAlertHook.x swaps them in)
 //     SGRPass.h      passes over Spotify's controllers and views, repeated as they settle

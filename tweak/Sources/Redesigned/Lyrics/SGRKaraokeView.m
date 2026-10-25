@@ -2061,7 +2061,7 @@ static BOOL anyUntranslated(NSArray<SGKaraokeLine *> *lines) {
             offer(@"Translate on iPhone", @"translate", @"Apple's Translate, on this iPhone",
                   ^{ return [SGTranslationSource by:SGTranslatedOnDevice model:nil made:nil]; },
                   ^(NSArray<SGKaraokeLine *> *lines, NSString *track, NSString *to, SGRTranslated progress, SGRTranslated done) {
-                [SGOnDeviceTranslation translate:textsOf(lines) to:to done:done];
+                [SGOnDeviceTranslation translate:textsOf(lines) to:to from:weakSelf done:done];
             });
         }
         if (intelligence) {
@@ -2107,11 +2107,22 @@ static BOOL anyUntranslated(NSArray<SGKaraokeLine *> *lines) {
         }
         [self offerExtras];
         if (error) {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:translations ? @"Partly translated" : @"No translation"
+            BOOL needsDownload = [source.by isEqualToString:SGTranslatedOnDevice] && [error hasPrefix:@"Download "];
+            NSString *title = needsDownload ? @"Language not downloaded" : (translations ? @"Partly translated" : @"No translation");
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
                                                                            message:error preferredStyle:UIAlertControllerStyleAlert];
             // Over the player, which is dark whatever the system's appearance.
             alert.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+            if (needsDownload) {
+                [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+                UIAlertAction *open = [UIAlertAction actionWithTitle:@"Open Settings" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                    [SGOnDeviceTranslation openTranslateSettings];
+                }];
+                [alert addAction:open];
+                alert.preferredAction = open;
+            } else {
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+            }
             [SGTopController() presentViewController:alert animated:YES completion:nil];
         }
     });
