@@ -37,3 +37,13 @@ CGFloat SGRNowPlayingBarShiftOver(CGRect frame, UIWindow *window);
 void SGRSnackbarFollowNowPlayingBar(void);
 // The same for the tooltips over the bar (Kit/SGRTooltip.x).
 void SGRTooltipFollowNowPlayingBar(void);
+// TabBar.x brackets its animated minimize and expand with YES and NO. Meanwhile the bar's own relayout after the Jam
+// strip moves waits for the end, so it cannot snap the bar mid-spring.
+void SGRNowPlayingBarMoving(BOOL moving);
+// The height of Spotify's Jam strip on the bar, 0 outside a Jam (NowPlayingBar.x): the fade under the bars
+// (TabBar.x) reaches that much higher, so the strip's text has it behind it too. The tab bar is laid out
+// again when it changes.
+CGFloat SGRNowPlayingStripHeight(void);
+// The Jam strip in `host`'s coordinates, through any transform between them (the minimized tab bar's row moves the
+// bar by one); CGRectNull outside a Jam or when the strip is not inside `host`.
+CGRect SGRNowPlayingStripFrameIn(UIView *host);

@@ -68,6 +68,9 @@ UICollectionView *SGRPageListIn(UIView *view, const void *key);
 // answer is kept weakly on `root` under `cacheKey` and searched for again only when it is gone, has
 // left `root` or changed its identifier. nil when there is none; a miss is not cached.
 UIView *SGRFindByIdentifier(UIView *root, NSString *identifier, const void *cacheKey);
+// SGRFindByIdentifier for every identifier at once, in one walk (Core's SGFindRememberedAll): `found[i]` is
+// identifiers[i]'s view or nil. For lookups made back to back with nothing between them that changes the tree.
+void SGRFindByIdentifiers(UIView *root, NSArray<NSString *> *identifiers, const void *const cacheKeys[], UIView *__strong found[]);
 
 // The first subview of `host` (not deeper) whose class is named `name` exactly.
 UIView *SGRChildNamed(UIView *host, NSString *name);
