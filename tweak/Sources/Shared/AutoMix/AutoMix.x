@@ -139,6 +139,26 @@ static NSString *automixKeys(id track) {
     return [NSString stringWithFormat:@"%lu keys, {%@}", (unsigned long)metadata.count, [found componentsJoinedByString:@", "]];
 }
 
+// DJ is the only path that supplies a ready-made transition. Keep this separate from
+// the ordinary probe line: a normal playlist may have automix enabled without having
+// any recipe or cuepoints at all.
+static NSString *djTransitionSummary(id track) {
+    if (![track isKindOfClass:NSClassFromString(@"SPTPlayerTrack")]) return nil;
+    NSDictionary *metadata = ((SPTPlayerTrack *)track).metadata;
+    if (![metadata isKindOfClass:NSDictionary.class] || ![metadata[@"automix.mode"] isEqual:@"auto"]) return nil;
+    NSString *recipe = [metadata[@"automix.auto_transition_recipe"] description];
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (NSString *key in @[
+        @"automix.transition_uri", @"automix.fade_in_cuepoint.origin", @"automix.fade_in_cuepoint.position",
+        @"automix.fade_in_cuepoint.tempo", @"automix.fade_out_cuepoint.origin", @"automix.fade_out_cuepoint.position",
+        @"automix.fade_out_cuepoint.tempo"]) {
+        id value = metadata[key];
+        if (value) [parts addObject:[NSString stringWithFormat:@"%@=%@", key, value]];
+    }
+    if (recipe.length) [parts addObject:[NSString stringWithFormat:@"recipe=%lu chars", (unsigned long)recipe.length]];
+    return [parts componentsJoinedByString:@", "];
+}
+
 static NSString *trackLine(id track) {
     if (![track isKindOfClass:NSClassFromString(@"SPTPlayerTrack")]) return @"none";
     SPTPlayerTrack *t = track;
@@ -189,8 +209,14 @@ static NSUInteger metadataCount(id track) {
         SGLog(@"automix probe: change, %.2f s of the last track left; mixer silent %.0f ms since the last report%@; context %@; now %@; next %@; Spotify %@",
               left, silentMs, SGSingOn() ? @" (Sing on, overcounts)" : @"", SGURIString(state.contextURI), trackLine(state.track),
               trackLine(next), settings);
+        NSString *nowDJ = djTransitionSummary(state.track);
+        NSString *nextDJ = djTransitionSummary(next);
+        if (nowDJ || nextDJ) SGLog(@"automix DJ transition: now {%@}; next {%@}", nowDJ ?: @"none", nextDJ ?: @"none");
     } else if (uri && count != _metadataCount) {
         SGLog(@"automix probe: update; now %@; next %@", trackLine(state.track), trackLine(next));
+        NSString *nowDJ = djTransitionSummary(state.track);
+        NSString *nextDJ = djTransitionSummary(next);
+        if (nowDJ || nextDJ) SGLog(@"automix DJ transition update: now {%@}; next {%@}", nowDJ ?: @"none", nextDJ ?: @"none");
     }
     _uri = uri;
     _metadataCount = count;
