@@ -47,7 +47,9 @@ enum { kSGRelayLevels = 10, kSGRelaySharpnesses = 3 };
 //     the cover back to shrink into the player while the clip fades.
 // 15: a song with no clip gets its still cover the screen's width across too; the clip rests while the screen is dark
 //     and starts over on a new display layer when it lights or its decoding fails.
-enum { kSGRelayAddonBuild = 15 };
+// 16: a new song's clip or cover drawn only once it is in, the last song's held until then and its placeholder only
+//     after a wait; one clip's last frame held until the next one's first.
+enum { kSGRelayAddonBuild = 16 };
 // Below iOS 26, the add-on also fills the lock screen with the now playing cover while Spotify's switch for it is on
 // (AnimatedArtwork.h, SGKeyLockCoverAddon): told "lockart.1" and "lockart.0" as the switch is set and each time the
 // add-on answers. It reads the cover from MediaRemote, as the lock screen's own player does.

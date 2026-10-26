@@ -21,6 +21,11 @@
 // While the screen is dark the clip is not read or decoded (com.apple.springboard.hasBlankedScreen), and lit it starts
 // over on a new display layer.
 //
+// A new song changes what is drawn only once it has something to draw: until its cover is in (the now playing info
+// comes first with none, or with a flat gray placeholder) or its clip is shared, the last song's clip or cover stays,
+// rather than the system's gray placeholder showing for a moment. If neither is in after kWait, whatever the song has
+// is drawn, the placeholder too.
+//
 // Only the large cover's view and the cover itself are hooked, as they lay out, come and go and take an alpha.
 //
 // Threading: main thread.
@@ -37,6 +42,8 @@ typedef void (*SGMRGetInfo)(dispatch_queue_t queue, void (^handler)(CFDictionary
 typedef void (*SGMRGetApp)(dispatch_queue_t queue, void (^handler)(CFStringRef bundle));
 
 static const NSTimeInterval kFade = 0.35;
+// How long a new song's cover is waited for before its placeholder is drawn.
+static const NSTimeInterval kWait = 2;
 
 static SGMRIsPlaying sg_isPlaying;
 static SGMRGetInfo sg_getInfo;
@@ -44,7 +51,16 @@ static SGMRGetApp sg_getApp;
 static BOOL sg_on, sg_playing = YES, sg_showing, sg_blank;
 static UIImage *sg_cover;   // Spotify's song's still cover, nil for none or for another app
 static NSData *sg_coverData;
+static BOOL sg_coverLoaded;   // sg_cover is the song's own, not a placeholder
+static NSString *sg_track;   // the song the now playing info is for
 static NSURL *sg_clip;   // this process's own copy of the shared clip, nil for none
+// What is drawn: the clip, cover and song above as they were when last taken, held while a new song's are on their way.
+static UIImage *sg_shownCover;
+static NSData *sg_shownCoverData;
+static NSString *sg_shownTrack;
+static NSURL *sg_shownClip;
+static BOOL sg_waiting;
+static NSUInteger sg_wait;   // the wait's number, so a late timeout of one that ended does nothing
 static __weak UIView *sg_field;   // the large cover's CoverSheetBackgroundView, while it is open
 static char kClipKey, kTapKey, kHiddenKey, kWantedKey, kClosedKey;
 static BOOL sg_settingAlpha;   // the alpha set here, not MediaRemoteUI's to remember
@@ -96,7 +112,7 @@ static void apply(void) {
     }
     UIView *artwork = artworkIn(field);
     // Closed by a tap, the field stays the system's until it is shown again.
-    BOOL on = sg_on && (sg_clip || sg_cover) && artwork && !objc_getAssociatedObject(field, &kClosedKey);
+    BOOL on = sg_on && (sg_shownClip || sg_shownCover) && artwork && !objc_getAssociatedObject(field, &kClosedKey);
     SGVLockClip *clip = objc_getAssociatedObject(field, &kClipKey);
     if (!clip && on) {
         clip = [[SGVLockClip alloc] initWithFrame:field.bounds];
@@ -124,12 +140,12 @@ static void apply(void) {
     [UIView animateWithDuration:shown == on ? 0 : kFade delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
         clip.alpha = on ? 1 : 0;
     } completion:^(BOOL finished) {
-        if (!(sg_on && sg_clip && artworkIn(field)) || objc_getAssociatedObject(field, &kClosedKey)) [clip playClip:nil];
+        if (!(sg_on && sg_shownClip && artworkIn(field)) || objc_getAssociatedObject(field, &kClosedKey)) [clip playClip:nil];
     }];
     if (on) {
         [clip setSuspended:sg_blank];
-        [clip showCover:sg_cover];
-        [clip playClip:sg_clip];
+        [clip showCover:sg_shownCover];
+        [clip playClip:sg_shownClip];
         [clip setPlaying:sg_playing];
     }
 }
@@ -145,17 +161,91 @@ static void closing(UIView *field) {
                      animations:^{ clip.alpha = 0; } completion:nil];
 }
 
+// A copy of the shared clip taken off disk once it is neither the newest nor the one drawn.
+static void forget(NSURL *clip) {
+    if (clip && ![clip isEqual:sg_clip] && ![clip isEqual:sg_shownClip]) [NSFileManager.defaultManager removeItemAtURL:clip error:nil];
+}
+
+// What came in drawn. Falling back, at the end of a wait, the new song's placeholder is taken too; otherwise a
+// placeholder never takes the place of a cover already drawn.
+static void take(BOOL fallback) {
+    NSURL *old = sg_shownClip;
+    sg_waiting = NO;
+    sg_shownClip = sg_clip;
+    sg_shownTrack = sg_track;
+    if (sg_coverLoaded || fallback || !sg_shownCover) {
+        sg_shownCover = sg_cover;
+        sg_shownCoverData = sg_coverData;
+    }
+    forget(old);
+    apply();
+}
+
+// Something of a new song's in: drawn at once outside a wait, and in one once it is the new song's clip or its own cover.
+static void changed(void) {
+    if (!sg_waiting) {
+        take(NO);
+        return;
+    }
+    BOOL newClip = sg_clip && ![sg_clip isEqual:sg_shownClip];
+    BOOL newCover = sg_coverLoaded && ![sg_track isEqualToString:sg_shownTrack] && ![sg_coverData isEqualToData:sg_shownCoverData];
+    if (newClip || newCover) take(NO);
+}
+
+// A new song on its way: what is drawn stays until changed() finds its clip or cover, or kWait has gone.
+static void hold(void) {
+    if (!sg_waiting && (sg_shownClip || sg_shownCover)) {
+        sg_waiting = YES;
+        NSUInteger run = ++sg_wait;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kWait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (sg_waiting && sg_wait == run) take(YES);
+        });
+    }
+    changed();
+}
+
 // The shared clip copied into this process's own temporary folder under a new name, so the clip view takes a new file.
 static void readShared(void) {
     NSFileManager *files = NSFileManager.defaultManager;
-    if (sg_clip) [files removeItemAtURL:sg_clip error:nil];
+    NSURL *old = sg_clip;
     sg_clip = nil;
+    forget(old);
     NSString *shared = SGLockSharedClipPath();
     NSURL *copy = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"vitrine-lockclip-%u.mp4", arc4random()]]];
     NSError *error = nil;
     if ([files copyItemAtURL:[NSURL fileURLWithPath:shared] toURL:copy error:&error]) sg_clip = copy;
     else NSLog(@"[vitrine-addon] MediaRemoteUI cannot read the shared clip: %@", error.localizedDescription);
-    apply();
+    changed();
+}
+
+// Whether `cover` is a song's own rather than a placeholder: no cover at all, or one of a single flat gray, is not.
+static BOOL looksLoaded(UIImage *cover) {
+    CGImageRef image = cover.CGImage;
+    if (!image) return NO;
+    enum { side = 8 };
+    uint8_t pixels[side * side * 4] = {0};
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(pixels, side, side, 8, side * 4, space, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    if (!context) return YES;
+    CGContextDrawImage(context, CGRectMake(0, 0, side, side), image);
+    CGContextRelease(context);
+    double sum = 0, squares = 0, chroma = 0;
+    for (int i = 0; i < side * side; i++) {
+        const uint8_t *p = pixels + i * 4;
+        double luma = (0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]) / 255;
+        sum += luma;
+        squares += luma * luma;
+        chroma = MAX(chroma, (MAX(p[0], MAX(p[1], p[2])) - MIN(p[0], MIN(p[1], p[2]))) / 255.0);
+    }
+    double mean = sum / (side * side);
+    double spread = sqrt(MAX(0, squares / (side * side) - mean * mean));
+    return spread > 0.06 || chroma > 0.12;
+}
+
+// The song, by its title and album: not its artist, which Vitrine's lock screen lyrics write each line into.
+static NSString *trackOf(NSDictionary *info) {
+    return [NSString stringWithFormat:@"%@\n%@", info[@"kMRMediaRemoteNowPlayingInfoTitle"] ?: @"", info[@"kMRMediaRemoteNowPlayingInfoAlbum"] ?: @""];
 }
 
 // Spotify's still cover from the now playing info, read again as the info changes; another app's is not taken.
@@ -163,18 +253,29 @@ static void readCover(void) {
     if (!sg_getInfo || !sg_getApp) return;
     sg_getApp(dispatch_get_main_queue(), ^(CFStringRef bundle) {
         if (![(__bridge NSString *)bundle isEqualToString:@"com.spotify.client"]) {
-            BOOL had = sg_cover != nil;
+            BOOL had = sg_cover != nil || sg_shownCover != nil;
             sg_cover = nil;
             sg_coverData = nil;
-            if (had) apply();
+            sg_coverLoaded = NO;
+            sg_track = nil;
+            if (had) take(YES);
             return;
         }
         sg_getInfo(dispatch_get_main_queue(), ^(CFDictionaryRef info) {
-            NSData *data = [(__bridge NSDictionary *)info objectForKey:@"kMRMediaRemoteNowPlayingInfoArtworkData"];
-            if (data == sg_coverData || [data isEqualToData:sg_coverData]) return;
-            sg_coverData = data;
-            sg_cover = data ? [UIImage imageWithData:data] : nil;
-            apply();
+            NSDictionary *now = (__bridge NSDictionary *)info;
+            NSString *track = trackOf(now);
+            NSData *data = now[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
+            BOOL sameCover = data == sg_coverData || [data isEqualToData:sg_coverData];
+            if (sameCover && [track isEqualToString:sg_track]) return;
+            BOOL newTrack = sg_track && ![track isEqualToString:sg_track];
+            sg_track = track;
+            if (!sameCover) {
+                sg_coverData = data;
+                sg_cover = data ? [UIImage imageWithData:data] : nil;
+                sg_coverLoaded = looksLoaded(sg_cover);
+            }
+            if (newTrack) hold();
+            else changed();
         });
     });
 }
@@ -262,10 +363,12 @@ static void listen(const char *name, void (^handler)(void)) {
     listen(kSGRelayLockArtOn, ^{ sg_on = YES; apply(); });
     listen(kSGRelayLockArtOff, ^{ sg_on = NO; apply(); });
     listen(kSGRelayLockClipShared, ^{ readShared(); });
+    // Spotify says so as each song begins, before its clip is looked up, so what is drawn waits for the song's cover.
     listen(kSGRelayLockClipNone, ^{
-        if (sg_clip) [NSFileManager.defaultManager removeItemAtURL:sg_clip error:nil];
+        NSURL *old = sg_clip;
         sg_clip = nil;
-        apply();
+        forget(old);
+        hold();
     });
     // The switch and the clip as they are now: Spotify answers SpringBoard's pong to this ping with the switch, and a
     // clip already shared is in the shared caches.

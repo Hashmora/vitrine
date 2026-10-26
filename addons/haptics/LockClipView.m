@@ -32,6 +32,7 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
 @implementation SGVLockClip {
     CAGradientLayer *_bands;
     AVSampleBufferDisplayLayer *_video;
+    AVSampleBufferDisplayLayer *_leaving;   // the last clip's, held on its frame under the next until that one's is in
     CAGradientLayer *_mask;
     CALayer *_still;
     CAGradientLayer *_stillMask;
@@ -169,8 +170,15 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     _playing = clip;
     _run++;
     [_video stopRequestingMediaData];
-    [_video flush];
-    [_video removeFromSuperlayer];
+    [_leaving removeFromSuperlayer];
+    _leaving = nil;
+    // One clip after another: the last one's frame stays until the next one's first is in, rather than the bands alone.
+    if (clip && _video && !_suspended) {
+        _leaving = _video;
+    } else {
+        [_video flush];
+        [_video removeFromSuperlayer];
+    }
     [_reader cancelReading];
     _video = nil;
     _reader = nil;
@@ -181,7 +189,10 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     _track = [_asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
 #pragma clang diagnostic pop
-    if (!_track) return;
+    if (!_track) {
+        [self dropLeaving];
+        return;
+    }
     CGSize size = CGSizeApplyAffineTransform(_track.naturalSize, _track.preferredTransform);
     _natural = CGSizeMake(fabs(size.width), fabs(size.height));
     _video = [AVSampleBufferDisplayLayer layer];
@@ -205,16 +216,19 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     NSUInteger asked = _run;
     [frames generateCGImagesAsynchronouslyForTimes:@[[NSValue valueWithCMTime:kCMTimeZero]]
                                  completionHandler:^(CMTime requested, CGImageRef image, CMTime actual, AVAssetImageGeneratorResult result, NSError *error) {
-        if (result != AVAssetImageGeneratorSucceeded || !image) return;
-        CGImageRetain(image);
+        BOOL succeeded = result == AVAssetImageGeneratorSucceeded && image;
+        if (succeeded) CGImageRetain(image);
         dispatch_async(dispatch_get_main_queue(), ^{
             SGVLockClip *view = weakSelf;
             if (view && view->_run == asked) {
-                [view paintBands:image];
-                // The clip is in: the still under it goes, so a clip of another shape shows no cover at its edges.
-                view->_still.opacity = 0;
+                if (succeeded) {
+                    [view paintBands:image];
+                    // The clip is in: the still under it goes, so a clip of another shape shows no cover at its edges.
+                    view->_still.opacity = 0;
+                }
+                [view dropLeaving];
             }
-            CGImageRelease(image);
+            if (succeeded) CGImageRelease(image);
         });
     }];
 
@@ -223,6 +237,18 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     dispatch_async(_feed, ^{
         if (run != self->_run || ![self startReader]) return;
         [video requestMediaDataWhenReadyOnQueue:self->_feed usingBlock:^{ [self feed:video run:run]; }];
+    });
+}
+
+// The last clip's layer taken away a moment after the next one's first frame is read, as the display layer shows it.
+- (void)dropLeaving {
+    AVSampleBufferDisplayLayer *leaving = _leaving;
+    if (!leaving) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (self->_leaving != leaving) return;
+        [leaving flush];
+        [leaving removeFromSuperlayer];
+        self->_leaving = nil;
     });
 }
 
