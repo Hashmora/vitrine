@@ -21,6 +21,8 @@
 #import "Player.h"
 
 static const CGFloat kSkipGlyphSize = 32, kFooterGlyphSize = 20;
+// Spotify's Encore queue glyph is drawn larger than the glyphs beside it; this much of its size looks theirs.
+static const CGFloat kEncoreQueueScale = 0.85;
 // Where the four footer glyphs sit, as parts of the footer's width: Lyrics, Connect, Queue, the DJ button.
 static const CGFloat kSlots[4] = {0.2, 0.4, 0.6, 0.8};
 // The DJ button's blue disc is 48pt, a good deal more than the glyphs beside it; drawn this much of that.
@@ -202,7 +204,7 @@ static void styleFooter(UIViewController *unit) {
     });
     queue.bounds = CGRectMake(0, 0, 44, 44);
     queue.center = CGPointMake(slot(2), middleY);
-    if (SGRPlayerSpotifyIcons()) SGRPlayerEncoreGlyphIn(queue, @"queue");
+    if (SGRPlayerSpotifyIcons()) SGRPlayerEncoreGlyphIn(queue, @"queue").transform = CGAffineTransformMakeScale(kEncoreQueueScale, kEncoreQueueScale);
 
     // The DJ button at the last place. Connect's view reaches a long way to the right of its glyph, so the
     // DJ's goes above it in the stack, or Connect would take its touches.
