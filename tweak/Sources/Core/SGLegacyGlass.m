@@ -498,11 +498,19 @@ void SGLegacyGlassSpecular(CALayer *host, CGRect bounds, CGFloat radius) {
 
 #pragma mark - SGLegacyGlassView
 
+// A pane resized again this soon after the last time is being resized frame by frame (a bar's stand-in following the
+// player as it closes, BarTransition.x): the mesh is made for the pane's proportions rather than its points, and the rim's
+// light stretches with its layer, so in between only frames move and both are made again once the size has stood still
+// for kSettle. Made on every frame, the light's bitmap (every pixel worked out on the CPU) and the mesh dropped frames on
+// an iPhone 11.
+static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
+
 @implementation SGLegacyGlassView {
     CALayer *_backdropLayer;
     SGNoActionsDelegate *_backdropDelegate;
     CGSize _meshSize;
     CGFloat _meshRadius;
+    CFTimeInterval _lastResize;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -587,6 +595,16 @@ void SGLegacyGlassSpecular(CALayer *host, CGRect bounds, CGFloat radius) {
     CGFloat radius = _capsule ? MIN(size.width, size.height) / 2 : _cornerRadius;
     if (CGSizeEqualToSize(size, _meshSize) && radius == _meshRadius) return;
     BOOL classic = self.classic;
+    CFTimeInterval now = CACurrentMediaTime();
+    BOOL burst = _meshSize.width >= 1 && now - _lastResize < kResizeBurst
+                 && classic == (MIN(_meshSize.width, _meshSize.height) >= kClassicMinSide);
+    _lastResize = now;
+    if (burst) {
+        [self followSize:size radius:radius];
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(settle) object:nil];
+        [self performSelector:@selector(settle) withObject:nil afterDelay:kSettle inModes:@[NSRunLoopCommonModes]];
+        return;
+    }
     if (_rimless) {
         for (CALayer *sub in self.layer.sublayers) {
             if ([sub.name isEqualToString:kSpecularName] || [sub.name isEqualToString:kClassicSpecularName]) sub.hidden = YES;
@@ -606,6 +624,31 @@ void SGLegacyGlassSpecular(CALayer *host, CGRect bounds, CGFloat radius) {
     id mesh = SGMakeGlassMesh(size, radius, _magnification, _lensScale, classic);
     if (mesh) [_backdropLayer setValue:mesh forKey:@"meshTransform"];
     [CATransaction commit];
+}
+
+// The frames alone, mid-resize: the mesh and the rim's light keep the size they were made for.
+- (void)followSize:(CGSize)size radius:(CGFloat)radius {
+    CGRect bounds = self.bounds;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.layer.cornerRadius = radius;
+    _backdropLayer.frame = bounds;
+    for (CALayer *sub in self.layer.sublayers) {
+        BOOL light = [sub.name isEqualToString:kSpecularName], classic = [sub.name isEqualToString:kClassicSpecularName];
+        if ((!light && !classic) || sub.hidden) continue;
+        sub.frame = bounds;
+        CAShapeLayer *line = (CAShapeLayer *)sub.mask;
+        line.frame = sub.bounds;
+        line.path = rimPath(sub.bounds, light ? kRimWidth / 2 : 0.5, radius);
+    }
+    [CATransaction commit];
+}
+
+// The size has stood still: the mesh and the light made for it.
+- (void)settle {
+    _lastResize = 0;
+    _meshSize = CGSizeZero;
+    [self setNeedsLayout];
 }
 
 @end
