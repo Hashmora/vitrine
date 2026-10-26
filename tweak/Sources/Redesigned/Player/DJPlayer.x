@@ -126,23 +126,17 @@ static SGRGlyphButton *glyphButtonIn(UIView *host, const void *key, NSString *sy
     return button;
 }
 
-// Every view of the footer whose accessibility identifier names a share, and the footer's view that holds it.
-static void vanishShares(UIView *host) {
-    static NSMutableSet<NSString *> *logged;
-    SGForEachView(host, ^(UIView *view) {
-        NSString *identifier = view.accessibilityIdentifier;
-        if (![identifier.lowercaseString containsString:@"share"]) return;
-        SGRPlayerVanish(view);
-        UIView *holder = holderIn(host, view);
-        // Not a holder that also holds Connect or the DJ button.
-        if (holder && !SGRFindByIdentifier(holder, @"Components.ConnectButtonOutputSwitcher", NULL)
-            && !SGRFindByIdentifier(holder, @"Components.UI.NeffleButtonNowPlayingContainerView", NULL)) SGRPlayerVanish(holder);
-        if (!logged) logged = [NSMutableSet set];
-        if (![logged containsObject:identifier]) {
-            [logged addObject:identifier];
-            SGLog(@"AI DJ player: share %@ (%@) hidden", identifier, NSStringFromClass(view.class));
-        }
-    });
+// Nothing of `view` drawn, by an empty mask on its layer: Spotify gives the share button and its holder their alpha back
+// after the footer lays out, which the DJ's disc hid until the waveform took its place, and leaves a mask alone.
+static char kEmptyMaskKey;
+static void maskAway(UIView *view) {
+    if (!view) return;
+    CALayer *mask = objc_getAssociatedObject(view, &kEmptyMaskKey);
+    if (!mask) {
+        mask = [CALayer layer];
+        objc_setAssociatedObject(view, &kEmptyMaskKey, mask, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (view.layer.mask != mask) view.layer.mask = mask;
 }
 
 // The DJ button as the Music app's waveform: an empty mask over its holder, so nothing of Spotify's disc is drawn while
@@ -175,13 +169,14 @@ static void styleFooter(UIViewController *unit) {
     BOOL rtl = host.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
     CGFloat (^slot)(NSUInteger) = ^CGFloat(NSUInteger i) { return round(width * (rtl ? 1 - kSlots[i] : kSlots[i])); };
 
-    // No share button; its holder goes too, since a view that takes touches swallows them with nothing on it. The DJ's
-    // footer can hold more than the one ShareButtonNowPlayingView, and one sits under the DJ button, where the disc hid it
-    // until the waveform took the disc's place: every view whose identifier names a share goes, on every pass.
+    // No share button; its holder goes too, since a view that takes touches swallows them with nothing on it. It sits
+    // under the DJ button, so it is masked away as well as vanished (maskAway).
     UIView *share = SGRFindByIdentifier(host, @"ShareButtonNowPlayingView", &kShareKey);
+    UIView *shareHolder = holderIn(host, share);
     SGRPlayerVanish(share);
-    SGRPlayerVanish(holderIn(host, share));
-    vanishShares(host);
+    SGRPlayerVanish(shareHolder);
+    maskAway(share);
+    maskAway(shareHolder);
 
     SGRGlyphButton *lyrics = SGRPlayerLyricsGlyphIn(host);
     lyrics.bounds = CGRectMake(0, 0, 44, 44);
