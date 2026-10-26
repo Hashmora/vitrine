@@ -997,6 +997,9 @@ static SGRRollRadius *sg_rollRadius;
 }
 
 - (void)stop {
+    // The link holds the follower: invalidated, it may let go of the last reference while this still runs.
+    __attribute__((objc_precise_lifetime)) SGRRollRadius *keep = self;
+    (void)keep;
     [_link invalidate];
     _link = nil;
     for (UIView *mask in _masks) mask.layer.cornerRadius = MIN(mask.bounds.size.width, mask.bounds.size.height) / 2;
@@ -1125,8 +1128,15 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
     // takes that spring as it is), and the circle is only its glyph meanwhile, its own glass back once the capsule has become
     // it. A transform squeezed the capsule into an oval on the way, so it faded out under the circle's size while the circle
     // faded in and out beside it.
-    navGlass.transform = CGAffineTransformIdentity;
-    navTint.transform = CGAffineTransformIdentity;
+    // The capsule hugs its tabs and stands in the middle, so the circle at the screen's edge lies partly outside its
+    // glass, which draws nothing past its own bounds: the shape stopped at the capsule's edge and the circle came in
+    // further out once the roll ended. So the glass slides along on the same spring, minimizing, until its leading edge
+    // is the circle's, and back as the bar expands; a pass in the middle of a roll keeps the slide its end wants.
+    CGFloat slide = MIN(0, sg_leadFrame.origin.x - platter.origin.x);
+    CGAffineTransform slid = CGAffineTransformMakeTranslation(slide, 0);
+    CGAffineTransform rest = compact && navGlass.maskView ? slid : CGAffineTransformIdentity;
+    if (!CGAffineTransformEqualToTransform(navGlass.transform, rest)) navGlass.transform = rest;
+    if (!CGAffineTransformEqualToTransform(navTint.transform, rest)) navTint.transform = rest;
     static BOOL sg_compactApplied;
     static NSUInteger sg_rollGeneration;
     BOOL changed = compact != sg_compactApplied;
@@ -1138,11 +1148,13 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
     if (roll) {
         NSUInteger generation = ++sg_rollGeneration;
         CGRect full = (CGRect){CGPointZero, platter.size};
-        CGRect dot = CGRectOffset(sg_leadFrame, -platter.origin.x, -platter.origin.y);
+        // The circle in the glass's own coordinates, with the glass slid to it.
+        CGRect dot = CGRectOffset(sg_leadFrame, -platter.origin.x - slide, -platter.origin.y);
         UIView *glassMask = rollMask(navGlass, &kGlassMaskKey), *tintMask = rollMask(navTint, &kTintMaskKey);
         [UIView performWithoutAnimation:^{
             SGRShowGlass(navGlass, YES);
             navTint.alpha = 1;
+            navGlass.transform = navTint.transform = compact ? CGAffineTransformIdentity : slid;
             for (UIView *mask in @[glassMask, tintMask]) {
                 mask.frame = compact ? full : dot;
                 mask.layer.cornerRadius = (compact ? full : dot).size.height / 2;
@@ -1150,6 +1162,7 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
             [lead holdGlyphOnly:compact ? 0 : 1];
         }];
         for (UIView *mask in @[glassMask, tintMask]) mask.frame = compact ? dot : full;
+        navGlass.transform = navTint.transform = compact ? slid : CGAffineTransformIdentity;
         [SGRRollRadius follow:@[glassMask, tintMask] for:duration];
         [UIView animateWithDuration:compact ? 0.16 : 0.12 delay:compact ? MAX(0, duration * 0.5) : 0 options:options
                          animations:^{ lead.glyph.alpha = compact ? 1 : 0; } completion:nil];
@@ -1162,6 +1175,7 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
             [UIView performWithoutAnimation:^{
                 navGlass.maskView = nil;
                 navTint.maskView = nil;
+                navGlass.transform = navTint.transform = CGAffineTransformIdentity;
                 if (compact) {
                     [weakLead setShown:YES];
                     SGRShowGlass(navGlass, NO);
@@ -1178,6 +1192,7 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
             [sg_rollRadius stop];
             navGlass.maskView = nil;
             navTint.maskView = nil;
+            navGlass.transform = navTint.transform = CGAffineTransformIdentity;
         }
         [lead setShown:compact];
         // Outside a roll the glass and the tabs fade, the tabs a beat after the glass coming in and first going away.
