@@ -5,3 +5,4 @@ cd "$(dirname "$0")"
 mkdir -p build
 xcrun clang -fobjc-arc -O2 -I ../../tweak/Sources -framework Foundation -framework AudioToolbox -framework Accelerate \
     main.m ../../tweak/Sources/Shared/Player/SGTimePitch.m -o build/automix
+xcrun clang -fobjc-arc -O2 -framework Foundation recipe_dump.m -o build/recipe-dump

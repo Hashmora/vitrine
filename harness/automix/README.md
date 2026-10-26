@@ -15,3 +15,7 @@ It prints both tempos, the stretch, where the blend starts and the unit's delay 
 `build/mix.wav` (A to the blend, the blend, B at its own tempo). Open it at the time it prints.
 
 `beat.h` is the tempo and beat code on its own (vDSP only); it finds a click track's tempo to 0.02 BPM and which beat of its bar carries the kick.
+
+The DJ metadata field automix.auto_transition_recipe is a base64 protobuf. Run build.sh,
+then pass a complete value to build/recipe-dump. The output shows field numbers, wire
+types, scalar values, and recursively decoded embedded messages.
