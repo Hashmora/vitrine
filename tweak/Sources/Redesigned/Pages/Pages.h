@@ -25,6 +25,7 @@
 //     WebBrowser.x    Spotify's in-app browser (SPTWebViewControllerImplementation, Settings > About): close, Back and Forward on glass
 //     LiveEvents.x    Live Events (LiveEvents_LiveEventsPageImpl): the title, Back, Saved and Notifications on glass, the list under the bars;
 //                     the pages it opens (LiveEvents_GalleryPageImpl): Back and the title on glass, no gradients, the list under the bars
+//     Equalizer.x     Spotify's Equalizer (SPTEqualizerViewController): the bar, the curve under it, the presets under the bars
 //     ModPageBar.x    the mod's own pages (Mod Settings and every SGModPage on Spotify's stack): the bar, Back on glass
 //
 // The hosted pages that are dressed by what they hold -- Messages, Settings and its sections, Listening stats, Your Premium
