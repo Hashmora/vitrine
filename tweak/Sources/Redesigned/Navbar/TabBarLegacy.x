@@ -197,6 +197,9 @@ static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
 @property (nonatomic) BOOL holdsCreate;
 // Shows or hides the circle; asked for inside an animation it moves in that animation.
 - (void)setShown:(BOOL)shown;
+// The circle while the capsule's own glass stands in its place, rolling out of it or back into it (placeCompact): no glass
+// of its own, full size, its glyph at `alpha`. Counts as hidden, so a setShown:YES after it brings the glass back.
+- (void)holdGlyphOnly:(CGFloat)alpha;
 // Create's menu open: the plus turns 45 degrees onto a white disc, as on the capsule's own Create button.
 - (void)setCreateOpen:(BOOL)open;
 @end
@@ -257,6 +260,16 @@ static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
     self.transform = shown ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.6, 0.6);
     self.userInteractionEnabled = shown;
     if (!shown) [self setCreateOpen:NO];
+}
+
+- (void)holdGlyphOnly:(CGFloat)alpha {
+    _configured = YES;
+    _shown = NO;
+    SGRShowGlass(_pane, NO);
+    _film.alpha = 0;
+    _glyph.alpha = alpha;
+    self.transform = CGAffineTransformIdentity;
+    self.userInteractionEnabled = NO;
 }
 
 - (void)setCreateOpen:(BOOL)open {
@@ -937,6 +950,74 @@ static void placeCircle(SGRLegacyCircle *circle, CGRect frame, UIView *host) {
     [circle layoutIfNeeded];
 }
 
+static char kGlassMaskKey, kTintMaskKey;
+
+// The roll's masks kept capsules on every frame. Their frames go on the bar's spring, but a corner radius set in the same
+// animation goes on a curve of its own, done well before the spring: near the end of a minimize the mask was still taller
+// than the circle with the circle's radius, its ends nearly square, and the circle took its round shape only once the
+// mask was gone. So for the length of the roll a display link sets each radius to half of the height the mask is drawn at.
+@interface SGRRollRadius : NSObject
++ (void)follow:(NSArray<UIView *> *)masks for:(NSTimeInterval)duration;
+@end
+
+@implementation SGRRollRadius {
+    CADisplayLink *_link;
+    NSArray<UIView *> *_masks;
+    CFTimeInterval _end;
+}
+
+static SGRRollRadius *sg_rollRadius;
+
++ (void)follow:(NSArray<UIView *> *)masks for:(NSTimeInterval)duration {
+    [sg_rollRadius stop];
+    SGRRollRadius *follower = [SGRRollRadius new];
+    follower->_masks = masks;
+    // A little past the spring's duration: it is still settling by a fraction of a point then.
+    follower->_end = CACurrentMediaTime() + duration + 0.1;
+    for (UIView *mask in masks) [mask.layer removeAnimationForKey:@"cornerRadius"];
+    follower->_link = [CADisplayLink displayLinkWithTarget:follower selector:@selector(tick)];
+    // Not capped at 60: the bar and the card move at 120 Hz with it.
+    if (@available(iOS 15.0, *)) follower->_link.preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
+    [follower->_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    sg_rollRadius = follower;
+    [follower tick];
+}
+
+- (void)tick {
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (UIView *mask in _masks) {
+        CALayer *drawn = mask.layer.presentationLayer ?: mask.layer;
+        CGSize size = drawn.bounds.size;
+        CGFloat radius = MIN(size.width, size.height) / 2;
+        if (mask.layer.cornerRadius != radius) mask.layer.cornerRadius = radius;
+    }
+    [CATransaction commit];
+    if (CACurrentMediaTime() > _end) [self stop];
+}
+
+- (void)stop {
+    [_link invalidate];
+    _link = nil;
+    for (UIView *mask in _masks) mask.layer.cornerRadius = MIN(mask.bounds.size.width, mask.bounds.size.height) / 2;
+    if (sg_rollRadius == self) sg_rollRadius = nil;
+}
+@end
+
+// The mask a view of the capsule rolls out of the circle under (placeCompact), made once.
+static UIView *rollMask(UIView *view, const void *key) {
+    UIView *mask = objc_getAssociatedObject(view, key);
+    if (!mask) {
+        mask = [UIView new];
+        mask.backgroundColor = UIColor.blackColor;
+        // Circular, so the dot is a circle and not a squircle; on the capsule it lies just outside the glass's own ends.
+        mask.layer.cornerCurve = kCACornerCurveCircular;
+        objc_setAssociatedObject(view, key, mask, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (view.maskView != mask) view.maskView = mask;
+    return mask;
+}
+
 // Lays the bar out for the state it is in, called from every pass of syncBarCore with the capsule's frame and
 // the frame the apart tab's round button has beside it: the capsule, its film, the selection pill and the system
 // bar for the full bar, the leading circle for the compact one. The apart tab's button is there in both, and
@@ -1036,41 +1117,82 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
         }
     }
 
-    [lead setShown:compact];
     // The apart tab's button is there in both states, but a folded one only while minimized: expanded, it is in the capsule.
     [trail setShown:trailSource != nil && (!folded || compact)];
 
-    // The capsule is drawn as the circle's size and place while minimized, so the full bar grows out of the circle
-    // and goes back into it, on the one spring the card moves on. The pane keeps its own size (no glass is laid
-    // out again on the way); only a transform carries it, and the film over it takes the same. Under the circle's
-    // size the capsule has faded out, so its ends going from round to oval is not seen.
-    CGAffineTransform morph = CGAffineTransformIdentity;
-    if (compact && !CGRectIsEmpty(platter) && !CGRectIsEmpty(sg_leadFrame)) {
-        morph = CGAffineTransformMake(sg_leadFrame.size.width / platter.size.width, 0, 0, sg_leadFrame.size.height / platter.size.height,
-                                      CGRectGetMidX(sg_leadFrame) - CGRectGetMidX(platter), CGRectGetMidY(sg_leadFrame) - CGRectGetMidY(platter));
-    }
-    navGlass.transform = morph;
-    navTint.transform = morph;
-
-    // The glass comes in fast as the capsule grows, and the tabs on it a beat after, once there is room for them;
-    // going away, the tabs leave first. Run inside the animation that is already going (the bar's own change), once
-    // per change; any other pass sets the same values and moves nothing.
+    // The full bar rolls out of the leading circle and back into it: the capsule's glass and film show the whole way, cut by a
+    // mask from the circle's place and size to the capsule's on the one spring the change moves on (the mask is a view, so it
+    // takes that spring as it is), and the circle is only its glyph meanwhile, its own glass back once the capsule has become
+    // it. A transform squeezed the capsule into an oval on the way, so it faded out under the circle's size while the circle
+    // faded in and out beside it.
+    navGlass.transform = CGAffineTransformIdentity;
+    navTint.transform = CGAffineTransformIdentity;
     static BOOL sg_compactApplied;
+    static NSUInteger sg_rollGeneration;
     BOOL changed = compact != sg_compactApplied;
     sg_compactApplied = compact;
-    void (^glassFade)(void) = ^{
-        SGRShowGlass(navGlass, !compact);
-        navTint.alpha = compact ? 0 : 1;
-        selPill.alpha = compact ? 0 : 1;
-    };
+    NSTimeInterval duration = UIView.inheritedAnimationDuration;
+    BOOL roll = changed && duration > 0 && !SGRReduceMotion() && lead && !CGRectIsEmpty(platter) && !CGRectIsEmpty(sg_leadFrame);
+    UIViewAnimationOptions options = UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut;
     void (^tabsFade)(void) = ^{ bar.alpha = compact ? 0 : 1; };
-    if (changed && UIView.inheritedAnimationDuration > 0 && !SGRReduceMotion()) {
-        UIViewAnimationOptions options = UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut;
-        [UIView animateWithDuration:compact ? 0.16 : 0.2 delay:compact ? 0.04 : 0 options:options animations:glassFade completion:nil];
+    if (roll) {
+        NSUInteger generation = ++sg_rollGeneration;
+        CGRect full = (CGRect){CGPointZero, platter.size};
+        CGRect dot = CGRectOffset(sg_leadFrame, -platter.origin.x, -platter.origin.y);
+        UIView *glassMask = rollMask(navGlass, &kGlassMaskKey), *tintMask = rollMask(navTint, &kTintMaskKey);
+        [UIView performWithoutAnimation:^{
+            SGRShowGlass(navGlass, YES);
+            navTint.alpha = 1;
+            for (UIView *mask in @[glassMask, tintMask]) {
+                mask.frame = compact ? full : dot;
+                mask.layer.cornerRadius = (compact ? full : dot).size.height / 2;
+            }
+            [lead holdGlyphOnly:compact ? 0 : 1];
+        }];
+        for (UIView *mask in @[glassMask, tintMask]) mask.frame = compact ? dot : full;
+        [SGRRollRadius follow:@[glassMask, tintMask] for:duration];
+        [UIView animateWithDuration:compact ? 0.16 : 0.12 delay:compact ? MAX(0, duration * 0.5) : 0 options:options
+                         animations:^{ lead.glyph.alpha = compact ? 1 : 0; } completion:nil];
+        [UIView animateWithDuration:0.16 delay:0 options:options animations:^{ selPill.alpha = compact ? 0 : 1; } completion:nil];
         [UIView animateWithDuration:compact ? 0.1 : 0.22 delay:compact ? 0 : 0.1 options:options animations:tabsFade completion:nil];
-    } else {
-        glassFade();
-        tabsFade();
+        // Once the spring has carried the mask home: the masks off, and, minimized, the circle's own glass in the capsule's place.
+        __weak SGRLegacyCircle *weakLead = lead;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (generation != sg_rollGeneration) return;
+            [UIView performWithoutAnimation:^{
+                navGlass.maskView = nil;
+                navTint.maskView = nil;
+                if (compact) {
+                    [weakLead setShown:YES];
+                    SGRShowGlass(navGlass, NO);
+                    navTint.alpha = 0;
+                } else {
+                    [weakLead setShown:NO];
+                }
+            }];
+        });
+    } else if (changed || !navGlass.maskView) {
+        // A pass in the middle of a roll leaves it alone: the circle and the glass are the roll's until it ends.
+        if (changed) {
+            ++sg_rollGeneration;
+            [sg_rollRadius stop];
+            navGlass.maskView = nil;
+            navTint.maskView = nil;
+        }
+        [lead setShown:compact];
+        // Outside a roll the glass and the tabs fade, the tabs a beat after the glass coming in and first going away.
+        void (^glassFade)(void) = ^{
+            SGRShowGlass(navGlass, !compact);
+            navTint.alpha = compact ? 0 : 1;
+            selPill.alpha = compact ? 0 : 1;
+        };
+        if (changed && duration > 0 && !SGRReduceMotion()) {
+            [UIView animateWithDuration:compact ? 0.16 : 0.2 delay:compact ? 0.04 : 0 options:options animations:glassFade completion:nil];
+            [UIView animateWithDuration:compact ? 0.1 : 0.22 delay:compact ? 0 : 0.1 options:options animations:tabsFade completion:nil];
+        } else {
+            glassFade();
+            tabsFade();
+        }
     }
     bar.userInteractionEnabled = !compact;
 }
@@ -1347,16 +1469,14 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     UIView *navGlass = SGGlassFor(host, &kNavGlassKey);
     navGlass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     CGRect glassFrame = platterFrame;
-    // By bounds and center, not frame: placeCompact turns the capsule into the circle with a transform, and a frame
-    // is undefined under one.
+    // By bounds and center: placeCompact rolls the capsule out of the circle under a mask, and these passes come during it.
     CGPoint glassCenter = CGPointMake(CGRectGetMidX(glassFrame), CGRectGetMidY(glassFrame));
     if (!CGSizeEqualToSize(navGlass.bounds.size, glassFrame.size)) navGlass.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navGlass.center, glassCenter)) navGlass.center = glassCenter;
     SGShapeGlass(navGlass, glassFrame.size.height / 2, NO);
 
     UIView *navTint = SGRGlassFilm(host, &kNavTintKey, navGlass, glassFrame.size.height / 2);
-    // SGRGlassFilm sets the film's frame from the pane's, which under the morph's transform is the stretched box;
-    // the film is given the pane's bounds and center instead, and its transform in placeCompact.
+    // SGRGlassFilm sets the film's frame from the pane's; the film is given the pane's bounds and center as well.
     if (!CGSizeEqualToSize(navTint.bounds.size, glassFrame.size)) navTint.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navTint.center, glassCenter)) navTint.center = glassCenter;
 
