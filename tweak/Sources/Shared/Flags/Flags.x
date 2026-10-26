@@ -13,6 +13,23 @@
 static _Atomic uint64_t sg_reads, sg_mainReads, sg_ticks;
 static const NSTimeInterval kCountFor = 15;
 
+// AutoMix is present in 9.1.78 but its rollout is split across several remote-config
+// flags. Keep the probe observational: the All Flags override can turn one on at a
+// time, while this names every candidate Spotify actually asks for.
+static BOOL isAutoMixProbeFlag(NSString *key) {
+    static NSSet<NSString *> *keys;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        keys = [NSSet setWithObjects:
+            @"ios-playlistcuration-mats.auto_mix_enabled_for_dj",
+            @"ios-playlistcuration-mats.dj_auto_mix_context_menu_enabled",
+            @"ios-playlistcuration-mats.debug_bypass_mixability_for_dj",
+            @"ios-playlistcuration-mats.backend_auto_transition_enabled",
+            @"ios-playlistcuration-mats.smart_reorder_on_auto_mix_enabled", nil];
+    });
+    return [keys containsObject:key];
+}
+
 static id forced(NSString *key) {
     uint64_t start = mach_absolute_time();
     id value = SGForcedFlagValue(key);
@@ -24,6 +41,11 @@ static id forced(NSString *key) {
 
 static BOOL boolFor(NSString *key, BOOL orig) {
     id value = forced(key);
+    if (isAutoMixProbeFlag(key)) {
+        SGLog(@"automix flag: %@ Spotify %@, handed %@%@", key, orig ? @"on" : @"off",
+              value ? ([value boolValue] ? @"on" : @"off") : (orig ? @"on" : @"off"),
+              value ? @" (override/forcer)" : @"");
+    }
     return value ? [value boolValue] : orig;
 }
 
