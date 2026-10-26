@@ -182,6 +182,57 @@ static UIView *firstOf(UIView *view, Class kind, int depth) {
     return nil;
 }
 
+// A view's shadow drawn by a view of its own beside the body (the menu's _UICutoutShadowView, a popover's shadow): it
+// reaches past the body's bounds, where a mask on the whole would cut it off until the mask came off at the end, and the
+// shadow then appeared at once, after the menu was whole.
+static BOOL isShadow(UIView *view) {
+    return [NSStringFromClass(view.class) containsString:@"Shadow"];
+}
+
+// `paths` (in `target`'s space) played over `target` at `keyTimes`: a mask on it, or, when it holds a shadow of its own,
+// one on each of its other views, the shadow faded in as the shape nears its end instead. The masks come off at the end.
+static void playShape(UIView *target, NSArray *paths, NSArray<NSNumber *> *keyTimes, NSArray<CAMediaTimingFunction *> *timing,
+                      NSTimeInterval duration) {
+    NSMutableArray<UIView *> *bodies = [NSMutableArray array], *shadows = [NSMutableArray array];
+    for (UIView *sub in target.subviews) [isShadow(sub) ? shadows : bodies addObject:sub];
+    if (!shadows.count) bodies = [NSMutableArray arrayWithObject:target];
+    NSMutableArray<CAShapeLayer *> *masks = [NSMutableArray array];
+    [CATransaction begin];
+    [CATransaction setCompletionBlock:^{
+        [bodies enumerateObjectsUsingBlock:^(UIView *body, NSUInteger i, BOOL *stop) {
+            if (i < masks.count && body.layer.mask == masks[i]) body.layer.mask = nil;
+        }];
+    }];
+    for (UIView *body in bodies) {
+        CGPoint origin = body == target ? CGPointZero : body.frame.origin;
+        CGAffineTransform shift = CGAffineTransformMakeTranslation(-origin.x, -origin.y);
+        NSMutableArray *values = [NSMutableArray array];
+        for (id path in paths) {
+            CGPathRef moved = CGPathCreateCopyByTransformingPath((__bridge CGPathRef)path, &shift);
+            [values addObject:(__bridge_transfer id)moved];
+        }
+        CAShapeLayer *mask = [CAShapeLayer layer];
+        mask.frame = body.bounds;
+        mask.path = (__bridge CGPathRef)values.lastObject;
+        CAKeyframeAnimation *shape = [CAKeyframeAnimation animationWithKeyPath:@"path"];
+        shape.values = values;
+        shape.keyTimes = keyTimes;
+        shape.timingFunctions = timing;
+        shape.duration = duration;
+        body.layer.mask = mask;
+        [mask addAnimation:shape forKey:@"sgr.bubble"];
+        [masks addObject:mask];
+    }
+    for (UIView *shadow in shadows) {
+        CAKeyframeAnimation *fade = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+        fade.values = @[@0, @0, @(shadow.layer.opacity)];
+        fade.keyTimes = @[@0, @(kBubbleFlightShare), @1];
+        fade.duration = duration;
+        [shadow.layer addAnimation:fade forKey:@"sgr.bubble.shadow"];
+    }
+    [CATransaction commit];
+}
+
 void SGRGlassBubbleOpen(UIView *target, CGFloat targetRadius) {
     if (!motionOn() || !target || !sTouchAt || CACurrentMediaTime() - sTouchAt > kTouchLife) return;
     CGRect source = sTouchRect;
@@ -200,33 +251,17 @@ void SGRGlassBubbleOpen(UIView *target, CGFloat targetRadius) {
         // its middle growing as a circle, and opens out into its shape a little past it before it settles. Its glass and
         // its rows show through the whole way. A drop of glass laid over the menu instead hid it until the end and read
         // as a flat disc of the page's colour.
-        CGPathRef start = roundedPath(around(from, drop), drop / 2);
-        CGPathRef flown = roundedPath(around(middle, grown), grown / 2);
-        CGPathRef past = roundedPath(CGRectInset(bounds, -kBubbleOvershoot, -kBubbleOvershoot), targetRadius + kBubbleOvershoot);
-        CGPathRef end = roundedPath(bounds, targetRadius);
-        CAShapeLayer *mask = [CAShapeLayer layer];
-        mask.frame = bounds;
-        mask.path = end;
-        CAKeyframeAnimation *open = [CAKeyframeAnimation animationWithKeyPath:@"path"];
-        open.values = @[(__bridge id)start, (__bridge id)flown, (__bridge id)past, (__bridge id)end];
-        open.keyTimes = @[@0, @(kBubbleFlightShare), @(kBubblePastShare), @1];
-        open.timingFunctions = @[
+        NSArray *paths = @[
+            (__bridge_transfer id)roundedPath(around(from, drop), drop / 2),
+            (__bridge_transfer id)roundedPath(around(middle, grown), grown / 2),
+            (__bridge_transfer id)roundedPath(CGRectInset(bounds, -kBubbleOvershoot, -kBubbleOvershoot), targetRadius + kBubbleOvershoot),
+            (__bridge_transfer id)roundedPath(bounds, targetRadius),
+        ];
+        playShape(target, paths, @[@0, @(kBubbleFlightShare), @(kBubblePastShare), @1], @[
             [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn],
             [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut],
             [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut],
-        ];
-        open.duration = kBubbleDuration;
-        CGPathRelease(start);
-        CGPathRelease(flown);
-        CGPathRelease(past);
-        CGPathRelease(end);
-        [CATransaction begin];
-        [CATransaction setCompletionBlock:^{
-            if (target.layer.mask == mask) target.layer.mask = nil;
-        }];
-        target.layer.mask = mask;
-        [mask addAnimation:open forKey:@"sgr.bubble"];
-        [CATransaction commit];
+        ], kBubbleDuration);
         // The rows come in as the drop opens, a little smaller first.
         UIView *rows = firstOf(target, UICollectionView.class, 0);
         if (rows) arrive(rows.layer, kBubbleRowsDelay, kBubbleRowsScale);
