@@ -2,7 +2,8 @@
 // Canvas, drawn as the redesign's lyrics page draws them, by the same code (tweak/Sources/Shared/Lyrics/KaraokeLines,
 // built into the add-on). The line being sung rests at the page's anchor and lights up word by word, the rest stack
 // around it, dimmer, smaller and more blurred the further off, and move up on the page's springs; three dots hold an
-// instrumental break. Nothing here scrolls by hand or takes a touch.
+// instrumental break. A finger scrolls the lines, sharp and standing still, and kBrowseHold after it lets go they go back
+// to the line sung; a tap on a line seeks the song to it (`seek`), as the lyrics page's do.
 //
 // The lines, their look and the song's tag come in a file Spotify writes (LockScreenAddonLyrics.x); the song's clock
 // comes in a notification's state (SGLockLyricsClock) and runs on from when it is heard. A clock of another song than
@@ -24,6 +25,8 @@
 @property (nonatomic, readonly) BOOL available;
 // Called when `available` changes.
 @property (nonatomic, copy) void (^availabilityChanged)(void);
+// Asked to seek the song to `positionMs`, a line's start plus the Lyrics page's delay, for a tap on the line.
+@property (nonatomic, copy) void (^seek)(NSInteger positionMs);
 // Nothing is drawn or worked out: the screen is dark, or the lyrics are not on screen.
 - (void)setSuspended:(BOOL)suspended;
 @end

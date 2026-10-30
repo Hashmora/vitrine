@@ -33,7 +33,12 @@
 // its touches. MediaRemoteUI draws that player too, in a window of its own: MRULockscreenView, its header
 // MRUNowPlayingHeaderView with the small cover's room before MRUNowPlayingLabelView's labels (14 to 55 pt of a 386 pt
 // player on an iPhone 11). Closed, the large cover gives the small one back and the button goes. It is dim and does
-// nothing for a song without timed lines, and the Canvas shows. The lyrics take no touches.
+// nothing for a song without timed lines, and the Canvas shows. The lyrics scroll by hand and a tap on a line seeks the
+// song (kSGRelayLockLyricsSeek); under them the Canvas goes to a dark blur, so the words read on any clip.
+//
+// When the large cover closes: MediaRemoteUI closes it on a tap anywhere on it. With the Canvas shown, a guard on the field
+// (SGVCloseGuard) that every tap recognizer of MediaRemoteUI's up the field's chain waits on takes the taps that should not
+// close it: every one while the lyrics show, and with them off those beside the clip or cover itself.
 //
 // Only the large cover's view and the cover itself are hooked, as they lay out, come and go and take an alpha.
 //
@@ -90,8 +95,9 @@ static __weak UIView *sg_player;
 static const CGFloat kButtonInset = 2, kLabelGap = 3;
 // The lines run from under the clock to over the lock screen's player.
 static const CGFloat kLyricsTopShare = 0.27, kLyricsBottomRoom = 190;
-// How dark the Canvas goes under the lyrics.
-static const CGFloat kLyricsDim = 0.5;
+// How dark the Canvas goes under the lyrics, over its blur.
+static const CGFloat kLyricsDim = 0.25;
+static char kGuardKey, kGuardedKey;
 
 static void apply(void);
 
@@ -191,8 +197,57 @@ static SGVLockLyrics *lyricsView(void) {
         sg_lyrics = [[SGVLockLyrics alloc] initWithFrame:CGRectZero];
         sg_lyrics.alpha = 0;
         sg_lyrics.availabilityChanged = ^{ apply(); };
+        sg_lyrics.seek = ^(NSInteger position) {
+            static int token;
+            if (!token && notify_register_check(kSGRelayLockLyricsSeek, &token) != NOTIFY_STATUS_OK) return;
+            notify_set_state(token, (uint64_t)MAX(position, 0));
+            notify_post(kSGRelayLockLyricsSeek);
+        };
     }
     return sg_lyrics;
+}
+
+// The taps that must not close the large cover, taken before MediaRemoteUI's closing tap can be: it recognizes at once and
+// the closing tap, waiting on it, fails. It does nothing of its own, and lets the lyrics' own scroll and tap work with it.
+@interface SGVCloseGuard : NSObject <UIGestureRecognizerDelegate>
+@end
+
+@implementation SGVCloseGuard
+- (void)tapped:(UITapGestureRecognizer *)tap {
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+    return YES;
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceiveTouch:(UITouch *)touch {
+    UIView *field = recognizer.view;
+    SGVLockClip *clip = objc_getAssociatedObject(field, &kClipKey);
+    if (!clip || clip.alpha < 0.01) return NO;   // the system's large cover: the system's taps
+    if (sg_lyrics.superview == field && sg_lyrics.alpha > 0.5) return YES;   // the lyrics up: no tap closes it
+    return !CGRectContainsPoint(clip.drawnFrame, [touch locationInView:clip]);
+}
+@end
+
+// The guard on the field, and every tap recognizer of MediaRemoteUI's from the field up to its window made to wait on it.
+static void guardClosing(UIView *field) {
+    UITapGestureRecognizer *guard = objc_getAssociatedObject(field, &kGuardKey);
+    if (!guard) {
+        static SGVCloseGuard *handler;
+        if (!handler) handler = [SGVCloseGuard new];
+        guard = [[UITapGestureRecognizer alloc] initWithTarget:handler action:@selector(tapped:)];
+        guard.delegate = handler;
+        guard.cancelsTouchesInView = NO;
+        guard.delaysTouchesEnded = NO;
+        [field addGestureRecognizer:guard];
+        objc_setAssociatedObject(field, &kGuardKey, guard, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    for (UIView *view = field; view; view = view.superview) {
+        for (UIGestureRecognizer *recognizer in view.gestureRecognizers) {
+            if (recognizer == guard || ![recognizer isKindOfClass:UITapGestureRecognizer.class]) continue;
+            if (objc_getAssociatedObject(recognizer, &kGuardedKey)) continue;
+            [recognizer requireGestureRecognizerToFail:guard];
+            objc_setAssociatedObject(recognizer, &kGuardedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
 }
 
 // The last views of the field, in this order, on top of everything of MediaRemoteUI's.
@@ -267,10 +322,12 @@ static void apply(void) {
     UIView *dim = objc_getAssociatedObject(field, &kDimKey);
     UIButton *button = offered || sg_button ? lyricsButton() : nil;
     if (offered && !dim) {
-        dim = [UIView new];
-        dim.backgroundColor = UIColor.blackColor;
-        dim.userInteractionEnabled = NO;
-        dim.alpha = 0;
+        // The Canvas blurred dark under the lyrics, as Apple Music's lyrics have their artwork, a little darker still.
+        UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
+        blur.contentView.backgroundColor = [UIColor colorWithWhite:0 alpha:kLyricsDim];
+        blur.userInteractionEnabled = NO;
+        blur.alpha = 0;
+        dim = blur;
         objc_setAssociatedObject(field, &kDimKey, dim, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (clip) {
@@ -296,6 +353,7 @@ static void apply(void) {
         [field addGestureRecognizer:tap];
         objc_setAssociatedObject(field, &kTapKey, handler, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
+    if (on) guardClosing(field);
     tellShowing(on);
     hideArtwork(artwork, on, YES);
     BOOL shown = clip.alpha > 0.99;
@@ -304,9 +362,10 @@ static void apply(void) {
     button.enabled = available;
     button.selected = sg_lyricsPicked && available;
     [lyrics setSuspended:!lines || sg_blank];
+    lyrics.userInteractionEnabled = lines;
     [UIView animateWithDuration:kFade delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
         button.alpha = offered ? (available ? 1 : 0.35) : 0;
-        dim.alpha = lines ? kLyricsDim : 0;
+        dim.alpha = lines ? 1 : 0;
         lyrics.alpha = lines ? 1 : 0;
     } completion:nil];
     [UIView animateWithDuration:shown == on ? 0 : kFade delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{

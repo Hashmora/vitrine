@@ -13,6 +13,9 @@
 // (SGLockLyricsClock), posted as the song starts, stops, seeks or changes speed and every few seconds while it plays;
 // MediaRemoteUI runs it on from when it hears it, so the lines keep to the song without a timer here.
 //
+// A tap on a line there seeks the song: MediaRemoteUI posts the position in a notification's state
+// (kSGRelayLockLyricsSeek), and it is taken here as the lyrics page's tap is.
+//
 // Threading: main queue, but the file's writing, which has a queue of its own.
 #import <notify.h>
 #import "Core/SGCore.h"
@@ -186,6 +189,12 @@ static void follow(SPTPlayerState *state) {
     static SGLockAddonLyrics *observer;
     observer = [SGLockAddonLyrics new];
     SGAddPlayerStateObserver(observer);
+    static int seekToken;
+    notify_register_dispatch(kSGRelayLockLyricsSeek, &seekToken, dispatch_get_main_queue(), ^(int t) {
+        uint64_t position = 0;
+        if (!wanted() || notify_get_state(t, &position) != NOTIFY_STATUS_OK) return;
+        SGKaraokeSeek((NSInteger)position);
+    });
     [NSNotificationCenter.defaultCenter addObserverForName:SGKaraokeLinesKeptNotification object:nil queue:nil
                                                 usingBlock:^(NSNotification *note) {
         // Posted on the main queue (Lyrics.h).

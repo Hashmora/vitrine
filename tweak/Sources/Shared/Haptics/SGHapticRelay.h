@@ -53,7 +53,9 @@ enum { kSGRelayLevels = 10, kSGRelaySharpnesses = 3 };
 //     with a button in its corner between them and the Canvas.
 // 18: nothing of the lyrics made while MediaRemoteUI loads the add-on: 17 made their view there, hung MediaRemoteUI's
 //     launch until its watchdog killed it, and the lock screen showed no player.
-enum { kSGRelayAddonBuild = 18 };
+// 19: the button in the lock screen player's header; the lyrics scroll by hand and seek on a tap, on a dark blur of the
+//     Canvas, and the large cover closes only on a tap on itself with the lyrics off.
+enum { kSGRelayAddonBuild = 19 };
 // Below iOS 26, the add-on also fills the lock screen with the now playing cover while Spotify's switch for it is on
 // (AnimatedArtwork.h, SGKeyLockCoverAddon): told "lockart.1" and "lockart.0" as the switch is set and each time the
 // add-on answers. It reads the cover from MediaRemote, as the lock screen's own player does.
@@ -109,6 +111,9 @@ static inline uint16_t SGLockLyricsTag(NSString *track) {
     uint16_t tag = (uint16_t)((hash ^ (hash >> 15)) & 0x7FFF);
     return tag ? tag : 1;
 }
+// A tap on a line of the large cover's lyrics: the position to seek to, in ms, in the notification's state, posted by
+// MediaRemoteUI for Spotify to seek to (LockScreenAddonLyrics.x).
+#define kSGRelayLockLyricsSeek kSGRelayPrefix "locklyrics.seek"
 // Lyrics or the Canvas on the large cover, picked by the button in its corner: MediaRemoteUI posts "lockmode.lyrics" or
 // "lockmode.canvas" as it is tapped, SpringBoard keeps the choice for the next song and the next boot, and posts it again
 // when MediaRemoteUI asks with "lockmode.ask" as it starts. The Canvas until the lyrics are picked.

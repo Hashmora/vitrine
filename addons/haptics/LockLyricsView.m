@@ -11,6 +11,8 @@ static const CGFloat kSightBehind = 0.5, kSightAhead = 0.5, kSightSlack = 0.25;
 static const NSTimeInterval kSwapFade = 0.35;
 // A paused or held clock draws nothing new: once nothing has moved for this long, the link stops until something does.
 static const CFTimeInterval kCalmAfter = 1.5;
+// After scrolling by hand, how long until the lines follow the song again (the lyrics page's).
+static const NSTimeInterval kBrowseHold = 3;
 
 // When each line is sung, and a pause long enough for the dots with the line after it.
 typedef struct {
@@ -20,8 +22,14 @@ typedef struct {
     NSInteger start, end, line;
 } SGVBreak;
 
+@interface SGVLockLyrics () <UIScrollViewDelegate>
+@end
+
 @implementation SGVLockLyrics {
+    UIScrollView *_scroll;   // offset 0 while following the song; scrolled by hand while browsing
     UIView *_stack;
+    BOOL _browsing;
+    NSUInteger _browse;
     CAGradientLayer *_fade;
     NSArray<SGKaraokeLine *> *_lines;
     SGKaraokeStyle *_style;
@@ -54,8 +62,15 @@ typedef struct {
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.userInteractionEnabled = NO;
+    _scroll = [[UIScrollView alloc] initWithFrame:self.bounds];
+    _scroll.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    _scroll.showsVerticalScrollIndicator = _scroll.showsHorizontalScrollIndicator = NO;
+    _scroll.alwaysBounceVertical = YES;
+    _scroll.delegate = self;
+    [self addSubview:_scroll];
     _stack = [[UIView alloc] initWithFrame:self.bounds];
-    [self addSubview:_stack];
+    [_scroll addSubview:_stack];
+    [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapped:)]];
     // The lines fade out at the top and the bottom, as the lyrics page's do.
     _fade = [CAGradientLayer layer];
     _fade.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
@@ -146,7 +161,10 @@ typedef struct {
 - (void)dropLinesFading:(BOOL)fading {
     UIView *leaving = _stack;
     _stack = [[UIView alloc] initWithFrame:self.bounds];
-    [self insertSubview:_stack aboveSubview:leaving];
+    [_scroll insertSubview:_stack aboveSubview:leaving];
+    _browsing = NO;
+    _browse++;
+    _scroll.contentOffset = CGPointZero;
     if (fading && leaving.subviews.count) {
         _stack.alpha = 0;
         [UIView animateWithDuration:kSwapFade animations:^{
@@ -192,7 +210,10 @@ typedef struct {
     [CATransaction setDisableActions:YES];
     _fade.frame = self.bounds;
     [CATransaction commit];
-    for (UIView *sub in self.subviews) sub.frame = self.bounds;
+    _scroll.frame = self.bounds;
+    _scroll.contentSize = self.bounds.size;
+    // The stacks, the one shown and one fading out, are plain views; the scroll view's own are not touched.
+    for (UIView *sub in _scroll.subviews) if (sub.class == UIView.class) sub.frame = self.bounds;
     if (_lines && self.bounds.size.width != _builtWidth && self.bounds.size.width > 0) {
         for (SGKaraokeLineView *view in _shown.allValues) [view removeFromSuperview];
         [_shown removeAllObjects];
@@ -370,11 +391,15 @@ typedef struct {
 }
 
 - (void)placeLinesAnimated:(BOOL)animated {
-    if (!_tops.count) return;
+    // Scrolled by hand, the stack stands still; the lines sung still light up, and it is placed again as it follows.
+    if (_browsing || !_tops.count) return;
     _focusTop = _tops[(NSUInteger)MAX(_focus, 0)].doubleValue;
     [self showLinesInSight];
     for (NSNumber *key in _shown) [self placeLine:_shown[key] at:key.integerValue animated:animated];
     [self placeBreak];
+    // Room to scroll until the first line or the last one reaches the anchor.
+    CGFloat lastTop = _tops.lastObject.doubleValue + (_openBreak >= 0 ? [self breakRoom] : 0);
+    _scroll.contentInset = UIEdgeInsetsMake(_focusTop, 0, MAX(0, lastTop - _focusTop), 0);
 }
 
 // One line's place: on the edge its text is aligned to, so it scales toward its own text, dimmed and blurred with its
@@ -386,7 +411,7 @@ typedef struct {
     CGPoint center = CGPointMake(view.right ? CGRectGetMaxX(frame) : margin, CGRectGetMidY(frame));
     CGFloat scale = distance == 0 ? 1 : SGKaraokeDimScale;
     CGAffineTransform transform = CGAffineTransformMakeScale(scale, scale);
-    view.blur = distance == 0 ? 0 : MIN(_maxBlur, distance * _blurPerLine);
+    view.blur = distance == 0 || _browsing ? 0 : MIN(_maxBlur, distance * _blurPerLine);
     BOOL near = CGRectIntersectsRect(CGRectInset(self.bounds, 0, -height / 2), frame)
              || CGRectIntersectsRect(CGRectInset(self.bounds, 0, -height / 2), view.frame);
     if (!animated || !near) {
@@ -419,8 +444,8 @@ typedef struct {
 // Views for the lines in the view and just outside it; the ones further off are let go, a few made a frame.
 - (void)showLinesInSight {
     if (!_tops.count) return;
-    CGFloat height = self.bounds.size.height;
-    CGFloat from = -kSightBehind * height, to = (1 + kSightAhead) * height, slack = kSightSlack * height;
+    CGFloat height = self.bounds.size.height, offset = _scroll.contentOffset.y;
+    CGFloat from = offset - kSightBehind * height, to = offset + (1 + kSightAhead) * height, slack = kSightSlack * height;
     NSMutableArray<NSNumber *> *gone = [NSMutableArray array];
     for (NSNumber *key in _shown) {
         NSInteger index = key.integerValue;
@@ -470,6 +495,68 @@ typedef struct {
     _dots.right = SGKaraokeAlignsRight(after);
     CGFloat top = [self topOfLine:_openBreak] - [self breakRoom];
     _dots.frame = CGRectMake(SGKaraokeMargin, top, _builtWidth - 2 * SGKaraokeMargin, _dots.bounds.size.height);
+}
+
+#pragma mark - by hand
+
+- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
+    _browsing = YES;
+    _browse++;
+    for (SGKaraokeLineView *view in _shown.allValues) view.blur = 0;
+    [self stir];
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    if (_browsing) [self showLinesInSight];
+}
+
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
+    if (!decelerate) [self holdBrowsing];
+}
+
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    [self holdBrowsing];
+}
+
+// The lines stay where the finger left them for kBrowseHold, then go back to the line sung.
+- (void)holdBrowsing {
+    NSUInteger browse = ++_browse;
+    __weak SGVLockLyrics *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kBrowseHold * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        SGVLockLyrics *view = weakSelf;
+        if (!view || view->_browse != browse || view->_scroll.isTracking || view->_scroll.isDecelerating) return;
+        [view followAgain];
+    });
+}
+
+- (void)followAgain {
+    if (!_browsing) return;
+    _browsing = NO;
+    _browse++;
+    [UIView animateWithDuration:0.7 delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0
+                        options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+        self->_scroll.contentOffset = CGPointZero;
+    } completion:nil];
+    [self placeLinesAnimated:YES];
+    [self stir];
+}
+
+// A tap on a line seeks the song to its start, as the lyrics page's does: the clock is set there at once, and Spotify
+// told to follow.
+- (void)tapped:(UITapGestureRecognizer *)tap {
+    CGPoint point = [tap locationInView:_stack];
+    for (NSNumber *key in _shown) {
+        SGKaraokeLineView *view = _shown[key];
+        if (!CGRectContainsPoint(CGRectInset(view.frame, -SGKaraokeMargin, -_gap / 2), point)) continue;
+        NSInteger position = view.line.start + _delay;
+        _clockMs = position;
+        _clockAt = CACurrentMediaTime();
+        _held = NO;
+        if (self.seek) self.seek(position);
+        [self followAgain];
+        [self stir];
+        return;
+    }
 }
 
 @end
