@@ -36,9 +36,11 @@
 // nothing for a song without timed lines, and the Canvas shows. The lyrics scroll by hand and a tap on a line seeks the
 // song (kSGRelayLockLyricsSeek); under them the Canvas goes to a dark blur, so the words read on any clip.
 //
-// When the large cover closes: MediaRemoteUI closes it on a tap anywhere on it. With the Canvas shown, a guard on the field
-// (SGVCloseGuard) that every tap recognizer of MediaRemoteUI's up the field's chain waits on takes the taps that should not
-// close it: every one while the lyrics show, and with them off those beside the clip or cover itself.
+// The field takes no touches: its window is behind SpringBoard's cover sheet, whose notification list gets them, scrolls
+// the player with them and closes the large cover on a tap. So the field says where the lyrics and the clip are
+// (kSGRelayLockGestureArea), SpringBoard catches the touches over the lyrics (LockCover.x), and their drags and taps come
+// back here (kSGRelayLockGesturePan, kSGRelayLockGestureTap): the lyrics scroll and seek, and the cover closes only on a
+// tap on the clip or cover itself with the lyrics off.
 //
 // Only the large cover's view and the cover itself are hooked, as they lay out, come and go and take an alpha.
 //
@@ -97,7 +99,7 @@ static const CGFloat kButtonInset = 2, kLabelGap = 3;
 static const CGFloat kLyricsTopShare = 0.27, kLyricsBottomRoom = 190;
 // How dark the Canvas goes under the lyrics, over its blur.
 static const CGFloat kLyricsDim = 0.25;
-static char kGuardKey, kGuardedKey;
+
 
 static void apply(void);
 
@@ -207,49 +209,17 @@ static SGVLockLyrics *lyricsView(void) {
     return sg_lyrics;
 }
 
-// The taps that must not close the large cover, taken before MediaRemoteUI's closing tap can be: it recognizes at once and
-// the closing tap, waiting on it, fails. It does nothing of its own, and lets the lyrics' own scroll and tap work with it.
-@interface SGVCloseGuard : NSObject <UIGestureRecognizerDelegate>
-@end
-
-@implementation SGVCloseGuard
-- (void)tapped:(UITapGestureRecognizer *)tap {
+// Where the lyrics and the clip are, for SpringBoard's catcher, posted as it changes; all zero for none.
+static void tellArea(SGLockGestureAreaState area) {
+    static uint64_t told = UINT64_MAX;
+    static int token;
+    uint64_t state = SGLockGestureArea(area);
+    if (state == told) return;
+    if (!token && notify_register_check(kSGRelayLockGestureArea, &token) != NOTIFY_STATUS_OK) return;
+    told = state;
+    notify_set_state(token, state);
+    notify_post(kSGRelayLockGestureArea);
 }
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
-    return YES;
-}
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceiveTouch:(UITouch *)touch {
-    UIView *field = recognizer.view;
-    SGVLockClip *clip = objc_getAssociatedObject(field, &kClipKey);
-    if (!clip || clip.alpha < 0.01) return NO;   // the system's large cover: the system's taps
-    if (sg_lyrics.superview == field && sg_lyrics.alpha > 0.5) return YES;   // the lyrics up: no tap closes it
-    return !CGRectContainsPoint(clip.drawnFrame, [touch locationInView:clip]);
-}
-@end
-
-// The guard on the field, and every tap recognizer of MediaRemoteUI's from the field up to its window made to wait on it.
-static void guardClosing(UIView *field) {
-    UITapGestureRecognizer *guard = objc_getAssociatedObject(field, &kGuardKey);
-    if (!guard) {
-        static SGVCloseGuard *handler;
-        if (!handler) handler = [SGVCloseGuard new];
-        guard = [[UITapGestureRecognizer alloc] initWithTarget:handler action:@selector(tapped:)];
-        guard.delegate = handler;
-        guard.cancelsTouchesInView = NO;
-        guard.delaysTouchesEnded = NO;
-        [field addGestureRecognizer:guard];
-        objc_setAssociatedObject(field, &kGuardKey, guard, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    for (UIView *view = field; view; view = view.superview) {
-        for (UIGestureRecognizer *recognizer in view.gestureRecognizers) {
-            if (recognizer == guard || ![recognizer isKindOfClass:UITapGestureRecognizer.class]) continue;
-            if (objc_getAssociatedObject(recognizer, &kGuardedKey)) continue;
-            [recognizer requireGestureRecognizerToFail:guard];
-            objc_setAssociatedObject(recognizer, &kGuardedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-    }
-}
-
 // The last views of the field, in this order, on top of everything of MediaRemoteUI's.
 static void keepOnTop(UIView *field, NSArray<UIView *> *views) {
     NSArray<UIView *> *subviews = field.subviews;
@@ -303,6 +273,7 @@ static void apply(void) {
     if (!field.window) {
         tellShowing(NO);
         hideButton();
+        tellArea((SGLockGestureAreaState){NO, 0, 0, 0, 0});
         return;
     }
     UIView *artwork = artworkIn(field);
@@ -353,7 +324,6 @@ static void apply(void) {
         [field addGestureRecognizer:tap];
         objc_setAssociatedObject(field, &kTapKey, handler, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    if (on) guardClosing(field);
     tellShowing(on);
     hideArtwork(artwork, on, YES);
     BOOL shown = clip.alpha > 0.99;
@@ -362,7 +332,6 @@ static void apply(void) {
     button.enabled = available;
     button.selected = sg_lyricsPicked && available;
     [lyrics setSuspended:!lines || sg_blank];
-    lyrics.userInteractionEnabled = lines;
     [UIView animateWithDuration:kFade delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
         button.alpha = offered ? (available ? 1 : 0.35) : 0;
         dim.alpha = lines ? 1 : 0;
@@ -379,6 +348,20 @@ static void apply(void) {
         [clip playClip:sg_shownClip];
         [clip setPlaying:sg_playing];
     }
+    // The field fills the screen, so its window's points are the screen's.
+    SGLockGestureAreaState area = {NO, 0, 0, 0, 0};
+    if (on) {
+        CGRect drawn = [clip convertRect:clip.drawnFrame toView:nil];
+        area.coverTop = CGRectGetMinY(drawn);
+        area.coverBottom = CGRectGetMaxY(drawn);
+        if (offered && lyrics) {
+            CGRect frame = [field convertRect:lyrics.frame toView:nil];
+            area.lyricsShown = lines;
+            area.lyricsTop = CGRectGetMinY(frame);
+            area.lyricsBottom = CGRectGetMaxY(frame);
+        }
+    }
+    tellArea(area);
 }
 
 // The large cover closing on a tap: the cover back at once, for MediaRemoteUI to shrink it, the clip fading over it.
@@ -392,6 +375,7 @@ static void closing(UIView *field) {
     UIView *lyrics = sg_lyrics.superview == field ? sg_lyrics : nil;
     [sg_lyrics setSuspended:YES];
     hideButton();
+    tellArea((SGLockGestureAreaState){NO, 0, 0, 0, 0});
     [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionBeginFromCurrentState
                      animations:^{ clip.alpha = dim.alpha = lyrics.alpha = 0; } completion:nil];
 }
@@ -634,6 +618,25 @@ static void listen(const char *name, void (^handler)(void)) {
             [lyricsView() clear];
             apply();
         });
+    });
+    // SpringBoard's catcher hands the drags and taps over the lyrics in, while they show.
+    static int panToken, tapToken;
+    notify_register_dispatch(kSGRelayLockGesturePan, &panToken, dispatch_get_main_queue(), ^(int t) {
+        uint64_t state = 0;
+        SGVLockLyrics *lyrics = sg_lyrics;
+        if (!lyrics || lyrics.alpha < 0.5 || notify_get_state(t, &state) != NOTIFY_STATUS_OK) return;
+        int phase;
+        CGFloat translation, velocity;
+        SGLockGesturePanRead(state, &phase, &translation, &velocity);
+        if (phase == 0) [lyrics dragBegan];
+        else [lyrics dragTo:translation];
+        if (phase == 2) [lyrics dragEndedWithVelocity:velocity];
+    });
+    notify_register_dispatch(kSGRelayLockGestureTap, &tapToken, dispatch_get_main_queue(), ^(int t) {
+        uint64_t state = 0;
+        SGVLockLyrics *lyrics = sg_lyrics;
+        if (!lyrics || lyrics.alpha < 0.5 || notify_get_state(t, &state) != NOTIFY_STATUS_OK) return;
+        [lyrics tapAt:[lyrics convertPoint:SGLockGestureTapRead(state) fromView:nil]];
     });
     static int clockToken;
     notify_register_dispatch(kSGRelayLockLyricsClock, &clockToken, dispatch_get_main_queue(), ^(int t) {

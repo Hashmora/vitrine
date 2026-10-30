@@ -55,7 +55,9 @@ enum { kSGRelayLevels = 10, kSGRelaySharpnesses = 3 };
 //     launch until its watchdog killed it, and the lock screen showed no player.
 // 19: the button in the lock screen player's header; the lyrics scroll by hand and seek on a tap, on a dark blur of the
 //     Canvas, and the large cover closes only on a tap on itself with the lyrics off.
-enum { kSGRelayAddonBuild = 19 };
+// 20: the drags and taps over the lyrics caught by SpringBoard, which gets every touch over the large cover, and handed
+//     to MediaRemoteUI, which draws it.
+enum { kSGRelayAddonBuild = 20 };
 // Below iOS 26, the add-on also fills the lock screen with the now playing cover while Spotify's switch for it is on
 // (AnimatedArtwork.h, SGKeyLockCoverAddon): told "lockart.1" and "lockart.0" as the switch is set and each time the
 // add-on answers. It reads the cover from MediaRemote, as the lock screen's own player does.
@@ -114,6 +116,50 @@ static inline uint16_t SGLockLyricsTag(NSString *track) {
 // A tap on a line of the large cover's lyrics: the position to seek to, in ms, in the notification's state, posted by
 // MediaRemoteUI for Spotify to seek to (LockScreenAddonLyrics.x).
 #define kSGRelayLockLyricsSeek kSGRelayPrefix "locklyrics.seek"
+// The large cover takes no touches: MediaRemoteUI draws it in a window behind SpringBoard's cover sheet, whose
+// notification list gets every touch over it, scrolls the player with the finger and closes the cover on a tap. So
+// SpringBoard lays a catcher over the list where the lyrics are (LockCover.x) while the cover is open, and hands its
+// drags and taps to MediaRemoteUI: "lockgesture.area" from MediaRemoteUI says where the lyrics are and whether they show,
+// and where the clip or cover itself is drawn (SGLockGestureArea); "lockgesture.pan" and "lockgesture.tap" carry a drag
+// (SGLockGesturePan) and a tap (SGLockGestureTap) back, in screen points.
+#define kSGRelayLockGestureArea kSGRelayPrefix "lockgesture.area"
+#define kSGRelayLockGesturePan kSGRelayPrefix "lockgesture.pan"
+#define kSGRelayLockGestureTap kSGRelayPrefix "lockgesture.tap"
+typedef struct {
+    BOOL lyricsShown;
+    CGFloat lyricsTop, lyricsBottom, coverTop, coverBottom;   // screen points, 0 for none
+} SGLockGestureAreaState;
+static inline uint64_t SGLockGestureArea(SGLockGestureAreaState area) {
+    uint64_t (^field)(CGFloat) = ^uint64_t(CGFloat value) { return (uint64_t)MAX(0, MIN(round(value), 32767.0)) & 0x7FFF; };
+    return (uint64_t)(area.lyricsShown ? 1 : 0) | field(area.lyricsTop) << 1 | field(area.lyricsBottom) << 16 | field(area.coverTop) << 31
+         | field(area.coverBottom) << 46;
+}
+static inline SGLockGestureAreaState SGLockGestureAreaRead(uint64_t state) {
+    return (SGLockGestureAreaState){(BOOL)(state & 1), (CGFloat)((state >> 1) & 0x7FFF), (CGFloat)((state >> 16) & 0x7FFF),
+                                    (CGFloat)((state >> 31) & 0x7FFF), (CGFloat)((state >> 46) & 0x7FFF)};
+}
+// A drag: its phase (0 began, 1 moved, 2 ended), how far the finger has gone down since it began and how fast it goes
+// down, in points and points a second, each in quarters of a point as a signed 31-bit number.
+static inline uint64_t SGLockGesturePan(int phase, CGFloat translation, CGFloat velocity) {
+    uint32_t (^field)(CGFloat) = ^uint32_t(CGFloat value) { return (uint32_t)((int32_t)MAX(-1e9, MIN(value * 4, 1e9)) & 0x7FFFFFFF); };
+    return (uint64_t)(phase & 3) | (uint64_t)field(translation) << 2 | (uint64_t)field(velocity) << 33;
+}
+static inline void SGLockGesturePanRead(uint64_t state, int *phase, CGFloat *translation, CGFloat *velocity) {
+    CGFloat (^field)(uint64_t) = ^CGFloat(uint64_t bits) {
+        int32_t value = (int32_t)(bits << 1) >> 1;   // the 31 bits sign-extended
+        return value / 4.0;
+    };
+    *phase = (int)(state & 3);
+    *translation = field((state >> 2) & 0x7FFFFFFF);
+    *velocity = field((state >> 33) & 0x7FFFFFFF);
+}
+// A tap at a point of the screen, in quarters of a point.
+static inline uint64_t SGLockGestureTap(CGPoint point) {
+    return (uint64_t)(uint32_t)MAX(0, point.x * 4) | (uint64_t)(uint32_t)MAX(0, point.y * 4) << 32;
+}
+static inline CGPoint SGLockGestureTapRead(uint64_t state) {
+    return CGPointMake((state & 0xFFFFFFFF) / 4.0, (state >> 32) / 4.0);
+}
 // Lyrics or the Canvas on the large cover, picked by the button in its corner: MediaRemoteUI posts "lockmode.lyrics" or
 // "lockmode.canvas" as it is tapped, SpringBoard keeps the choice for the next song and the next boot, and posts it again
 // when MediaRemoteUI asks with "lockmode.ask" as it starts. The Canvas until the lyrics are picked.

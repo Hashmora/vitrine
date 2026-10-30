@@ -12,6 +12,11 @@
 //               kSGRelayLockLyricsShared); and the choice between them and the Canvas that MediaRemoteUI's button makes,
 //               kept in the add-on's own preferences for the next song and the next boot, and told MediaRemoteUI again
 //               as it asks (kSGRelayLockModeAsk) and as SpringBoard starts.
+//   the touches the large cover takes none (MediaRemoteUI draws it behind the cover sheet), so while MediaRemoteUI shows it
+//               a catcher lies over the notification list where its lyrics are, down to the player's top
+//               (kSGRelayLockGestureArea): with the lyrics up it takes every touch there and hands drags and taps to
+//               MediaRemoteUI, so the lyrics scroll and seek and the cover stays open; with them off it lets a tap on the
+//               clip or cover itself through to the list, which closes the cover, and keeps the rest.
 //
 // Nothing is walked or hooked on the lock screen's layout: the widgets' row is looked for only as it is to be hidden.
 //
@@ -100,6 +105,93 @@ static void share(NSString *name, NSString *sharedPath, const char *shared) {
 
 static NSString *const kLyricsPickedKey = @"lockLyricsPicked";
 
+static BOOL sg_coverShowing;
+static SGLockGestureAreaState sg_area;
+
+// The catcher over the lyrics. Its window's points are the screen's, as the area's are.
+@interface SGVLockTouchCatcher : UIView
+@end
+
+@implementation SGVLockTouchCatcher
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    if (!(self = [super initWithFrame:frame])) return nil;
+    self.backgroundColor = UIColor.clearColor;
+    [self addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragged:)]];
+    [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapped:)]];
+    return self;
+}
+
+// With the lyrics off, a tap on the clip or cover itself is the list's, which closes the large cover.
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    if (![super pointInside:point withEvent:event]) return NO;
+    if (sg_area.lyricsShown) return YES;
+    CGFloat y = [self convertPoint:point toView:nil].y;
+    return !(y >= sg_area.coverTop && y <= sg_area.coverBottom);
+}
+
+static void tell(const char *name, uint64_t state) {
+    int token = 0;
+    if (notify_register_check(name, &token) != NOTIFY_STATUS_OK) return;
+    notify_set_state(token, state);
+    notify_post(name);
+    notify_cancel(token);
+}
+
+- (void)dragged:(UIPanGestureRecognizer *)pan {
+    if (!sg_area.lyricsShown) return;
+    int phase = pan.state == UIGestureRecognizerStateBegan ? 0 : pan.state == UIGestureRecognizerStateChanged ? 1 : 2;
+    if (phase == 2 && pan.state != UIGestureRecognizerStateEnded && pan.state != UIGestureRecognizerStateCancelled) return;
+    tell(kSGRelayLockGesturePan, SGLockGesturePan(phase, [pan translationInView:nil].y, [pan velocityInView:nil].y));
+}
+
+- (void)tapped:(UITapGestureRecognizer *)tap {
+    if (!sg_area.lyricsShown) return;   // beside the cover with the lyrics off: kept, and nothing done
+    tell(kSGRelayLockGestureTap, SGLockGestureTap([tap locationInView:nil]));
+}
+
+@end
+
+static SGVLockTouchCatcher *sg_catcher;
+
+// The top of the lock screen's player, which the catcher stops over: the list's media host, in screen points.
+static CGFloat playerTop(UIView *sheet) {
+    __block CGFloat top = CGFLOAT_MAX;
+    void (^__block walk)(UIView *, int) = nil;
+    void (^visit)(UIView *, int) = ^(UIView *view, int depth) {
+        if (depth > 30 || view.hidden || view.alpha < 0.01) return;
+        if ([NSStringFromClass(view.class) isEqualToString:@"NCNotificationListSupplementaryHostingView"] && view.bounds.size.height > 40) {
+            top = MIN(top, CGRectGetMinY([view convertRect:view.bounds toView:nil]));
+            return;
+        }
+        for (UIView *sub in view.subviews) walk(sub, depth + 1);
+    };
+    walk = visit;
+    visit(sheet, 0);
+    walk = nil;
+    return top;
+}
+
+// The catcher where the lyrics are while MediaRemoteUI shows the large cover, gone when it does not.
+static void placeCatcher(void) {
+    UIView *sheet = sg_sheet;
+    BOOL wanted = sg_coverShowing && sheet.window && sg_area.lyricsBottom > sg_area.lyricsTop;
+    if (!wanted) {
+        [sg_catcher removeFromSuperview];
+        return;
+    }
+    if (!sg_catcher) sg_catcher = [[SGVLockTouchCatcher alloc] initWithFrame:CGRectZero];
+    CGFloat bottom = MIN(sg_area.lyricsBottom, playerTop(sheet) - 8);
+    if (bottom <= sg_area.lyricsTop) {
+        [sg_catcher removeFromSuperview];
+        return;
+    }
+    CGRect screen = CGRectMake(0, sg_area.lyricsTop, sheet.window.bounds.size.width, bottom - sg_area.lyricsTop);
+    if (sg_catcher.superview != sheet) [sheet addSubview:sg_catcher];
+    else if (sheet.subviews.lastObject != sg_catcher) [sheet bringSubviewToFront:sg_catcher];
+    sg_catcher.frame = [sheet convertRect:screen fromView:nil];
+}
+
 static NSUserDefaults *addonDefaults(void) {
     static NSUserDefaults *defaults;
     static dispatch_once_t once;
@@ -144,6 +236,21 @@ static void tellPicked(void) {
     notify_register_dispatch(kSGRelayLockClipNone, &noneToken, dispatch_get_main_queue(), ^(int t) {
         [NSFileManager.defaultManager removeItemAtPath:SGLockSharedClipPath() error:nil];
     });
-    notify_register_dispatch(kSGRelayLockShowing, &showingToken, dispatch_get_main_queue(), ^(int t) { hideWidgets(YES); });
-    notify_register_dispatch(kSGRelayLockNotShowing, &hiddenToken, dispatch_get_main_queue(), ^(int t) { hideWidgets(NO); });
+    notify_register_dispatch(kSGRelayLockShowing, &showingToken, dispatch_get_main_queue(), ^(int t) {
+        hideWidgets(YES);
+        sg_coverShowing = YES;
+        placeCatcher();
+    });
+    notify_register_dispatch(kSGRelayLockNotShowing, &hiddenToken, dispatch_get_main_queue(), ^(int t) {
+        hideWidgets(NO);
+        sg_coverShowing = NO;
+        placeCatcher();
+    });
+    int areaToken;
+    notify_register_dispatch(kSGRelayLockGestureArea, &areaToken, dispatch_get_main_queue(), ^(int t) {
+        uint64_t state = 0;
+        if (notify_get_state(t, &state) != NOTIFY_STATUS_OK) return;
+        sg_area = SGLockGestureAreaRead(state);
+        placeCatcher();
+    });
 }

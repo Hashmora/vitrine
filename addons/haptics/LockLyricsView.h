@@ -25,6 +25,13 @@
 @property (nonatomic, readonly) BOOL available;
 // Called when `available` changes.
 @property (nonatomic, copy) void (^availabilityChanged)(void);
+// The window the lyrics are drawn in takes no touches (SpringBoard's cover sheet is over it), so a drag and a tap are
+// handed in: how far the finger has gone down since the drag began, its speed down at the end, and a tap's point in the
+// view's own space.
+- (void)dragBegan;
+- (void)dragTo:(CGFloat)translation;
+- (void)dragEndedWithVelocity:(CGFloat)velocity;
+- (void)tapAt:(CGPoint)point;
 // Asked to seek the song to `positionMs`, a line's start plus the Lyrics page's delay, for a tap on the line.
 @property (nonatomic, copy) void (^seek)(NSInteger positionMs);
 // Nothing is drawn or worked out: the screen is dark, or the lyrics are not on screen.

@@ -30,6 +30,7 @@ typedef struct {
     UIView *_stack;
     BOOL _browsing;
     NSUInteger _browse;
+    CGFloat _dragFrom;   // the offset a drag began at
     CAGradientLayer *_fade;
     NSArray<SGKaraokeLine *> *_lines;
     SGKaraokeStyle *_style;
@@ -541,10 +542,46 @@ typedef struct {
     [self stir];
 }
 
+// A drag handed in, as a finger on the scroll view would scroll it: past the first or last line, a third as far.
+- (void)dragBegan {
+    [self.layer removeAllAnimations];
+    [_scroll.layer removeAllAnimations];
+    [self scrollViewWillBeginDragging:_scroll];
+    _dragFrom = _scroll.contentOffset.y;
+}
+
+- (CGFloat)clampedOffset:(CGFloat)offset rubber:(BOOL)rubber {
+    CGFloat least = -_scroll.contentInset.top, most = _scroll.contentInset.bottom;
+    if (offset < least) return rubber ? least - (least - offset) / 3 : least;
+    if (offset > most) return rubber ? most + (offset - most) / 3 : most;
+    return offset;
+}
+
+- (void)dragTo:(CGFloat)translation {
+    if (!_browsing) [self dragBegan];
+    _scroll.contentOffset = CGPointMake(0, [self clampedOffset:_dragFrom - translation rubber:YES]);
+}
+
+// Let go, the lines glide on with the finger's speed and settle inside the song, as a scroll view's deceleration does.
+- (void)dragEndedWithVelocity:(CGFloat)velocity {
+    if (!_browsing) return;
+    CGFloat target = [self clampedOffset:_scroll.contentOffset.y - velocity * 0.35 rubber:NO];
+    [UIView animateWithDuration:0.6 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{ self->_scroll.contentOffset = CGPointMake(0, target); }
+                     completion:^(BOOL finished) {
+        [self showLinesInSight];
+        [self holdBrowsing];
+    }];
+}
+
+- (void)tapped:(UITapGestureRecognizer *)tap {
+    [self tapAt:[tap locationInView:self]];
+}
+
 // A tap on a line seeks the song to its start, as the lyrics page's does: the clock is set there at once, and Spotify
 // told to follow.
-- (void)tapped:(UITapGestureRecognizer *)tap {
-    CGPoint point = [tap locationInView:_stack];
+- (void)tapAt:(CGPoint)tapped {
+    CGPoint point = [self convertPoint:tapped toView:_stack];
     for (NSNumber *key in _shown) {
         SGKaraokeLineView *view = _shown[key];
         if (!CGRectContainsPoint(CGRectInset(view.frame, -SGKaraokeMargin, -_gap / 2), point)) continue;
