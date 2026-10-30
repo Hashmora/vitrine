@@ -95,6 +95,9 @@ typedef NS_ENUM(NSUInteger, SGKaraokeAlign) {
 
 // The line as one string, a space between the words that are not joined.
 NSString *SGKaraokeLineText(SGKaraokeLine *line);
+// The letters and digits of a text alone, lowercased: a pronunciation or a translation equal to its
+// line's this way reads the same as the line and is left out.
+NSString *SGLyricsBareText(NSString *text);
 // When the singing of a line is over: its own end, or its backing's when that runs on past it.
 NSInteger SGKaraokeSungEnd(SGKaraokeLine *line);
 // The one line a place with room for one names as the one being sung at `ms`. Two voices can sing
