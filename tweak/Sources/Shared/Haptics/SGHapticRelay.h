@@ -51,7 +51,9 @@ enum { kSGRelayLevels = 10, kSGRelaySharpnesses = 3 };
 //     after a wait; one clip's last frame held until the next one's first.
 // 17: the lyrics over the Canvas on the large cover, drawn live by the lines' own code (Shared/Lyrics/KaraokeLines),
 //     with a button in its corner between them and the Canvas.
-enum { kSGRelayAddonBuild = 17 };
+// 18: nothing of the lyrics made while MediaRemoteUI loads the add-on: 17 made their view there, hung MediaRemoteUI's
+//     launch until its watchdog killed it, and the lock screen showed no player.
+enum { kSGRelayAddonBuild = 18 };
 // Below iOS 26, the add-on also fills the lock screen with the now playing cover while Spotify's switch for it is on
 // (AnimatedArtwork.h, SGKeyLockCoverAddon): told "lockart.1" and "lockart.0" as the switch is set and each time the
 // add-on answers. It reads the cover from MediaRemote, as the lock screen's own player does.

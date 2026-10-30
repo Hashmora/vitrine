@@ -33,6 +33,9 @@
 //
 // Only the large cover's view and the cover itself are hooked, as they lay out, come and go and take an alpha.
 //
+// Nothing of UIKit is made in the constructor, which dyld runs before UIKit has launched: a view made there waits on
+// the launch that waits on it (lyricsView() is only called from the main queue once the app runs).
+//
 // Threading: main thread.
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
@@ -520,9 +523,6 @@ static void listen(const char *name, void (^handler)(void)) {
         uint64_t state = 0;
         if (notify_get_state(t, &state) == NOTIFY_STATUS_OK) [lyricsView() setClockState:state];
     });
-    // The clock Spotify posted last, which a MediaRemoteUI starting late has not heard: the lines read below count at once.
-    uint64_t lastClock = 0;
-    if (notify_get_state(clockToken, &lastClock) == NOTIFY_STATUS_OK && lastClock) [lyricsView() setClockState:lastClock];
     listen(kSGRelayLockArtOff, ^{ sg_on = NO; apply(); });
     listen(kSGRelayLockClipShared, ^{ readShared(); });
     // Spotify says so as each song begins, before its clip is looked up, so what is drawn waits for the song's cover.
@@ -537,7 +537,14 @@ static void listen(const char *name, void (^handler)(void)) {
     notify_post(kSGRelayPing);
     notify_post(kSGRelayLockModeAsk);
     if ([NSFileManager.defaultManager fileExistsAtPath:SGLockSharedClipPath()]) readShared();
-    // Lines already shared count once a clock of their song is heard.
-    if ([NSFileManager.defaultManager fileExistsAtPath:SGLockSharedLyricsPath()]) [lyricsView() takeFile:SGLockSharedLyricsPath()];
+    // The lines already shared, and the clock Spotify posted last, which a MediaRemoteUI starting late has not heard, so
+    // the lines count at once. Not here but once the app runs: the lyrics are a view, and a view made while dyld runs this
+    // constructor waits on UIKit's launch, which waits on this constructor, until the launch watchdog kills MediaRemoteUI
+    // and the lock screen has no player at all (0x8BADF00D, add-on build 17).
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([NSFileManager.defaultManager fileExistsAtPath:SGLockSharedLyricsPath()]) [lyricsView() takeFile:SGLockSharedLyricsPath()];
+        uint64_t lastClock = 0;
+        if (notify_get_state(clockToken, &lastClock) == NOTIFY_STATUS_OK && lastClock) [lyricsView() setClockState:lastClock];
+    });
     NSLog(@"[vitrine-addon] MediaRemoteUI ready for the lock screen's Canvas");
 }
