@@ -57,7 +57,9 @@ enum { kSGRelayLevels = 10, kSGRelaySharpnesses = 3 };
 //     Canvas, and the large cover closes only on a tap on itself with the lyrics off.
 // 20: the drags and taps over the lyrics caught by SpringBoard, which gets every touch over the large cover, and handed
 //     to MediaRemoteUI, which draws it.
-enum { kSGRelayAddonBuild = 20 };
+// 21: the Canvas branch's 17 taken in: Spotify's gray placeholder picture told from a song's cover, so a new song waits
+//     for its own, and covers and clips crossfade into each other instead of cutting.
+enum { kSGRelayAddonBuild = 21 };
 // Below iOS 26, the add-on also fills the lock screen with the now playing cover while Spotify's switch for it is on
 // (AnimatedArtwork.h, SGKeyLockCoverAddon): told "lockart.1" and "lockart.0" as the switch is set and each time the
 // add-on answers. It reads the cover from MediaRemote, as the lock screen's own player does.

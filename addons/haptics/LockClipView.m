@@ -2,6 +2,25 @@
 #import <AVFoundation/AVFoundation.h>
 
 static const NSTimeInterval kFade = 0.35;
+// One cover or clip giving way to the next: the new one fades in over the old, which fades out under it.
+static const NSTimeInterval kSwap = 0.45;
+
+// A layer's opacity eased to `to` from wherever it is on screen.
+static void fade(CALayer *layer, float to) {
+    if (!layer) return;
+    float from = ((CALayer *)layer.presentationLayer ?: layer).opacity;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    layer.opacity = to;
+    [CATransaction commit];
+    if (from == to) return;
+    CABasicAnimation *ease = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    ease.fromValue = @(from);
+    ease.toValue = @(to);
+    ease.duration = kSwap;
+    ease.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    [layer addAnimation:ease forKey:@"fade"];
+}
 // How much of the clip's height, at its top and its bottom, fades into the bands.
 static const CGFloat kEdgeFade = 0.12;
 
@@ -117,7 +136,16 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
 
 - (void)showCover:(UIImage *)cover {
     if (cover == _cover) return;
+    BOOL had = _still.contents != nil;
     _cover = cover;
+    // One cover crossfades to the next rather than cutting to it.
+    if (had && cover) {
+        CATransition *crossfade = [CATransition animation];
+        crossfade.type = kCATransitionFade;
+        crossfade.duration = kSwap;
+        crossfade.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+        [_still addAnimation:crossfade forKey:@"contents"];
+    }
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _still.contents = (id)cover.CGImage;
@@ -166,7 +194,7 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     _wanted = clip;
     if (!clip) {
         [self paintBands:_cover.CGImage];
-        _still.opacity = 1;
+        fade(_still, 1);
     }
     if (!_suspended) [self load:clip];
 }
@@ -178,9 +206,11 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     [_video stopRequestingMediaData];
     [_leaving removeFromSuperlayer];
     _leaving = nil;
-    // One clip after another: the last one's frame stays until the next one's first is in, rather than the bands alone.
-    if (clip && _video && !_suspended) {
+    // One clip after another: the last one's frame stays until the next one's first is in, rather than the bands alone,
+    // and then fades out under it; a clip giving way to the cover fades out over it.
+    if (_video && !_suspended) {
         _leaving = _video;
+        if (!clip) [self dropLeaving];
     } else {
         [_video flush];
         [_video removeFromSuperlayer];
@@ -211,6 +241,8 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     CMTimebaseSetRate(timebase, _startsPlaying ? 1 : 0);
     _video.controlTimebase = timebase;
     if (timebase) CFRelease(timebase);
+    // In once its first frame is: until then, what was there shows.
+    _video.opacity = 0;
     [self.layer addSublayer:_video];
     [self setNeedsLayout];
     _offset = kCMTimeZero;
@@ -227,10 +259,12 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
         dispatch_async(dispatch_get_main_queue(), ^{
             SGVLockClip *view = weakSelf;
             if (view && view->_run == asked) {
+                // The clip is in: it fades in, and the still under it goes, so a clip of another shape shows no cover at its
+                // edges. One that does not read stays out, the cover or the last clip showing.
                 if (succeeded) {
                     [view paintBands:image];
-                    // The clip is in: the still under it goes, so a clip of another shape shows no cover at its edges.
-                    view->_still.opacity = 0;
+                    fade(view->_video, 1);
+                    fade(view->_still, 0);
                 }
                 [view dropLeaving];
             }
@@ -246,11 +280,13 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     });
 }
 
-// The last clip's layer taken away a moment after the next one's first frame is read, as the display layer shows it.
+// The last clip's layer faded out once the next one's first frame is read, or as the cover takes its place, and then
+// taken away.
 - (void)dropLeaving {
     AVSampleBufferDisplayLayer *leaving = _leaving;
     if (!leaving) return;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    fade(leaving, 0);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kSwap * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (self->_leaving != leaving) return;
         [leaving flush];
         [leaving removeFromSuperlayer];

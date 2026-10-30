@@ -22,7 +22,7 @@
 // over on a new display layer.
 //
 // A new song changes what is drawn only once it has something to draw: until its cover is in (the now playing info
-// comes first with none, or with a flat gray placeholder) or its clip is shared, the last song's clip or cover stays,
+// comes first with none, or with Spotify's gray placeholder picture, looksLoaded) or its clip is shared, the last song's clip or cover stays,
 // rather than the system's gray placeholder showing for a moment. If neither is in after kWait, whatever the song has
 // is drawn, the placeholder too.
 //
@@ -437,29 +437,41 @@ static void readShared(void) {
     changed();
 }
 
-// Whether `cover` is a song's own rather than a placeholder: no cover at all, or one of a single flat gray, is not.
+// Whether `cover` is a song's own rather than a placeholder. Spotify's placeholder is a gray field with a gray picture
+// glyph on it: gray all over, two or three flat shades, and an edge of the field's shade alone. A song's cover, in color
+// or not, has many shades and an edge that varies. The flat gray of a placeholder with no glyph reads the same way.
+// Read off a 32 pt copy, in sixteen shades of gray.
 static BOOL looksLoaded(UIImage *cover) {
     CGImageRef image = cover.CGImage;
     if (!image) return NO;
-    enum { side = 8 };
+    enum { side = 32, levels = 16 };
     uint8_t pixels[side * side * 4] = {0};
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGContextRef context = CGBitmapContextCreate(pixels, side, side, 8, side * 4, space, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(space);
     if (!context) return YES;
+    CGContextSetInterpolationQuality(context, kCGInterpolationLow);
     CGContextDrawImage(context, CGRectMake(0, 0, side, side), image);
     CGContextRelease(context);
-    double sum = 0, squares = 0, chroma = 0;
-    for (int i = 0; i < side * side; i++) {
-        const uint8_t *p = pixels + i * 4;
-        double luma = (0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]) / 255;
-        sum += luma;
-        squares += luma * luma;
-        chroma = MAX(chroma, (MAX(p[0], MAX(p[1], p[2])) - MIN(p[0], MIN(p[1], p[2]))) / 255.0);
+    NSUInteger counts[levels] = {0}, edges = 0;
+    double chroma = 0, edgeSum = 0, edgeSquares = 0;
+    for (int y = 0; y < side; y++) {
+        for (int x = 0; x < side; x++) {
+            const uint8_t *p = pixels + (y * side + x) * 4;
+            double luma = (0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]) / 255;
+            chroma = MAX(chroma, (MAX(p[0], MAX(p[1], p[2])) - MIN(p[0], MIN(p[1], p[2]))) / 255.0);
+            counts[MIN(levels - 1, (int)(luma * levels))]++;
+            if (x == 0 || y == 0 || x == side - 1 || y == side - 1) {
+                edgeSum += luma;
+                edgeSquares += luma * luma;
+                edges++;
+            }
+        }
     }
-    double mean = sum / (side * side);
-    double spread = sqrt(MAX(0, squares / (side * side) - mean * mean));
-    return spread > 0.06 || chroma > 0.12;
+    double edgeMean = edgeSum / edges, edgeSpread = sqrt(MAX(0, edgeSquares / edges - edgeMean * edgeMean));
+    NSUInteger shades = 0;
+    for (int i = 0; i < levels; i++) if (counts[i] > side * side / 50) shades++;
+    return !(chroma < 0.08 && shades <= 3 && edgeSpread < 0.03);
 }
 
 // The song, by its title and album: not its artist, which Vitrine's lock screen lyrics write each line into.
