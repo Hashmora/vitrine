@@ -232,9 +232,7 @@ typedef struct {
 - (double)songMs {
     if (_clockMs < 0 && !_held) return -1;
     if (_held || _clockTag != _tag) return _heldMs;
-    double ms = _clockMs + (_clockPlaying ? (CACurrentMediaTime() - _clockAt) * 1000 * _clockSpeed : 0) - _delay;
-    _heldMs = ms;
-    return ms;
+    return _clockMs + (_clockPlaying ? (CACurrentMediaTime() - _clockAt) * 1000 * _clockSpeed : 0) - _delay;
 }
 
 - (BOOL)running {
@@ -290,6 +288,7 @@ typedef struct {
     if (!_tops) return;
     double now = [self songMs];
     if (now < 0) return;
+    if (!_held && _clockTag == _tag) _heldMs = now;   // where a hold, or another song's clock, will keep the lines
     [self arrangeAt:now];
     for (NSUInteger i = 0; i < _sungCount; i++) [_shown[@(_sung[i])] showTime:now];
     CFTimeInterval frame = _link ? _link.targetTimestamp : CACurrentMediaTime();

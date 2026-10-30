@@ -27,6 +27,8 @@ SGLockArtwork SGLockScreenArtwork(void);
 // in the large cover's corner between them and the Canvas. On until switched off; nothing shows until the Canvas
 // switch is on too.
 #define SGKeyLockCoverLyrics @"spotifyglass.lockscreen.cover.addon.lyrics"
+// Both switches on below iOS 26: the song's lines are wanted for the large cover, under either look.
+BOOL SGLockCoverLyricsWanted(void);
 // Under Moving artwork with lyrics, LyricsArtwork.x says whether the playing track has no synced lines (YES), so
 // LockScreenMotion.x shows its moving artwork plain, as Moving artwork does, or has them (NO), so it takes it off
 // for the lyrics' clips. Main queue.

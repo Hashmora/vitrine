@@ -85,8 +85,8 @@ static const CGFloat kLyricsDim = 0.5;
 
 static void apply(void);
 
-// The lyrics' button: the glyph on a dark glass disc, the mod's glass below iOS 26 (Core/SGGlass.h's), filled while
-// the lyrics show.
+// The lyrics' button: the glyph on a disc of dark blur, the mod's glass below iOS 26 on this branch (Core/SGGlass.h's
+// chrome material), filled while the lyrics show. Legacy Liquid Glass, where the mod has it, would take its place.
 @interface SGVLyricsButton : UIButton
 @end
 
@@ -116,10 +116,6 @@ static void apply(void);
     [self sendSubviewToBack:_glass];
 }
 
-- (void)setEnabled:(BOOL)enabled {
-    [super setEnabled:enabled];
-    self.alpha = enabled ? 1 : 0.35;
-}
 @end
 
 @interface SGVLyricsButtonTarget : NSObject
@@ -256,6 +252,7 @@ static void apply(void) {
     tellShowing(on);
     hideArtwork(artwork, on, YES);
     BOOL shown = clip.alpha > 0.99;
+    // Dim and dead for a song without lines; its alpha is set with the rest below, so it fades rather than jumps.
     BOOL available = lyrics.available, lines = offered && sg_lyricsPicked && available;
     button.enabled = available;
     button.selected = sg_lyricsPicked && available;
@@ -523,6 +520,9 @@ static void listen(const char *name, void (^handler)(void)) {
         uint64_t state = 0;
         if (notify_get_state(t, &state) == NOTIFY_STATUS_OK) [lyricsView() setClockState:state];
     });
+    // The clock Spotify posted last, which a MediaRemoteUI starting late has not heard: the lines read below count at once.
+    uint64_t lastClock = 0;
+    if (notify_get_state(clockToken, &lastClock) == NOTIFY_STATUS_OK && lastClock) [lyricsView() setClockState:lastClock];
     listen(kSGRelayLockArtOff, ^{ sg_on = NO; apply(); });
     listen(kSGRelayLockClipShared, ^{ readShared(); });
     // Spotify says so as each song begins, before its clip is looked up, so what is drawn waits for the song's cover.

@@ -31,13 +31,20 @@ static NSString *sg_track;          // the song the lines are for, offered or aw
 static NSUInteger sg_generation;    // which offer a write belongs to
 static NSDictionary *sg_written;    // what the last file held, but the lines' order, to write a change only
 static int sg_clockToken;
+static NSString *sg_reportedURI;    // the track of the last report, so a report of the next one leaves the clock to follow()
+static dispatch_source_t sg_clockTimer;
 static NSInteger sg_clockMs = -1;
 static double sg_clockSpeed;
 static BOOL sg_clockPlaying;
 static CFAbsoluteTime sg_clockAt;
 
-static BOOL wanted(void) {
+BOOL SGLockCoverLyricsWanted(void) {
+    if (@available(iOS 26.0, *)) return NO;
     return SGFlag(SGKeyLockCoverAddon, NO) && SGEnabled(SGKeyLockCoverLyrics);
+}
+
+static BOOL wanted(void) {
+    return SGLockCoverLyricsWanted();
 }
 
 static NSURL *lyricsFile(void) {
@@ -57,10 +64,6 @@ static NSDictionary *lookFor(NSArray<SGKaraokeLine *> *lines) {
     return look;
 }
 
-static void post(const char *name) {
-    notify_post(name);
-}
-
 // The playing song's lines for the add-on, or "none" for a song without timed lines; nothing while they are still on
 // their way. `force` writes them even when the file would hold what it holds.
 static void offer(BOOL force) {
@@ -73,7 +76,7 @@ static void offer(BOOL force) {
     }
     if (!lines.count || SGKaraokeLinesTiming(lines) == SGKaraokeTimingNone) {
         sg_written = nil;
-        post(kSGRelayLockLyricsNone);
+        notify_post(kSGRelayLockLyricsNone);
         return;
     }
     NSDictionary *content = @{@"tag": @(SGLockLyricsTag(track)), @"look": lookFor(lines), @"lines": SGKaraokeLinesPlist(lines)};
@@ -96,10 +99,10 @@ static void offer(BOOL force) {
             if (!written) {
                 SGLog(@"lock lyrics: the lines not written for the add-on: %@", error.localizedDescription);
                 sg_written = nil;
-                post(kSGRelayLockLyricsNone);
+                notify_post(kSGRelayLockLyricsNone);
                 return;
             }
-            post(kSGRelayLockLyrics);
+            notify_post(kSGRelayLockLyrics);
             static int logged;
             if (logged++ < 4) SGLog(@"lock lyrics: %lu lines handed to the add-on", (unsigned long)lines.count);
         });
@@ -123,18 +126,35 @@ static void sendClock(SPTPlayerState *state, BOOL force) {
     sg_clockAt = now;
     if (!sg_clockToken && notify_register_check(kSGRelayLockLyricsClock, &sg_clockToken) != NOTIFY_STATUS_OK) return;
     notify_set_state(sg_clockToken, SGLockLyricsClock(ms, speed, playing, SGLockLyricsTag(sg_track)));
-    post(kSGRelayLockLyricsClock);
+    notify_post(kSGRelayLockLyricsClock);
+}
+
+// While the song plays, its clock goes out at least every kClockEvery whether the player reports or not, so a
+// MediaRemoteUI that starts meanwhile has one soon; stopped, the last one stands.
+static void keepClock(BOOL playing) {
+    if (!playing || !wanted()) {
+        if (sg_clockTimer) dispatch_source_cancel(sg_clockTimer);
+        sg_clockTimer = nil;
+        return;
+    }
+    if (sg_clockTimer) return;
+    sg_clockTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(sg_clockTimer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kClockEvery * NSEC_PER_SEC)),
+                              (uint64_t)(kClockEvery * NSEC_PER_SEC), NSEC_PER_SEC);
+    dispatch_source_set_event_handler(sg_clockTimer, ^{ sendClock(SGPlayerState(), NO); });
+    dispatch_resume(sg_clockTimer);
 }
 
 // A new song: what the add-on draws holds while its lines come, and its clock starts over.
 static void follow(SPTPlayerState *state) {
     NSString *track = SGKaraokePlayingTrack();
+    keepClock(state && !state.isPaused);
     if (!wanted() || !track.length) return;
     if (![track isEqualToString:sg_track]) {
         sg_track = track;
         sg_written = nil;
         sg_generation++;
-        post(kSGRelayLockLyricsPending);
+        notify_post(kSGRelayLockLyricsPending);
         sendClock(state, YES);
         offer(YES);
         return;
@@ -150,8 +170,13 @@ static void follow(SPTPlayerState *state) {
 - (void)playerStateDidChange:(SPTPlayerState *)state {
     dispatch_async(dispatch_get_main_queue(), ^{ follow(SGPlayerState()); });
 }
+// A report comes before the change it carries is heard: the first report of the next song would send its position
+// under the last song's tag, so a report of another track leaves the clock to follow().
 - (void)playerStateDidReport:(SPTPlayerState *)state {
-    if (sg_track) sendClock(state, NO);
+    NSString *uri = SGURIString(state.track.URI);
+    BOOL sameTrack = !uri || [uri isEqualToString:sg_reportedURI];
+    sg_reportedURI = uri;
+    if (sg_track && sameTrack) sendClock(state, NO);
 }
 @end
 
