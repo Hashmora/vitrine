@@ -49,7 +49,9 @@ enum { kSGRelayLevels = 10, kSGRelaySharpnesses = 3 };
 //     and starts over on a new display layer when it lights or its decoding fails.
 // 16: a new song's clip or cover drawn only once it is in, the last song's held until then and its placeholder only
 //     after a wait; one clip's last frame held until the next one's first.
-enum { kSGRelayAddonBuild = 16 };
+// 17: the lyrics over the Canvas on the large cover, drawn live by the lines' own code (Shared/Lyrics/KaraokeLines),
+//     with a button in its corner between them and the Canvas.
+enum { kSGRelayAddonBuild = 17 };
 // Below iOS 26, the add-on also fills the lock screen with the now playing cover while Spotify's switch for it is on
 // (AnimatedArtwork.h, SGKeyLockCoverAddon): told "lockart.1" and "lockart.0" as the switch is set and each time the
 // add-on answers. It reads the cover from MediaRemote, as the lock screen's own player does.
@@ -70,6 +72,47 @@ static inline NSString *SGLockSharedClipPath(void) {
     NSString *root = [NSFileManager.defaultManager fileExistsAtPath:@"/var/jb"] ? @"/var/jb/var/mobile" : @"/var/mobile";
     return [root stringByAppendingPathComponent:@"Library/Caches/com.vitrine.addon/lockclip.mp4"];
 }
+// The lyrics over the large cover's Canvas (AnimatedArtwork.h, SGKeyLockCoverLyrics), told the add-on with the cover's
+// own switch: "locklyrics.1" and "locklyrics.0".
+#define kSGRelayLockLyricsOn kSGRelayPrefix "locklyrics.1"
+#define kSGRelayLockLyricsOff kSGRelayPrefix "locklyrics.0"
+// The song's lines (Shared/AnimatedArtwork/LockScreenAddonLyrics.x): written to kSGLockLyricsName in Spotify's caches, then
+// "locklyrics" posted; SpringBoard copies them where MediaRemoteUI can read them (SGLockSharedLyricsPath) and posts
+// "locklyrics.shared". "locklyrics.none" for a song with no timed lines, "locklyrics.pending" as a song begins whose
+// lines are still on their way: what is drawn holds until they come or kSGRelayLockLyricsWait has gone.
+#define kSGRelayLockLyrics kSGRelayPrefix "locklyrics"
+#define kSGRelayLockLyricsNone kSGRelayPrefix "locklyrics.none"
+#define kSGRelayLockLyricsPending kSGRelayPrefix "locklyrics.pending"
+#define kSGRelayLockLyricsShared kSGRelayPrefix "locklyrics.shared"
+#define kSGLockLyricsName "VitrineLockLyrics.json"
+#define kSGRelayLockLyricsWait 2.0
+static inline NSString *SGLockSharedLyricsPath(void) {
+    NSString *root = [NSFileManager.defaultManager fileExistsAtPath:@"/var/jb"] ? @"/var/jb/var/mobile" : @"/var/mobile";
+    return [root stringByAppendingPathComponent:@"Library/Caches/com.vitrine.addon/lyrics.json"];
+}
+// Where the song is, posted by Spotify as it starts, stops, seeks or changes speed and every few seconds while it plays,
+// with the clock in the notification's state (SGLockLyricsClock): MediaRemoteUI runs it on from when it hears it.
+#define kSGRelayLockLyricsClock kSGRelayPrefix "locklyrics.clock"
+// The clock's state: the position in ms (32 bits), the speed in thousandths (16), playing (1) and the song's tag (15),
+// so a clock of another song than the lines' is not run against them.
+static inline uint64_t SGLockLyricsClock(NSInteger ms, double speed, BOOL playing, uint16_t tag) {
+    uint64_t position = (uint64_t)MAX(0, MIN(ms, (NSInteger)UINT32_MAX));
+    uint64_t thousandths = (uint64_t)MAX(0, MIN(speed * 1000, 65535.0));
+    return position | thousandths << 32 | (uint64_t)(playing ? 1 : 0) << 48 | (uint64_t)(tag & 0x7FFF) << 49;
+}
+// A song's tag: its id folded to 15 bits (FNV-1a), never 0, which stands for none.
+static inline uint16_t SGLockLyricsTag(NSString *track) {
+    uint32_t hash = 2166136261u;
+    for (const char *c = track.UTF8String; c && *c; c++) hash = (hash ^ (uint8_t)*c) * 16777619u;
+    uint16_t tag = (uint16_t)((hash ^ (hash >> 15)) & 0x7FFF);
+    return tag ? tag : 1;
+}
+// Lyrics or the Canvas on the large cover, picked by the button in its corner: MediaRemoteUI posts "lockmode.lyrics" or
+// "lockmode.canvas" as it is tapped, SpringBoard keeps the choice for the next song and the next boot, and posts it again
+// when MediaRemoteUI asks with "lockmode.ask" as it starts. The Canvas until the lyrics are picked.
+#define kSGRelayLockModeLyrics kSGRelayPrefix "lockmode.lyrics"
+#define kSGRelayLockModeCanvas kSGRelayPrefix "lockmode.canvas"
+#define kSGRelayLockModeAsk kSGRelayPrefix "lockmode.ask"
 // Whether the add-on plays while the phone is locked, told it by Spotify as the switch is set and each time the add-on
 // answers: kSGRelayPrefix "lockscreen.1" plays there, "lockscreen.0" does not.
 #define kSGRelayLockOn kSGRelayPrefix "lockscreen.1"
@@ -87,7 +130,8 @@ static inline NSString *SGLockSharedClipPath(void) {
 #define SGKeyMusicHapticsLockScreen @"spotifyglass.haptics.music.lockscreen"
 // Tells the add-on the lock screen switch as it is now. Main thread.
 void SGHapticRelaySendLockScreen(void);
-// Tells the add-on whether to fill the lock screen with the cover, as the switch for it is now. Main thread.
+// Tells the add-on whether to fill the lock screen with the cover, and whether to put the lyrics over it, as the
+// switches for them are now. Main thread.
 void SGHapticRelaySendLockArt(void);
 // The notice for a feature that needs the add-on, switched on without it: what it needs and, from Vitrine's IPA, the
 // add-on two taps away. `feature` names what asked ("Everywhere", "The full-screen cover").

@@ -86,6 +86,62 @@ NSString *SGLyricsBareText(NSString *text) {
     return bare;
 }
 
+static id lineInPlist(SGKaraokeLine *line) {
+    if (!line) return nil;
+    NSMutableArray *words = [NSMutableArray arrayWithCapacity:line.words.count];
+    for (SGKaraokeWord *word in line.words) [words addObject:@[word.text ?: @"", @(word.start), @(word.end), @(word.joined)]];
+    NSMutableDictionary *plist = [@{@"w": words, @"s": @(line.start), @"e": @(line.end), @"a": @(line.align), @"t": @(line.timing)} mutableCopy];
+    if (line.voice) plist[@"v"] = line.voice;
+    if (line.backing) plist[@"b"] = lineInPlist(line.backing);
+    if (line.pronunciation) plist[@"p"] = lineInPlist(line.pronunciation);
+    if (line.translation) plist[@"tr"] = line.translation;
+    if (line.translationMade) plist[@"tm"] = @YES;
+    return plist;
+}
+
+static SGKaraokeLine *lineFromPlist(id plist) {
+    if (![plist isKindOfClass:NSDictionary.class] || ![plist[@"w"] isKindOfClass:NSArray.class]) return nil;
+    NSMutableArray<SGKaraokeWord *> *words = [NSMutableArray array];
+    for (NSArray *fields in plist[@"w"]) {
+        if (![fields isKindOfClass:NSArray.class] || fields.count < 4 || ![fields[0] isKindOfClass:NSString.class]) return nil;
+        SGKaraokeWord *word = [SGKaraokeWord new];
+        word.text = fields[0];
+        word.start = [fields[1] integerValue];
+        word.end = [fields[2] integerValue];
+        word.joined = [fields[3] boolValue];
+        [words addObject:word];
+    }
+    SGKaraokeLine *line = [SGKaraokeLine new];
+    line.words = words;
+    line.start = [plist[@"s"] integerValue];
+    line.end = [plist[@"e"] integerValue];
+    line.align = [plist[@"a"] unsignedIntegerValue] == SGKaraokeAlignTrailing ? SGKaraokeAlignTrailing : SGKaraokeAlignLeading;
+    line.timing = MIN([plist[@"t"] unsignedIntegerValue], (NSUInteger)SGKaraokeTimingNone);
+    if ([plist[@"v"] isKindOfClass:NSString.class]) line.voice = plist[@"v"];
+    line.backing = lineFromPlist(plist[@"b"]);
+    line.pronunciation = lineFromPlist(plist[@"p"]);
+    if ([plist[@"tr"] isKindOfClass:NSString.class]) line.translation = plist[@"tr"];
+    line.translationMade = [plist[@"tm"] boolValue];
+    return line;
+}
+
+NSArray *SGKaraokeLinesPlist(NSArray<SGKaraokeLine *> *lines) {
+    NSMutableArray *plist = [NSMutableArray arrayWithCapacity:lines.count];
+    for (SGKaraokeLine *line in lines) [plist addObject:lineInPlist(line)];
+    return plist;
+}
+
+NSArray<SGKaraokeLine *> *SGKaraokeLinesFromPlist(id plist) {
+    if (![plist isKindOfClass:NSArray.class]) return nil;
+    NSMutableArray<SGKaraokeLine *> *lines = [NSMutableArray arrayWithCapacity:[plist count]];
+    for (id entry in plist) {
+        SGKaraokeLine *line = lineFromPlist(entry);
+        if (!line) return nil;
+        [lines addObject:line];
+    }
+    return lines;
+}
+
 // Japanese, Chinese and Korean, and the punctuation set with them. Kana and Hangul are listed as
 // well as the ideographs: a line of either is written without spaces just the same.
 static NSCharacterSet *unspacedScript(void) {

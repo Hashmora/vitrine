@@ -26,6 +26,11 @@
 // rather than the system's gray placeholder showing for a moment. If neither is in after kWait, whatever the song has
 // is drawn, the placeholder too.
 //
+// With the lyrics switch on (kSGRelayLockLyricsOn), a glass button in the bottom trailing corner, over the camera's,
+// puts the song's lyrics over the Canvas, dimmed under them, and takes them away again (LockLyricsView.h); SpringBoard
+// keeps which of the two was picked. The button is dim and does nothing for a song without timed lines, and the Canvas
+// shows. The lyrics take no touches, and a tap on the button does not close the large cover as a tap elsewhere does.
+//
 // Only the large cover's view and the cover itself are hooked, as they lay out, come and go and take an alpha.
 //
 // Threading: main thread.
@@ -34,6 +39,7 @@
 #import <objc/runtime.h>
 #import <notify.h>
 #import "LockClipView.h"
+#import "LockLyricsView.h"
 #import "../../tweak/Sources/Shared/Haptics/SGHapticRelay.h"
 
 typedef void (*SGMRIsPlaying)(dispatch_queue_t queue, void (^handler)(Boolean playing));
@@ -64,6 +70,86 @@ static NSUInteger sg_wait;   // the wait's number, so a late timeout of one that
 static __weak UIView *sg_field;   // the large cover's CoverSheetBackgroundView, while it is open
 static char kClipKey, kTapKey, kHiddenKey, kWantedKey, kClosedKey;
 static BOOL sg_settingAlpha;   // the alpha set here, not MediaRemoteUI's to remember
+// The lyrics: the switch, the choice the button makes (SpringBoard's), and the one view of them, moved into the field
+// that is open. A song's lines wait kSGRelayLockLyricsWait as it begins, the last song's held meanwhile.
+static BOOL sg_lyricsOn, sg_lyricsPicked;
+static SGVLockLyrics *sg_lyrics;
+static NSUInteger sg_lyricsWait;
+static char kDimKey, kButtonKey;
+// The button: as big as the lock screen's own, its middle this far in from the trailing edge and up from the bottom,
+// over the camera's. The lines run from under the clock to over it.
+static const CGFloat kButtonSide = 44, kButtonIn = 70, kButtonUp = 154;
+static const CGFloat kLyricsTopShare = 0.27, kLyricsBottomRoom = 190;
+// How dark the Canvas goes under the lyrics.
+static const CGFloat kLyricsDim = 0.5;
+
+static void apply(void);
+
+// The lyrics' button: the glyph on a dark glass disc, the mod's glass below iOS 26 (Core/SGGlass.h's), filled while
+// the lyrics show.
+@interface SGVLyricsButton : UIButton
+@end
+
+@implementation SGVLyricsButton {
+    UIVisualEffectView *_glass;
+}
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    if (!(self = [super initWithFrame:frame])) return nil;
+    _glass = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark]];
+    _glass.userInteractionEnabled = NO;
+    _glass.clipsToBounds = YES;
+    [self insertSubview:_glass atIndex:0];
+    self.tintColor = UIColor.whiteColor;
+    UIImageSymbolConfiguration *configuration = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightSemibold];
+    [self setImage:[UIImage systemImageNamed:@"quote.bubble" withConfiguration:configuration] forState:UIControlStateNormal];
+    [self setImage:[UIImage systemImageNamed:@"quote.bubble.fill" withConfiguration:configuration] forState:UIControlStateSelected];
+    [self setImage:[UIImage systemImageNamed:@"quote.bubble.fill" withConfiguration:configuration] forState:UIControlStateSelected | UIControlStateHighlighted];
+    self.accessibilityLabel = @"Lyrics";
+    return self;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    _glass.frame = self.bounds;
+    _glass.layer.cornerRadius = self.bounds.size.height / 2;
+    [self sendSubviewToBack:_glass];
+}
+
+- (void)setEnabled:(BOOL)enabled {
+    [super setEnabled:enabled];
+    self.alpha = enabled ? 1 : 0.35;
+}
+@end
+
+@interface SGVLyricsButtonTarget : NSObject
+@end
+
+@implementation SGVLyricsButtonTarget
+- (void)tapped:(UIButton *)button {
+    sg_lyricsPicked = !sg_lyricsPicked;
+    notify_post(sg_lyricsPicked ? kSGRelayLockModeLyrics : kSGRelayLockModeCanvas);
+    apply();
+}
+@end
+
+static SGVLockLyrics *lyricsView(void) {
+    if (!sg_lyrics) {
+        sg_lyrics = [[SGVLockLyrics alloc] initWithFrame:CGRectZero];
+        sg_lyrics.alpha = 0;
+        sg_lyrics.availabilityChanged = ^{ apply(); };
+    }
+    return sg_lyrics;
+}
+
+// The last views of the field, in this order, on top of everything of MediaRemoteUI's.
+static void keepOnTop(UIView *field, NSArray<UIView *> *views) {
+    NSArray<UIView *> *subviews = field.subviews;
+    BOOL inOrder = subviews.count >= views.count;
+    for (NSUInteger i = 0; inOrder && i < views.count; i++) inOrder = subviews[subviews.count - views.count + i] == views[i];
+    if (inOrder) return;
+    for (UIView *view in views) [field addSubview:view];
+}
 
 @interface SGVFieldTap : NSObject <UIGestureRecognizerDelegate>
 @end
@@ -73,6 +159,11 @@ static void closing(UIView *field);
 @implementation SGVFieldTap
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
     return YES;
+}
+// A tap on the lyrics' button is the button's, not one that closes the large cover.
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceiveTouch:(UITouch *)touch {
+    UIView *button = objc_getAssociatedObject(recognizer.view, &kButtonKey);
+    return !button || ![touch.view isDescendantOfView:button];
 }
 - (void)tapped:(UITapGestureRecognizer *)tap {
     closing(tap.view);
@@ -120,10 +211,38 @@ static void apply(void) {
         clip.alpha = 0;
         objc_setAssociatedObject(field, &kClipKey, clip, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
+    // The lyrics belong to a Canvas shown: the button with it, the lines and the dim under them once picked, for a song
+    // that has them.
+    BOOL offered = on && sg_lyricsOn;
+    SGVLockLyrics *lyrics = offered || sg_lyrics.superview == field ? lyricsView() : nil;
+    UIView *dim = objc_getAssociatedObject(field, &kDimKey);
+    SGVLyricsButton *button = objc_getAssociatedObject(field, &kButtonKey);
+    if (offered && !button) {
+        dim = [UIView new];
+        dim.backgroundColor = UIColor.blackColor;
+        dim.userInteractionEnabled = NO;
+        dim.alpha = 0;
+        objc_setAssociatedObject(field, &kDimKey, dim, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        static SGVLyricsButtonTarget *target;
+        if (!target) target = [SGVLyricsButtonTarget new];
+        button = [[SGVLyricsButton alloc] initWithFrame:CGRectMake(0, 0, kButtonSide, kButtonSide)];
+        button.alpha = 0;
+        [button addTarget:target action:@selector(tapped:) forControlEvents:UIControlEventTouchUpInside];
+        objc_setAssociatedObject(field, &kButtonKey, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     if (clip) {
-        // Over the field and the large cover, so a cover MediaRemoteUI shows for a moment stays under it.
-        if (clip.superview != field || field.subviews.lastObject != clip) [field addSubview:clip];
-        if (!CGRectEqualToRect(clip.frame, field.bounds)) clip.frame = field.bounds;
+        // Over the field and the large cover, so a cover MediaRemoteUI shows for a moment stays under it, and the
+        // lyrics, the dim under them and their button over the clip.
+        NSMutableArray<UIView *> *order = [NSMutableArray arrayWithObject:clip];
+        if (button) [order addObjectsFromArray:lyrics ? @[dim, lyrics, button] : @[dim, button]];
+        keepOnTop(field, order);
+        CGRect bounds = field.bounds;
+        if (!CGRectEqualToRect(clip.frame, bounds)) clip.frame = bounds;
+        if (!CGRectEqualToRect(dim.frame, bounds)) dim.frame = bounds;
+        CGFloat top = round(bounds.size.height * kLyricsTopShare);
+        CGRect lines = CGRectMake(0, top, bounds.size.width, MAX(0, bounds.size.height - kLyricsBottomRoom - top));
+        if (lyrics && !CGRectEqualToRect(lyrics.frame, lines)) lyrics.frame = lines;
+        button.center = CGPointMake(bounds.size.width - kButtonIn, bounds.size.height - kButtonUp);
     }
     if (on && !objc_getAssociatedObject(field, &kTapKey)) {
         SGVFieldTap *handler = [SGVFieldTap new];
@@ -137,6 +256,15 @@ static void apply(void) {
     tellShowing(on);
     hideArtwork(artwork, on, YES);
     BOOL shown = clip.alpha > 0.99;
+    BOOL available = lyrics.available, lines = offered && sg_lyricsPicked && available;
+    button.enabled = available;
+    button.selected = sg_lyricsPicked && available;
+    [lyrics setSuspended:!lines || sg_blank];
+    [UIView animateWithDuration:kFade delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+        button.alpha = offered ? (available ? 1 : 0.35) : 0;
+        dim.alpha = lines ? kLyricsDim : 0;
+        lyrics.alpha = lines ? 1 : 0;
+    } completion:nil];
     [UIView animateWithDuration:shown == on ? 0 : kFade delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
         clip.alpha = on ? 1 : 0;
     } completion:^(BOOL finished) {
@@ -157,8 +285,11 @@ static void closing(UIView *field) {
     objc_setAssociatedObject(field, &kClosedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     hideArtwork(artworkIn(field), NO, NO);
     tellShowing(NO);
+    UIView *dim = objc_getAssociatedObject(field, &kDimKey), *button = objc_getAssociatedObject(field, &kButtonKey);
+    UIView *lyrics = sg_lyrics.superview == field ? sg_lyrics : nil;
+    [sg_lyrics setSuspended:YES];
     [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionBeginFromCurrentState
-                     animations:^{ clip.alpha = 0; } completion:nil];
+                     animations:^{ clip.alpha = dim.alpha = button.alpha = lyrics.alpha = 0; } completion:nil];
 }
 
 // A copy of the shared clip taken off disk once it is neither the newest nor the one drawn.
@@ -359,8 +490,39 @@ static void listen(const char *name, void (^handler)(void)) {
         sg_blank = state != 0;
         SGVLockClip *clip = sg_field ? objc_getAssociatedObject(sg_field, &kClipKey) : nil;
         [clip setSuspended:sg_blank];
+        apply();   // the lyrics rest with it
     });
     listen(kSGRelayLockArtOn, ^{ sg_on = YES; apply(); });
+    listen(kSGRelayLockLyricsOn, ^{ sg_lyricsOn = YES; apply(); });
+    listen(kSGRelayLockLyricsOff, ^{ sg_lyricsOn = NO; apply(); });
+    listen(kSGRelayLockModeLyrics, ^{ sg_lyricsPicked = YES; apply(); });
+    listen(kSGRelayLockModeCanvas, ^{ sg_lyricsPicked = NO; apply(); });
+    // A song's lines: read as SpringBoard shares them; a new song holds the last song's until its own come, or
+    // kSGRelayLockLyricsWait has gone; a song without timed lines has none.
+    listen(kSGRelayLockLyricsShared, ^{
+        sg_lyricsWait++;
+        if (![lyricsView() takeFile:SGLockSharedLyricsPath()]) [lyricsView() clear];
+        apply();
+    });
+    listen(kSGRelayLockLyricsNone, ^{
+        sg_lyricsWait++;
+        [lyricsView() clear];
+        apply();
+    });
+    listen(kSGRelayLockLyricsPending, ^{
+        NSUInteger wait = ++sg_lyricsWait;
+        [lyricsView() hold];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kSGRelayLockLyricsWait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (wait != sg_lyricsWait) return;
+            [lyricsView() clear];
+            apply();
+        });
+    });
+    static int clockToken;
+    notify_register_dispatch(kSGRelayLockLyricsClock, &clockToken, dispatch_get_main_queue(), ^(int t) {
+        uint64_t state = 0;
+        if (notify_get_state(t, &state) == NOTIFY_STATUS_OK) [lyricsView() setClockState:state];
+    });
     listen(kSGRelayLockArtOff, ^{ sg_on = NO; apply(); });
     listen(kSGRelayLockClipShared, ^{ readShared(); });
     // Spotify says so as each song begins, before its clip is looked up, so what is drawn waits for the song's cover.
@@ -373,6 +535,9 @@ static void listen(const char *name, void (^handler)(void)) {
     // The switch and the clip as they are now: Spotify answers SpringBoard's pong to this ping with the switch, and a
     // clip already shared is in the shared caches.
     notify_post(kSGRelayPing);
+    notify_post(kSGRelayLockModeAsk);
     if ([NSFileManager.defaultManager fileExistsAtPath:SGLockSharedClipPath()]) readShared();
+    // Lines already shared count once a clock of their song is heard.
+    if ([NSFileManager.defaultManager fileExistsAtPath:SGLockSharedLyricsPath()]) [lyricsView() takeFile:SGLockSharedLyricsPath()];
     NSLog(@"[vitrine-addon] MediaRemoteUI ready for the lock screen's Canvas");
 }

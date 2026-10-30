@@ -54,6 +54,9 @@ NSArray *SGLockScreenMotionRows(void) {
             SGHapticRelaySendLockArt();
             if (on && !SGHapticRelayAvailable()) SGHapticAddonExplain(@"The full-screen artwork");
         };
+        SGModRow *lyrics = SGSwitchRow(@"Lyrics on the large cover", @"A button in the large cover's corner puts the song's lyrics over the Canvas, and takes them away again", SGKeyLockCoverLyrics);
+        lyrics.changed = ^(BOOL on) { SGHapticRelaySendLockArt(); };
+        lyrics.visible = ^BOOL { return SGFlag(SGKeyLockCoverAddon, NO); };
         // The add-on's update, offered here as on the Vibrations page: it draws this screen too.
         SGModRow *update = SGActionRow(@"Update Vitrine Addon", @"A newer add-on comes with this Vitrine", ^{
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -61,7 +64,7 @@ NSArray *SGLockScreenMotionRows(void) {
             });
         });
         update.visible = ^BOOL { return SGHapticAddonOutdated(); };
-        return @[cover, update];
+        return @[cover, lyrics, update];
     }
     return @[SGLockScreenArtworkNeedsRow()];
 }
