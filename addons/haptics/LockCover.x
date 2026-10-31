@@ -13,8 +13,8 @@
 //               kept in the add-on's own preferences for the next song and the next boot, and told MediaRemoteUI again
 //               as it asks (kSGRelayLockModeAsk) and as SpringBoard starts.
 //   the touches the large cover takes none (MediaRemoteUI draws it behind the cover sheet), so while MediaRemoteUI shows it
-//               a catcher lies over the notification list where its lyrics are, down to the player's top
-//               (kSGRelayLockGestureArea): with the lyrics up it takes every touch there and hands drags and taps to
+//               a catcher lies over the notification list where its lyrics are (kSGRelayLockGestureArea), letting the
+//               touches on the player and the notifications through wherever the list has scrolled them: with the lyrics up it takes every touch there and hands drags and taps to
 //               MediaRemoteUI, so the lyrics scroll and seek and the cover stays open; with them off it lets a tap on the
 //               clip or cover itself through to the list, which closes the cover, and keeps the rest.
 //
@@ -122,9 +122,28 @@ static SGLockGestureAreaState sg_area;
     return self;
 }
 
-// With the lyrics off, a tap on the clip or cover itself is the list's, which closes the large cover.
+// Whether the cover sheet's own views under the catcher have a player or a notification at `point`: the list scrolls
+// them anywhere, the lyrics' band among them, and they keep their touches there.
+- (BOOL)platterAt:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *sheet = self.superview;
+    Class platter = NSClassFromString(@"PLPlatterView");
+    for (UIView *sibling in sheet.subviews.reverseObjectEnumerator) {
+        if (sibling == self || sibling.hidden || sibling.alpha < 0.01 || !sibling.userInteractionEnabled) continue;
+        UIView *hit = [sibling hitTest:[self convertPoint:point toView:sibling] withEvent:event];
+        if (!hit) continue;
+        for (UIView *view = hit; view && view != sheet; view = view.superview) {
+            if (platter && [view isKindOfClass:platter]) return YES;
+        }
+        return NO;
+    }
+    return NO;
+}
+
+// With the lyrics off, a tap on the clip or cover itself is the list's, which closes the large cover; a player or a
+// notification over the band is always the list's.
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
     if (![super pointInside:point withEvent:event]) return NO;
+    if ([self platterAt:point withEvent:event]) return NO;
     if (sg_area.lyricsShown) return YES;
     CGFloat y = [self convertPoint:point toView:nil].y;
     return !(y >= sg_area.coverTop && y <= sg_area.coverBottom);
@@ -154,24 +173,6 @@ static void tell(const char *name, uint64_t state) {
 
 static SGVLockTouchCatcher *sg_catcher;
 
-// The top of the lock screen's player, which the catcher stops over: the list's media host, in screen points.
-static CGFloat playerTop(UIView *sheet) {
-    __block CGFloat top = CGFLOAT_MAX;
-    void (^__block walk)(UIView *, int) = nil;
-    void (^visit)(UIView *, int) = ^(UIView *view, int depth) {
-        if (depth > 30 || view.hidden || view.alpha < 0.01) return;
-        if ([NSStringFromClass(view.class) isEqualToString:@"NCNotificationListSupplementaryHostingView"] && view.bounds.size.height > 40) {
-            top = MIN(top, CGRectGetMinY([view convertRect:view.bounds toView:nil]));
-            return;
-        }
-        for (UIView *sub in view.subviews) walk(sub, depth + 1);
-    };
-    walk = visit;
-    visit(sheet, 0);
-    walk = nil;
-    return top;
-}
-
 // The catcher where the lyrics are while MediaRemoteUI shows the large cover, gone when it does not.
 static void placeCatcher(void) {
     UIView *sheet = sg_sheet;
@@ -181,15 +182,11 @@ static void placeCatcher(void) {
         return;
     }
     if (!sg_catcher) sg_catcher = [[SGVLockTouchCatcher alloc] initWithFrame:CGRectZero];
-    CGFloat bottom = MIN(sg_area.lyricsBottom, playerTop(sheet) - 8);
-    if (bottom <= sg_area.lyricsTop) {
-        [sg_catcher removeFromSuperview];
-        return;
-    }
-    CGRect screen = CGRectMake(0, sg_area.lyricsTop, sheet.window.bounds.size.width, bottom - sg_area.lyricsTop);
+    CGRect screen = CGRectMake(0, sg_area.lyricsTop, sheet.window.bounds.size.width, sg_area.lyricsBottom - sg_area.lyricsTop);
     if (sg_catcher.superview != sheet) [sheet addSubview:sg_catcher];
     else if (sheet.subviews.lastObject != sg_catcher) [sheet bringSubviewToFront:sg_catcher];
-    sg_catcher.frame = [sheet convertRect:screen fromView:nil];
+    CGRect frame = [sheet convertRect:screen fromView:nil];
+    if (!CGRectEqualToRect(sg_catcher.frame, frame)) sg_catcher.frame = frame;
 }
 
 static NSUserDefaults *addonDefaults(void) {
@@ -203,12 +200,12 @@ static void tellPicked(void) {
     notify_post([addonDefaults() boolForKey:kLyricsPickedKey] ? kSGRelayLockModeLyrics : kSGRelayLockModeCanvas);
 }
 
-// The cover sheet lays itself out again as its list is dragged (the player or the clock pulled), and its own views can
-// come up over the catcher then: it goes back on top, and to the player's top, on every pass while it is wanted.
+// The cover sheet lays itself out again as its list is dragged (the player, the clock or the notifications pulled), and
+// its own views can come up over the catcher then: it goes back on top on every pass while the large cover is open.
 %hook CSCoverSheetViewController
 - (void)viewDidLayoutSubviews {
     %orig;
-    if (sg_catcher.superview) placeCatcher();
+    if (sg_coverShowing) placeCatcher();
 }
 - (void)viewDidLoad {
     %orig;
