@@ -203,7 +203,13 @@ static void tellPicked(void) {
     notify_post([addonDefaults() boolForKey:kLyricsPickedKey] ? kSGRelayLockModeLyrics : kSGRelayLockModeCanvas);
 }
 
+// The cover sheet lays itself out again as its list is dragged (the player or the clock pulled), and its own views can
+// come up over the catcher then: it goes back on top, and to the player's top, on every pass while it is wanted.
 %hook CSCoverSheetViewController
+- (void)viewDidLayoutSubviews {
+    %orig;
+    if (sg_catcher.superview) placeCatcher();
+}
 - (void)viewDidLoad {
     %orig;
     sg_sheet = ((UIViewController *)self).view;
