@@ -12,6 +12,29 @@ __weak UIView *sgr_playlistRoot = nil;
 __weak UIView *sgr_albumRoot = nil;
 __weak UIView *sgr_artistRoot = nil;
 __weak UIView *sgr_sheetChromeRoot = nil;
+__weak UIView *sgr_showSearchField = nil;
+__weak UIView *sgr_showSearchHeader = nil;
+
+// Views whose fill is kept clear for good (SGRHoldClear): a dressed button's or a dressed disc's own paint, which Encore
+// paints again as the control is pressed, let go or reused.
+static NSHashTable<UIView *> *heldClear;
+
+void SGRHoldClear(UIView *view) {
+    if (!view) return;
+    if (!heldClear) heldClear = [NSHashTable weakObjectsHashTable];
+    [heldClear addObject:view];
+}
+
+// The flat, translucent white Spotify tints an unselected filter chip with (#FFFFFF@0.10). A selected chip is painted a solid colour of its own, which is never this.
+static BOOL isNeutralTint(CGColorRef color) {
+    if (!color || CFGetTypeID(color) != CGColorGetTypeID()) return NO;
+    CGFloat alpha = CGColorGetAlpha(color);
+    if (alpha < 0.01 || alpha > 0.3) return NO;
+    const CGFloat *c = CGColorGetComponents(color);
+    size_t n = CGColorGetNumberOfComponents(color);
+    for (size_t i = 0; i + 1 < n; i++) if (c[i] < 0.9) return NO;
+    return n >= 2;
+}
 
 // One walk up from the view says which roots it is inside, the way SGIsInside would for each: not past a
 // visual effect view. The roots are then taken in their order, not in the order the walk meets them.
@@ -24,6 +47,29 @@ enum { kInNowPlaying = 1, kInLyrics = 2, kInPage = 4 };
         return;
     }
     BOOL legacyLook = SGBelowiOS26();
+    // The podcast search page's field: the grey goes, the glass (Pages/ShowSearch.x) stands in its place.
+    if (legacyLook && color && sgr_showSearchField && self.delegate == sgr_showSearchField && (isNeutralTint(color) || CGColorGetAlpha(color) > 0.5)) color = NULL;
+    // The podcast search page's header, Spotify's black behind the field row: it goes and the field and Cancel float.
+    if (legacyLook && color && sgr_showSearchHeader && self.delegate == sgr_showSearchHeader && CGColorGetAlpha(color) > 0.5) color = NULL;
+    // A fill the Kit holds clear (SGRHoldClear): the button or disc is on glass, and Spotify's paint goes whenever it is set.
+    if (legacyLook && color && heldClear.count && CGColorGetAlpha(color) > 0.05 && NSThread.isMainThread) {
+        UIView *held = (UIView *)self.delegate;
+        if ([held isKindOfClass:UIView.class] && held.layer == self && [heldClear containsObject:held]) color = NULL;
+    }
+    // A chip's fill painted: the grey goes, and either way the chip's glass is told (below, once the paint is
+    // in), because selecting and deselecting a chip repaints the fill and lays nothing out, so the glass kept
+    // whatever state the last layout gave it (hidden under a selected colour that was gone again).
+    UIView *paintedChip = nil;
+    if (legacyLook && color && (isNeutralTint(color) || CGColorGetAlpha(color) > 0.5)) {
+        UIView *fill = (UIView *)self.delegate;
+        if ([fill isKindOfClass:UIView.class] && fill.layer == self) {
+            // The pill of a chip dressed by the Kit (SGRChips.h): the genres over Liked Songs, Recents' chips.
+            if (SGRIsDressedChipPill(fill)) paintedChip = fill.superview;
+            if (paintedChip && (isNeutralTint(color) || SGRIsSheetSurface(color))) color = NULL;
+            // A selected chip's solid colour lands as a tint over the chip's glass (SGRChips.h).
+            else if (paintedChip) color = SGRSelectedChipPaint(color);
+        }
+    }
     // A pill of the Add to playlist sheet (SGRSheetPills.x): its grey goes, and the pill's glass is told once the
     // paint is in, since selecting a pill repaints it and lays nothing out. The dressed mark is one lookup.
     UIView *paintedPill = nil;
@@ -88,6 +134,7 @@ enum { kInNowPlaying = 1, kInLyrics = 2, kInPage = 4 };
     }
     %orig(color);
     if (paintedPill) dispatch_async(dispatch_get_main_queue(), ^{ SGRSheetPillPainted(paintedPill); });
+    if (paintedChip) dispatch_async(dispatch_get_main_queue(), ^{ SGRDressedChipPainted(paintedChip); });
 }
 %end
 

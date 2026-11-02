@@ -176,6 +176,54 @@ UIView *SGRGlassFloatingCard(UIView *card, const void *glassKey, const void *fil
     return glass;
 }
 
+static char kFillSizeKey;
+
+UIView *SGRGlassFillBox(UIView *box, const void *key, BOOL prominent) {
+    if (@available(iOS 26.0, *)) return nil;
+    CGSize size = box.bounds.size;
+    if (!box || !key || size.width < 1 || size.height < 1) return nil;
+    SGRGlassMode mode = glassMode();
+    clearCapsule(box, size);
+    if (box.layer.masksToBounds) box.layer.masksToBounds = NO;
+
+    UIView *shape = objc_getAssociatedObject(box, key);
+    if (shape && [objc_getAssociatedObject(shape, &kInsideModeKey) integerValue] != mode) {
+        [shape removeFromSuperview];
+        shape = nil;
+    }
+    if (!shape) {
+        shape = newShape(mode);
+        shape.accessibilityElementsHidden = YES;
+        objc_setAssociatedObject(shape, &kInsideModeKey, @(mode), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(box, key, shape, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    // The size follows the box by autoresizing, not by a centre worked out from outside: a frame set on a pass goes stale the moment the
+    // box is resized without that pass, as Create narrows the Refine field.
+    shape.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    if (shape.superview != box) [box addSubview:shape];
+    if (box.subviews.firstObject != shape) [box insertSubview:shape atIndex:0];
+    shape.hidden = NO;
+    if (!CGRectEqualToRect(shape.frame, box.bounds)) shape.frame = box.bounds;
+    NSNumber *shaped = objc_getAssociatedObject(shape, &kFillSizeKey);
+    if (!shaped || shaped.doubleValue != size.height) {
+        SGShapeGlass(shape, size.height / 2, YES);
+        objc_setAssociatedObject(shape, &kFillSizeKey, @(size.height), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    keepFilm(shape, prominent, mode);
+    return shape;
+}
+
+void SGRGlassSetFilm(UIView *shape, BOOL on, CGFloat radius) {
+    if (!shape) return;
+    SGRGlassMode mode = glassMode();
+    keepFilm(shape, on, mode);
+    UIView *film = objc_getAssociatedObject(shape, &kFilmKey);
+    if (film && on && film.layer.cornerRadius != radius) {
+        film.layer.cornerRadius = radius;
+        film.layer.cornerCurve = kCACornerCurveContinuous;
+    }
+}
+
 UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radius) {
     if (@available(iOS 26.0, *)) return nil;
     UIView *film = SGLazyChild(host, key, ^UIView *{
@@ -463,6 +511,19 @@ void SGRUnclipUpTo(UIView *view, BOOL (^isLast)(UIView *ancestor)) {
         if (v.clipsToBounds) v.clipsToBounds = NO;
         if (isLast(v)) return;
     }
+}
+
+#pragma mark - a name on glass
+
+CGFloat SGRTitleWidth(UILabel *label) {
+    return ceil([label sizeThatFits:CGSizeMake(CGFLOAT_MAX, SGRGlassCircleSize)].width);
+}
+
+UIView *SGRGlassTitleCapsule(UIView *holder, const void *key, CGFloat content, CGFloat room, BOOL (^isLast)(UIView *ancestor)) {
+    if (!holder || content < 1) return nil;
+    CGFloat width = MIN(MAX(content + 2 * SGRTitlePadding, SGRGlassCircleSize), room);
+    if (isLast) SGRUnclipUpTo(holder, isLast);
+    return SGRGlassCapsuleInside(holder, key, CGSizeMake(width, SGRGlassCircleSize), NO);
 }
 
 #pragma mark - a sheet's pane

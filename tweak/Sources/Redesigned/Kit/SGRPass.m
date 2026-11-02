@@ -57,6 +57,17 @@ void SGRPassController(Class cls, SGRControllerPass pass) {
     }));
 }
 
+void SGRPassControllerGoing(Class cls, SGRControllerPass going) {
+    if (!cls || !going) return;
+    going = [going copy];
+    SEL willDisappear = @selector(viewWillDisappear:);
+    __block IMP leaving = NULL;
+    leaving = replace(cls, willDisappear, imp_implementationWithBlock(^(UIViewController *controller, BOOL animated) {
+        ((void (*)(id, SEL, BOOL))original(cls, willDisappear, leaving))(controller, willDisappear, animated);
+        going(controller);
+    }));
+}
+
 void SGRPassView(Class cls, void (^pass)(UIView *view)) {
     if (!cls || !pass) return;
     pass = [pass copy];
