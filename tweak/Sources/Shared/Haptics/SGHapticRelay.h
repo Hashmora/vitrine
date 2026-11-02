@@ -26,32 +26,9 @@
 #define kSGRelayPong kSGRelayPrefix "pong"
 // kSGRelayPrefix "tap.<1...kSGRelayLevels>.<0...kSGRelaySharpnesses-1>" and kSGRelayPrefix "rumble.<0...kSGRelayLevels>".
 enum { kSGRelayLevels = 10, kSGRelaySharpnesses = 3 };
-// The add-on's build, set on its pong; raise it with every change to addons/haptics.
-// 2: the rumble's keepalive and the lock screen switch.
-// 3: the full-screen cover on the lock screen below iOS 26 (kSGRelayLockArtOn).
-// 4: the track's moving artwork there in place of the still cover (kSGRelayLockClip), and no skeleton cover.
-// 5: Vitrine Addon (the package renamed, com.vitrine.addon replacing com.vitrine.haptics), the clip fitted on the blurred
-//    cover and played with no audio session, and the still cover's switch switch.
-// 6: the lock screen's artwork gone while the song is paused.
-// 7: that behind a switch of its own.
-// 8: the cover and the clip fitted to the width on bands of their edges' colours, and a pause that fades them whole.
-// 9: the clip only in place of the lock screen's own large cover, opened by a tap on the player's; the two switches of
-//    before gone, the clip's edges faded into its bands, held still while paused.
-// 10: the lock screen's tree dumped to the system log as it changes, to read its classes off a phone.
-// 11: the tree's dumps and the hook on every view's layout taken out, the lock screen walked at most twice a second
-//     and only with a clip to show.
-// 12: loaded into MediaRemoteUI too, which draws the lock screen's player, to say what its views are.
-// 13: the clip in place of the large cover inside MediaRemoteUI, handed over by SpringBoard, which hides the widgets
-//     under the clock as it shows; no tree walked or dumped.
-// 14: the large cover held hidden under the clip whatever alpha MediaRemoteUI gives it, and a tap that closes it gives
-//     the cover back to shrink into the player while the clip fades.
-// 15: a song with no clip gets its still cover the screen's width across too; the clip rests while the screen is dark
-//     and starts over on a new display layer when it lights or its decoding fails.
-// 16: a new song's clip or cover drawn only once it is in, the last song's held until then and its placeholder only
-//     after a wait; one clip's last frame held until the next one's first.
-// 17: Spotify's gray placeholder picture told from a song's cover, so a new song waits for its own; and covers and clips
-//     crossfade into each other instead of cutting.
-enum { kSGRelayAddonBuild = 17 };
+// The add-on's build, set on its pong; raise it with every change to addons/haptics, so an older add-on is offered the copy
+// inside Spotify.
+enum { kSGRelayAddonBuild = 18 };
 // Below iOS 26, the add-on also fills the lock screen with the now playing cover while Spotify's switch for it is on
 // (AnimatedArtwork.h, SGKeyLockCoverAddon): told "lockart.1" and "lockart.0" as the switch is set and each time the
 // add-on answers. It reads the cover from MediaRemote, as the lock screen's own player does.

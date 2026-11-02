@@ -55,11 +55,7 @@ NSArray *SGLockScreenMotionRows(void) {
             if (on && !SGHapticRelayAvailable()) SGHapticAddonExplain(@"The full-screen artwork");
         };
         // The add-on's update, offered here as on the Vibrations page: it draws this screen too.
-        SGModRow *update = SGActionRow(@"Update Vitrine Addon", @"A newer add-on comes with this Vitrine", ^{
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                SGHapticAddonShare(SGTopController().view);
-            });
-        });
+        SGModRow *update = SGActionRow(@"Update Vitrine Addon", @"A newer add-on comes with this Vitrine", ^{ SGHapticAddonShareSoon(); });
         update.visible = ^BOOL { return SGHapticAddonOutdated(); };
         return @[cover, update];
     }

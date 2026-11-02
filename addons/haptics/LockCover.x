@@ -14,6 +14,9 @@
 // Threading: the notifications and MediaRemote's answers come on the main queue.
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
+#import <sys/stat.h>
+#import <fcntl.h>
+#import <unistd.h>
 #import <notify.h>
 #import "../../tweak/Sources/Shared/Haptics/SGHapticRelay.h"
 
@@ -62,31 +65,79 @@ static void hideWidgets(BOOL away) {
     }
 }
 
+// The largest file taken from Spotify: a Canvas is a few MB, an animated cover a little more.
+static const off_t kMostBytes = 50 * 1024 * 1024;
+
+// Copies the regular file at `source` to `target`, opened once without following a link (O_NOFOLLOW) and checked on that
+// descriptor (fstat), so what is checked is what is copied, and never more than kMostBytes of it. NO for a link, a
+// directory, an empty or a larger file, or a failed write.
+static BOOL copyRegularFile(NSURL *source, NSURL *target) {
+    int in = open(source.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (in < 0) return NO;
+    struct stat info;
+    if (fstat(in, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 0 || info.st_size > kMostBytes) {
+        close(in);
+        return NO;
+    }
+    int out = open(target.fileSystemRepresentation, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (out < 0) {
+        close(in);
+        return NO;
+    }
+    static char buffer[256 * 1024];
+    off_t copied = 0;
+    BOOL done = YES;
+    for (;;) {
+        ssize_t got = read(in, buffer, sizeof buffer);
+        if (got == 0) break;
+        if (got < 0 || copied + got > kMostBytes) {
+            done = NO;
+            break;
+        }
+        for (ssize_t written = 0; written < got;) {
+            ssize_t wrote = write(out, buffer + written, (size_t)(got - written));
+            if (wrote <= 0) {
+                done = NO;
+                break;
+            }
+            written += wrote;
+        }
+        if (!done) break;
+        copied += got;
+    }
+    close(in);
+    if (close(out) != 0) done = NO;
+    return done && copied > 0;
+}
+
 // Spotify's clip for the song into the shared caches, for MediaRemoteUI: copied beside it and moved over the last one,
-// so a reader of the last one keeps its own file.
+// so a reader of the last one keeps its own file. Any process can post the notification that starts it, so it is taken
+// from Spotify alone (MediaRemoteUI's still cover is Spotify's alone too), off SpringBoard's main thread, as the copy
+// crosses volumes, and only a regular file of a sane size.
 static void shareClip(void) {
     if (!sg_getApp) return;
-    sg_getApp(dispatch_get_main_queue(), ^(CFStringRef bundle) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("com.vitrine.addon.share", DISPATCH_QUEUE_SERIAL); });
+    sg_getApp(queue, ^(CFStringRef bundle) {
         NSString *identifier = (__bridge NSString *)bundle;
-        Class proxies = NSClassFromString(@"LSApplicationProxy");
-        NSURL *container = identifier.length && proxies ? [[proxies applicationProxyForIdentifier:identifier] dataContainerURL] : nil;
+        if (![identifier isEqualToString:@"com.spotify.client"]) return;
+        NSURL *container = [[NSClassFromString(@"LSApplicationProxy") applicationProxyForIdentifier:identifier] dataContainerURL];
         NSURL *clip = [container URLByAppendingPathComponent:@"Library/Caches/" kSGLockClipName];
+        if (!clip) return;
         NSFileManager *files = NSFileManager.defaultManager;
-        if (!clip || ![files fileExistsAtPath:clip.path]) {
-            NSLog(@"[vitrine-addon] no clip in %@", identifier);
-            return;
-        }
         NSURL *shared = [NSURL fileURLWithPath:SGLockSharedClipPath()];
         [files createDirectoryAtURL:shared.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
         NSURL *staging = [shared URLByAppendingPathExtension:@"part"];
         [files removeItemAtURL:staging error:nil];
-        NSError *error = nil;
-        BOOL done = [files copyItemAtURL:clip toURL:staging error:&error];
-        if (done) {
-            [files removeItemAtURL:shared error:nil];
-            done = [files moveItemAtURL:staging toURL:shared error:&error];
+        if (!copyRegularFile(clip, staging)) {
+            [files removeItemAtURL:staging error:nil];
+            NSLog(@"[vitrine-addon] no clip to take from Spotify");
+            return;
         }
-        if (!done) {
+        NSError *error = nil;
+        [files removeItemAtURL:shared error:nil];
+        if (![files moveItemAtURL:staging toURL:shared error:&error]) {
             NSLog(@"[vitrine-addon] the clip not shared: %@", error.localizedDescription);
             return;
         }

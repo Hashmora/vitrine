@@ -106,8 +106,10 @@ static void tellShowing(BOOL showing) {
 
 static void apply(void) {
     UIView *field = sg_field;
-    if (!field.window) {
+    // Out of a window, or in a hidden one, nothing of the clip is read or decoded (the clip view rests itself out of one).
+    if (!field.window || field.window.hidden) {
         tellShowing(NO);
+        [(SGVLockClip *)objc_getAssociatedObject(field, &kClipKey) setSuspended:YES];
         return;
     }
     UIView *artwork = artworkIn(field);
@@ -192,14 +194,21 @@ static void changed(void) {
     if (newClip || newCover) take(NO);
 }
 
+// The wait's end, kWait from now. With the cover not read (the screen dark, readCover), the cover in hand is the last
+// song's, so the wait goes on, and starts over as the screen lights and the cover is read.
+static BOOL sg_coverStale;
+static void armWait(void) {
+    NSUInteger run = ++sg_wait;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kWait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (sg_waiting && sg_wait == run && !sg_coverStale) take(YES);
+    });
+}
+
 // A new song on its way: what is drawn stays until changed() finds its clip or cover, or kWait has gone.
 static void hold(void) {
     if (!sg_waiting && (sg_shownClip || sg_shownCover)) {
         sg_waiting = YES;
-        NSUInteger run = ++sg_wait;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kWait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (sg_waiting && sg_wait == run) take(YES);
-        });
+        armWait();
     }
     changed();
 }
@@ -260,9 +269,16 @@ static NSString *trackOf(NSDictionary *info) {
     return [NSString stringWithFormat:@"%@\n%@", info[@"kMRMediaRemoteNowPlayingInfoTitle"] ?: @"", info[@"kMRMediaRemoteNowPlayingInfoAlbum"] ?: @""];
 }
 
-// Spotify's still cover from the now playing info, read again as the info changes; another app's is not taken.
+// Spotify's still cover from the now playing info, read again as the info changes; another app's is not taken. Two XPC
+// calls and the artwork's bytes, and Vitrine's lock screen lyrics change the info with every line: none of it while the
+// switch is off or the screen is dark, only a note to read it once either comes back.
 static void readCover(void) {
     if (!sg_getInfo || !sg_getApp) return;
+    if (!sg_on || sg_blank) {
+        sg_coverStale = YES;
+        return;
+    }
+    sg_coverStale = NO;
     sg_getApp(dispatch_get_main_queue(), ^(CFStringRef bundle) {
         if (![(__bridge NSString *)bundle isEqualToString:@"com.spotify.client"]) {
             BOOL had = sg_cover != nil || sg_shownCover != nil;
@@ -371,8 +387,19 @@ static void listen(const char *name, void (^handler)(void)) {
         sg_blank = state != 0;
         SGVLockClip *clip = sg_field ? objc_getAssociatedObject(sg_field, &kClipKey) : nil;
         [clip setSuspended:sg_blank];
+        if (!sg_blank && sg_coverStale) {
+            readCover();
+            if (sg_waiting) armWait();
+        }
     });
-    listen(kSGRelayLockArtOn, ^{ sg_on = YES; apply(); });
+    // As it is now: nothing is posted until it changes.
+    uint64_t blankState = 0;
+    if (notify_get_state(blankToken, &blankState) == NOTIFY_STATUS_OK) sg_blank = blankState != 0;
+    listen(kSGRelayLockArtOn, ^{
+        sg_on = YES;
+        if (sg_coverStale) readCover();
+        apply();
+    });
     listen(kSGRelayLockArtOff, ^{ sg_on = NO; apply(); });
     listen(kSGRelayLockClipShared, ^{ readShared(); });
     // Spotify says so as each song begins, before its clip is looked up, so what is drawn waits for the song's cover.
@@ -385,6 +412,8 @@ static void listen(const char *name, void (^handler)(void)) {
     // The switch and the clip as they are now: Spotify answers SpringBoard's pong to this ping with the switch, and a
     // clip already shared is in the shared caches.
     notify_post(kSGRelayPing);
+    // A MediaRemoteUI that went away while showing the clip left SpringBoard's widgets hidden: it says it shows nothing.
+    notify_post(kSGRelayLockNotShowing);
     if ([NSFileManager.defaultManager fileExistsAtPath:SGLockSharedClipPath()]) readShared();
     NSLog(@"[vitrine-addon] MediaRemoteUI ready for the lock screen's Canvas");
 }
