@@ -391,10 +391,26 @@ static CGRect heldToCard(UIView *content, CGRect frame) {
 }
 %end
 
+// How long a toast stays is Spotify's own timer (presentationTimer of SPTSnackbarInternalPresenterImplementation, 9.1.78),
+// scheduled in the run loop's default mode: while a finger held the screen (a list being dragged, the run loop then in
+// UITrackingRunLoopMode) it did not fire, and the toast stayed until the finger was lifted. It is put in the common modes
+// as well, so the toast goes when its time is up whatever the finger does.
+%group SGRSnackbarTimer
+%hook SPTSnackbarInternalPresenterImplementation
+- (void)setPresentationTimer:(NSTimer *)timer {
+    %orig;
+    if (timer.isValid) [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+}
+%end
+%end
+
 %ctor {
     if (!SGRedesignedUI()) return;
     if (!SGBelowiOS26()) return;
     %init;
+    Class presenter = objc_getClass("SPTSnackbarInternalPresenterImplementation");
+    if (presenter && class_getInstanceMethod(presenter, @selector(setPresentationTimer:))) %init(SGRSnackbarTimer);
+    else SGLog(@"redesign toasts: Spotify's toast timer was not found, a toast still waits for a held finger to lift");
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserverForName:SGPlayerTransitionNotification object:nil queue:nil usingBlock:^(NSNotification *note) { playerMoves(); }];
     [center addObserverForName:SGPlayerTransitionEndedNotification object:nil queue:nil usingBlock:^(NSNotification *note) { playerSettled(); }];
