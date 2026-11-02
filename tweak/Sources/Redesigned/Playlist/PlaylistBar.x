@@ -20,6 +20,7 @@
 #import "Playlist.h"
 #import "Redesigned/Album/Album.h"
 #import "Redesigned/Artist/Artist.h"
+#import "Redesigned/Profile/Profile.h"
 #import "Redesigned/Pages/Pages.h"
 #import <objc/message.h>
 
@@ -66,10 +67,10 @@ static UIView *titleIn(UIView *bar, UILabel **text) {
     return nil;
 }
 
-// An album's or an artist's bar, once the redesign has pinned its Back on the page: that button is a direct
-// subview of the page's root, which only the pages dressed in AlbumHeader.x and ArtistHeader.x get.
+// An album's, an artist's or a profile's bar, once the redesign has pinned its Back on the page: that button is a direct
+// subview of the page's root, which only the pages dressed in AlbumHeader.x, ArtistHeader.x and ProfileHeader.x get.
 static BOOL isDressedPage(UIView *bar) {
-    UIView *page = SGRAlbumPageOf(bar) ?: SGRArtistPageOf(bar);
+    UIView *page = SGRAlbumPageOf(bar) ?: SGRArtistPageOf(bar) ?: SGRProfilePageOf(bar);
     for (UIView *sub in page.subviews) {
         if ([sub isKindOfClass:SGRMirrorButton.class]) return YES;
     }

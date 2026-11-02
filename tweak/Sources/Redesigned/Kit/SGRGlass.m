@@ -508,7 +508,7 @@ CGFloat SGRSheetCornerRadius(void) {
 
 // The pane, the corners and the stripped grey of one sheet view `v`: what SGRGlassSheetChrome does once it has
 // found the sheet by its identifier, and what a sheet with no such identifier (the share menu's) gets by name.
-static char kSheetChromeGlassKey, kShadowHeldKey;
+static char kSheetChromeGlassKey, kSheetOriginalKey, kShadowHeldKey;
 
 // UIKit's shadow round a presented sheet: the UIDropShadowView the pane sits in, a few plain views up.
 static UIView *dropShadowOf(UIView *v) {
@@ -549,6 +549,11 @@ static void fitSheetSurroundings(UIView *v, UIView *glass) {
 }
 
 static UIView *chromeSheetView(UIView *v) {
+    // What the pane looked like before the mod, so SGRRemoveSheetGlass can give it back.
+    if (!objc_getAssociatedObject(v, &kSheetOriginalKey)) {
+        id fill = v.layer.backgroundColor ? (id)[UIColor colorWithCGColor:v.layer.backgroundColor] : (id)[NSNull null];
+        objc_setAssociatedObject(v, &kSheetOriginalKey, @{ @"radius": @(v.layer.cornerRadius), @"corners": @(v.layer.maskedCorners), @"fill": fill, @"shadow": @(dropShadowOf(v).layer.shadowOpacity) }, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     UIView *glass = SGGlassFor(v, &kSheetChromeGlassKey);
     glass.frame = v.bounds;
     glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -584,6 +589,28 @@ UIView *SGRGlassSheetChrome(UIView *content) {
 UIView *SGRGlassSheetView(UIView *sheet) {
     if (@available(iOS 26.0, *)) return nil;
     return sheet ? chromeSheetView(sheet) : nil;
+}
+
+void SGRRemoveSheetGlass(UIView *sheet) {
+    if (!sheet) return;
+    UIView *glass = objc_getAssociatedObject(sheet, &kSheetChromeGlassKey);
+    NSDictionary *original = objc_getAssociatedObject(sheet, &kSheetOriginalKey);
+    if (!glass && !original) return;
+    if (glass) {
+        [glass removeFromSuperview];
+        objc_setAssociatedObject(sheet, &kSheetChromeGlassKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (original) {
+        sheet.layer.cornerRadius = [original[@"radius"] doubleValue];
+        sheet.layer.maskedCorners = (CACornerMask)[original[@"corners"] unsignedIntegerValue];
+        id fill = original[@"fill"];
+        // The pane's own paint was taken off for the glass, and with no glass behind it the page under the sheet shows through.
+        sheet.backgroundColor = [fill isKindOfClass:UIColor.class] ? fill : UIColor.blackColor;
+        CALayer *shadow = dropShadowOf(sheet).layer;
+        objc_setAssociatedObject(shadow, &kShadowHeldKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        shadow.shadowOpacity = [original[@"shadow"] floatValue];
+        objc_setAssociatedObject(sheet, &kSheetOriginalKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 }
 
 void SGRUnclipUpTo(UIView *view, BOOL (^isLast)(UIView *ancestor)) {
