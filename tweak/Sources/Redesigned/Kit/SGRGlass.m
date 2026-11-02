@@ -564,7 +564,10 @@ static UIView *chromeSheetView(UIView *v) {
     CGFloat wide = v.bounds.size.width * SGRSheetBandShare;
     for (UIView *sub in v.subviews) stripSheetChrome(sub, glass, wide, 0);
     // Spotify repaints the grey on later passes; SGRRepaint.x keeps clearing it under this root.
-    if (sgr_sheetChromeRoot != v) sgr_sheetChromeRoot = v;
+    if (sgr_sheetChromeRoot != v) {
+        sgr_sheetChromeRoot = v;
+        SGRWatchSheetPaint(v);
+    }
     return glass;
 }
 
