@@ -38,7 +38,7 @@ static char kGlassKey, kStripGlassKey, kStripFilmKey;
 static __weak UIView *sg_card;
 static CGRect sg_stripFrame;
 static __weak UIView *sg_cardGlass;
-static char kTintKey;
+static char kTintKey, kCardDimKey, kStripDimKey;
 // The track's glass frame in the container's view as the bar was last styled, the strip cut off: the row
 // takes the card's height and middle from it, never the bar's, which in a Jam has the strip on top.
 static CGRect sg_trackFrame = {{INFINITY, INFINITY}, {0, 0}};
@@ -234,6 +234,7 @@ static void placeStripGlass(UIView *host, UIView *strip, CGRect card, BOOL above
     pane.frame = CGRectInset(frame, 0, kStripInset);
     CGFloat radius = MIN(kCardRadius, pane.bounds.size.height / 2);
     SGShapeGlass(pane, radius, NO);
+    SGRDarkenGlass(pane, &kStripDimKey, radius, SGRBarDim);
     // The same white film as the card and the tab bar (16%), which comes and goes with the pane.
     UIView *film = SGRGlassFilm(host, &kStripFilmKey, pane, radius);
     if (!made) film.alpha = 0;
@@ -692,6 +693,8 @@ static void styleNowPlayingBar(UIViewController *container) {
     sg_cardGlass = glass;
     glass.frame = frame;
     SGShapeGlass(glass, radius, NO);
+    // Dimmed as the tab bar's glass is, so the card's text and buttons stand out over a bright page (below iOS 26).
+    SGRDarkenGlass(glass, &kCardDimKey, radius, SGRBarDim);
     placeStripGlass(container.view, strip, frame, stripAbove);
 
     SGRGlassFilm(container.view, &kTintKey, glass, radius);
