@@ -12,11 +12,11 @@
 //               kSGRelayLockLyricsShared); and the choice between them and the Canvas that MediaRemoteUI's button makes,
 //               kept in the add-on's own preferences for the next song and the next boot, and told MediaRemoteUI again
 //               as it asks (kSGRelayLockModeAsk) and as SpringBoard starts.
-//   the touches the large cover takes none (MediaRemoteUI draws it behind the cover sheet), so while MediaRemoteUI shows it
-//               a catcher lies over the notification list where its lyrics are (kSGRelayLockGestureArea), letting the
-//               touches on the player and the notifications through wherever the list has scrolled them: with the lyrics up it takes every touch there and hands drags and taps to
-//               MediaRemoteUI, so the lyrics scroll and seek and the cover stays open; with them off it lets a tap on the
-//               clip or cover itself through to the list, which closes the cover, and keeps the rest.
+//   the touches the large cover takes none (MediaRemoteUI draws it behind the cover sheet), so while its lyrics show a
+//               catcher lies over the notification list where they are (kSGRelayLockGestureArea) and hands the drags and
+//               taps there to MediaRemoteUI: the lyrics scroll and seek, and the cover stays open. A touch on the player or
+//               a notification, wherever the list has scrolled them, is theirs. With the lyrics off there is no catcher,
+//               and the list has its touches as it always does.
 //
 // Nothing is walked or hooked on the lock screen's layout: the widgets' row is looked for only as it is to be hidden.
 //
@@ -76,7 +76,7 @@ static void hideWidgets(BOOL away) {
 
 // The largest files taken from Spotify: a Canvas is a few MB, an animated cover a little more; a song's lines with their
 // words, translations and Latin letters a few hundred KB.
-static const off_t kMostClipBytes = 50 * 1024 * 1024, kMostLyricsBytes = 4 * 1024 * 1024;
+static const off_t kMostClipBytes = 50 * 1024 * 1024, kMostLyricsBytes = kSGLockLyricsMostBytes;
 
 // Copies the regular file at `source` to `target`, opened once without following a link (O_NOFOLLOW) and checked on that
 // descriptor (fstat), so what is checked is what is copied, and never more than `most` bytes of it. NO for a link, a
@@ -191,34 +191,28 @@ static SGLockGestureAreaState sg_area;
     return NO;
 }
 
-// With the lyrics off, a tap on the clip or cover itself is the list's, which closes the large cover; a player or a
-// notification over the band is always the list's.
+// A player or a notification over the band is the list's.
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
-    if (![super pointInside:point withEvent:event]) return NO;
-    if ([self platterAt:point withEvent:event]) return NO;
-    if (sg_area.lyricsShown) return YES;
-    CGFloat y = [self convertPoint:point toView:nil].y;
-    return !(y >= sg_area.coverTop && y <= sg_area.coverBottom);
+    return [super pointInside:point withEvent:event] && ![self platterAt:point withEvent:event];
 }
 
-static void tell(const char *name, uint64_t state) {
-    int token = 0;
-    if (notify_register_check(name, &token) != NOTIFY_STATUS_OK) return;
-    notify_set_state(token, state);
+// A drag or a tap's state for MediaRemoteUI, on a token kept for the name, since a drag sends one for every move.
+static void tell(const char *name, int *token, uint64_t state) {
+    if (!*token && notify_register_check(name, token) != NOTIFY_STATUS_OK) return;
+    notify_set_state(*token, state);
     notify_post(name);
-    notify_cancel(token);
 }
 
 - (void)dragged:(UIPanGestureRecognizer *)pan {
-    if (!sg_area.lyricsShown) return;
     int phase = pan.state == UIGestureRecognizerStateBegan ? 0 : pan.state == UIGestureRecognizerStateChanged ? 1 : 2;
     if (phase == 2 && pan.state != UIGestureRecognizerStateEnded && pan.state != UIGestureRecognizerStateCancelled) return;
-    tell(kSGRelayLockGesturePan, SGLockGesturePan(phase, [pan translationInView:nil].y, [pan velocityInView:nil].y));
+    static int token;
+    tell(kSGRelayLockGesturePan, &token, SGLockGesturePan(phase, [pan translationInView:nil].y, [pan velocityInView:nil].y));
 }
 
 - (void)tapped:(UITapGestureRecognizer *)tap {
-    if (!sg_area.lyricsShown) return;   // beside the cover with the lyrics off: kept, and nothing done
-    tell(kSGRelayLockGestureTap, SGLockGestureTap([tap locationInView:nil]));
+    static int token;
+    tell(kSGRelayLockGestureTap, &token, SGLockGestureTap([tap locationInView:nil]));
 }
 
 @end
@@ -228,7 +222,7 @@ static SGVLockTouchCatcher *sg_catcher;
 // The catcher where the lyrics are while MediaRemoteUI shows the large cover, gone when it does not.
 static void placeCatcher(void) {
     UIView *sheet = sg_sheet;
-    BOOL wanted = sg_coverShowing && sheet.window && sg_area.lyricsBottom > sg_area.lyricsTop;
+    BOOL wanted = sg_coverShowing && sheet.window && sg_area.lyricsShown && sg_area.lyricsBottom > sg_area.lyricsTop;
     if (!wanted) {
         [sg_catcher removeFromSuperview];
         return;

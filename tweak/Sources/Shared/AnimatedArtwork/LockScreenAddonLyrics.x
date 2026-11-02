@@ -16,6 +16,10 @@
 // A tap on a line there seeks the song: MediaRemoteUI posts the position in a notification's state
 // (kSGRelayLockLyricsSeek), and it is taken here as the lyrics page's tap is.
 //
+// All of it runs only while the lyrics are picked with the large cover's button (lockmode.lyrics, which SpringBoard keeps
+// and tells again when asked): with the switch on and the Canvas picked, as most will leave it, no lyrics are fetched,
+// written or clocked. Picked, the song playing is taken up at once.
+//
 // Threading: main queue, but the file's writing, which has a queue of its own.
 #import <notify.h>
 #import "Core/SGCore.h"
@@ -41,13 +45,22 @@ static double sg_clockSpeed;
 static BOOL sg_clockPlaying;
 static CFAbsoluteTime sg_clockAt;
 
+// The lyrics picked over the Canvas with the large cover's button, as SpringBoard last told it; and whether all of it was
+// wanted at the last look, to tell a turn on from the next settings write.
+static BOOL sg_picked, sg_wasWanted;
+
+BOOL SGLockCoverLyricsPicked(void) {
+    return sg_picked;
+}
+
 BOOL SGLockCoverLyricsWanted(void) {
     if (@available(iOS 26.0, *)) return NO;
     return SGFlag(SGKeyLockCoverAddon, NO) && SGEnabled(SGKeyLockCoverLyrics);
 }
 
+
 static BOOL wanted(void) {
-    return SGLockCoverLyricsWanted();
+    return sg_picked && SGLockCoverLyricsWanted();
 }
 
 static NSURL *lyricsFile(void) {
@@ -189,6 +202,27 @@ static void follow(SPTPlayerState *state) {
     static SGLockAddonLyrics *observer;
     observer = [SGLockAddonLyrics new];
     SGAddPlayerStateObserver(observer);
+    // The button's choice: picked, the song playing is taken up; the Canvas back, the clock stops. Asked for as Spotify
+    // starts, since SpringBoard tells it only as it changes or starts itself.
+    static int lyricsToken, canvasToken;
+    notify_register_dispatch(kSGRelayLockModeLyrics, &lyricsToken, dispatch_get_main_queue(), ^(int t) {
+        if (sg_picked) return;
+        sg_picked = YES;
+        sg_wasWanted = wanted();
+        sg_track = nil;
+        follow(SGPlayerState());
+    });
+    notify_register_dispatch(kSGRelayLockModeCanvas, &canvasToken, dispatch_get_main_queue(), ^(int t) {
+        sg_picked = NO;
+        sg_wasWanted = NO;
+        keepClock(NO);
+    });
+    // Asked now, and again each time the add-on answers Spotify's ping: an ask SpringBoard missed (it was restarting, or
+    // came up after) is not left unanswered for the launch.
+    dispatch_async(dispatch_get_main_queue(), ^{ notify_post(kSGRelayLockModeAsk); });
+    [NSNotificationCenter.defaultCenter addObserverForName:SGHapticRelayAvailableNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
+        dispatch_async(dispatch_get_main_queue(), ^{ notify_post(kSGRelayLockModeAsk); });
+    }];
     static int seekToken;
     notify_register_dispatch(kSGRelayLockLyricsSeek, &seekToken, dispatch_get_main_queue(), ^(int t) {
         uint64_t position = 0;
@@ -202,12 +236,12 @@ static void follow(SPTPlayerState *state) {
     }];
     // Heard on the writing thread and handed to main without waiting (AGENTS.md): the switches turned on start with the
     // song playing, and a change of the look or the Lyrics page's settings writes the lines again.
-    __block BOOL was = wanted();
+    sg_wasWanted = wanted();
     [NSNotificationCenter.defaultCenter addObserverForName:NSUserDefaultsDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
         dispatch_async(dispatch_get_main_queue(), ^{
             BOOL now = wanted();
-            BOOL turnedOn = now && !was;
-            was = now;
+            BOOL turnedOn = now && !sg_wasWanted;
+            sg_wasWanted = now;
             if (!now) return;
             if (turnedOn) {
                 sg_track = nil;

@@ -1,5 +1,6 @@
 #import "LockLyricsView.h"
 #import "../../tweak/Sources/Shared/Lyrics/KaraokeLines.h"
+#import "../../tweak/Sources/Shared/Haptics/SGHapticRelay.h"
 
 // Two voices can sing at once, rarely more; past this many, the latest ones wait their turn.
 enum { kMostSung = 6 };
@@ -90,16 +91,28 @@ typedef struct {
 
 #pragma mark - the lines
 
+
+// A number of the file, or nil for anything else: it is read whole, and what it holds is checked before it is used.
+static NSNumber *numberIn(id value) {
+    return [value isKindOfClass:NSNumber.class] ? value : nil;
+}
+
 - (BOOL)takeFile:(NSString *)path {
-    NSData *data = [NSData dataWithContentsOfFile:path];
+    // Read through one handle and never past the cap SpringBoard copies to (kSGLockLyricsMostBytes): a larger file is
+    // not read whole into MediaRemoteUI, whatever it was when it was looked at.
+    NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
+    NSData *data = [handle readDataUpToLength:kSGLockLyricsMostBytes + 1 error:nil];
+    [handle closeFile];
+    if (data.length > kSGLockLyricsMostBytes) return NO;
     NSDictionary *content = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
     if (![content isKindOfClass:NSDictionary.class]) return NO;
     NSArray<SGKaraokeLine *> *lines = SGKaraokeLinesFromPlist(content[@"lines"]);
     NSDictionary *look = [content[@"look"] isKindOfClass:NSDictionary.class] ? content[@"look"] : @{};
-    if (!lines.count) return NO;
+    NSNumber *tag = numberIn(content[@"tag"]);
+    if (!lines.count || !tag) return NO;
     [self dropLinesFading:_lines != nil];
     _lines = lines;
-    _tag = (uint16_t)[content[@"tag"] unsignedIntegerValue];
+    _tag = (uint16_t)tag.unsignedIntegerValue;
     [self takeLook:look];
     [self timeLines];
     _held = NO;
@@ -119,24 +132,33 @@ typedef struct {
 // The lyrics page's look, as Spotify wrote it (SGLyricsLookPlist): the size, the room between lines, the blur, the glow
 // and the wave, the texts shown and in what order, the Latin letters and the delay.
 - (void)takeLook:(NSDictionary *)look {
-    CGFloat size = [look[@"size"] doubleValue] ?: 30, blur = look[@"blur"] ? [look[@"blur"] doubleValue] : 1;
-    _gap = look[@"spacing"] ? [look[@"spacing"] doubleValue] : 24;
+    // Each held to the Lyrics page's ranges, copied here as the add-on has no settings of its own: LyricsLook.m's kLeast and
+    // kMost for the look, LyricsSettings.m's Delay slider for the delay. A missing or strange one takes Apple Music's.
+    double (^value)(NSString *, double, double, double) = ^double(NSString *key, double fallback, double least, double most) {
+        NSNumber *number = numberIn(look[key]);
+        double read = number ? number.doubleValue : fallback;
+        return isfinite(read) ? MAX(least, MIN(most, read)) : fallback;
+    };
+    CGFloat size = value(@"size", 30, 22, 40), blur = value(@"blur", 1, 0, 2);
+    _gap = value(@"spacing", 24, 12, 40);
     _blurPerLine = SGKaraokeBlurPerLine * blur;
     _maxBlur = SGKaraokeMaxBlur * blur;
-    SGKaraokeSetGlowAndWave(look[@"glow"] ? [look[@"glow"] doubleValue] : 1, look[@"wave"] ? [look[@"wave"] doubleValue] : 1);
-    _delay = [look[@"delay"] integerValue];
-    _sweepsEstimates = [look[@"sweepsEstimates"] boolValue];
+    SGKaraokeSetGlowAndWave(value(@"glow", 1, 0, 2), value(@"wave", 1, 0, 2));
+    _delay = (NSInteger)value(@"delay", 0, 0, 1000);
+    _sweepsEstimates = numberIn(look[@"sweepsEstimates"]).boolValue;
     BOOL hasSpoken = NO, hasTranslation = NO;
     for (SGKaraokeLine *line in _lines) {
         hasSpoken = hasSpoken || line.pronunciation || line.backing.pronunciation;
         hasTranslation = hasTranslation || line.translation.length;
     }
-    BOOL romanised = [look[@"romanised"] boolValue], replace = romanised && [look[@"romanisedReplace"] boolValue];
-    NSArray *order = [look[@"order"] isKindOfClass:NSArray.class] ? look[@"order"]
-                                                                   : @[@(SGKaraokeTextLyrics), @(SGKaraokeTextPronunciation), @(SGKaraokeTextTranslation)];
-    _style = [[SGKaraokeStyle alloc] initWithSize:size order:order pronunciation:!replace && hasSpoken && [look[@"pronunciation"] boolValue]
-                                      translation:hasTranslation && [look[@"translation"] boolValue] romanised:romanised && !replace];
-    _style.japanese = [look[@"japanese"] boolValue];
+    BOOL romanised = numberIn(look[@"romanised"]).boolValue, replace = romanised && numberIn(look[@"romanisedReplace"]).boolValue;
+    // The three texts, each once, as SGKaraokeText values; anything else and the order is Apple Music's.
+    NSArray *order = @[@(SGKaraokeTextLyrics), @(SGKaraokeTextPronunciation), @(SGKaraokeTextTranslation)];
+    NSArray *given = [look[@"order"] isKindOfClass:NSArray.class] ? look[@"order"] : nil;
+    if (given.count == 3 && [[NSSet setWithArray:given] isEqualToSet:[NSSet setWithArray:order]]) order = given;
+    _style = [[SGKaraokeStyle alloc] initWithSize:size order:order pronunciation:!replace && hasSpoken && numberIn(look[@"pronunciation"]).boolValue
+                                      translation:hasTranslation && numberIn(look[@"translation"]).boolValue romanised:romanised && !replace];
+    _style.japanese = numberIn(look[@"japanese"]).boolValue;
     _style.romanisedReplace = replace;
     _font = [UIFont systemFontOfSize:size weight:UIFontWeightBold];
 }

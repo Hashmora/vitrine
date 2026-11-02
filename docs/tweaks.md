@@ -222,8 +222,10 @@ Shared:
                   own override, and the row shows it locked. The cut and the service's wire format are checked on
                   the Mac against harness/motion/. Below iOS 26 with a jailbreak, Vitrine Addon draws the Canvas in
                   place of the lock screen's large cover (LockScreenAddonClip.x hands it the clip) and, with Lyrics on
-                  the large cover, the song's lines over it from a button in its corner (LockScreenAddonLyrics.x hands
-                  it the lines with the lyrics page's look, and the song's clock in a notification's state)
+                  the large cover, the song's lines over it from a button in the lock screen player's header, in the
+                  place of its small cover while the large one is open (LockScreenAddonLyrics.x hands it the lines with
+                  the lyrics page's look, and the song's clock in a notification's state, only while the lyrics are
+                  picked; SpringBoard catches the touches over them, as the cover sheet takes every touch there)
     LocalFiles/   local files (LocalFiles.h lists its files): Edit info in the player's ⋯ menu, the table's footer
                   under Speed and pitch, which closes the menu and opens a form sheet (the three names, the cover
                   with a menu to change it, Restore file's info; nothing is stored before Save, and a swipe away

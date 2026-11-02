@@ -39,8 +39,8 @@
 // The field takes no touches: its window is behind SpringBoard's cover sheet, whose notification list gets them, scrolls
 // the player with them and closes the large cover on a tap. So the field says where the lyrics and the clip are
 // (kSGRelayLockGestureArea), SpringBoard catches the touches over the lyrics (LockCover.x), and their drags and taps come
-// back here (kSGRelayLockGesturePan, kSGRelayLockGestureTap): the lyrics scroll and seek, and the cover closes only on a
-// tap on the clip or cover itself with the lyrics off.
+// back here (kSGRelayLockGesturePan, kSGRelayLockGestureTap): the lyrics scroll and seek, and no tap closes the cover. With
+// them off nothing is caught: the list has its touches, a tap closing the cover as it does without Vitrine.
 //
 // Only the large cover's view and the cover itself are hooked, as they lay out, come and go and take an alpha.
 //
@@ -87,6 +87,8 @@ static BOOL sg_settingAlpha;   // the alpha set here, not MediaRemoteUI's to rem
 // The lyrics: the switch, the choice the button makes (SpringBoard's), and the one view of them, moved into the field
 // that is open. A song's lines wait kSGRelayLockLyricsWait as it begins, the last song's held meanwhile.
 static BOOL sg_lyricsOn, sg_lyricsPicked;
+// Spotify said the song playing has no timed lines (kSGRelayLockLyricsNone), rather than that they are on their way.
+static BOOL sg_lyricsNone;
 static SGVLockLyrics *sg_lyrics;
 static NSUInteger sg_lyricsWait;
 static char kDimKey;
@@ -152,6 +154,7 @@ static void apply(void);
 @implementation SGVLyricsButtonTarget
 - (void)tapped:(UIButton *)button {
     sg_lyricsPicked = !sg_lyricsPicked;
+    sg_lyricsNone = NO;
     notify_post(sg_lyricsPicked ? kSGRelayLockModeLyrics : kSGRelayLockModeCanvas);
     apply();
 }
@@ -274,7 +277,7 @@ static void apply(void) {
     if (!field.window || field.window.hidden) {
         tellShowing(NO);
         hideButton();
-        tellArea((SGLockGestureAreaState){NO, 0, 0, 0, 0});
+        tellArea((SGLockGestureAreaState){NO, 0, 0});
         [(SGVLockClip *)objc_getAssociatedObject(field, &kClipKey) setSuspended:YES];
         return;
     }
@@ -331,11 +334,13 @@ static void apply(void) {
     BOOL shown = clip.alpha > 0.99;
     // Dim and dead for a song without lines; its alpha is set with the rest below, so it fades rather than jumps.
     BOOL available = lyrics.available, lines = offered && sg_lyricsPicked && available;
-    button.enabled = available;
-    button.selected = sg_lyricsPicked && available;
+    // Always pressable: Spotify fetches a song's lines only once the lyrics are picked, so until then none are here. Picked,
+    // it shows dim only once Spotify has said the song has none, not while they are on their way.
+    button.enabled = YES;
+    button.selected = sg_lyricsPicked;
     [lyrics setSuspended:!lines || sg_blank];
     [UIView animateWithDuration:kFade delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
-        button.alpha = offered ? (available ? 1 : 0.35) : 0;
+        button.alpha = offered ? (sg_lyricsPicked && sg_lyricsNone ? 0.5 : 1) : 0;
         dim.alpha = lines ? 1 : 0;
         lyrics.alpha = lines ? 1 : 0;
     } completion:nil];
@@ -351,14 +356,12 @@ static void apply(void) {
         [clip setPlaying:sg_playing];
     }
     // The field fills the screen, so its window's points are the screen's.
-    SGLockGestureAreaState area = {NO, 0, 0, 0, 0};
+    SGLockGestureAreaState area = {NO, 0, 0};
     if (on) {
-        CGRect drawn = [clip convertRect:clip.drawnFrame toView:nil];
-        area.coverTop = CGRectGetMinY(drawn);
-        area.coverBottom = CGRectGetMaxY(drawn);
-        if (offered && lyrics) {
+        // The lyrics' band only while they show: with them off, the list's drags and taps are the list's.
+        if (lines && lyrics) {
             CGRect frame = [field convertRect:lyrics.frame toView:nil];
-            area.lyricsShown = lines;
+            area.lyricsShown = YES;
             area.lyricsTop = CGRectGetMinY(frame);
             area.lyricsBottom = CGRectGetMaxY(frame);
         }
@@ -377,7 +380,7 @@ static void closing(UIView *field) {
     UIView *lyrics = sg_lyrics.superview == field ? sg_lyrics : nil;
     [sg_lyrics setSuspended:YES];
     hideButton();
-    tellArea((SGLockGestureAreaState){NO, 0, 0, 0, 0});
+    tellArea((SGLockGestureAreaState){NO, 0, 0});
     [UIView animateWithDuration:0.25 delay:0 options:UIViewAnimationOptionBeginFromCurrentState
                      animations:^{ clip.alpha = dim.alpha = lyrics.alpha = 0; } completion:nil];
 }
@@ -641,16 +644,19 @@ static void listen(const char *name, void (^handler)(void)) {
     // kSGRelayLockLyricsWait has gone; a song without timed lines has none.
     listen(kSGRelayLockLyricsShared, ^{
         sg_lyricsWait++;
+        sg_lyricsNone = NO;
         if (![lyricsView() takeFile:SGLockSharedLyricsPath()]) [lyricsView() clear];
         apply();
     });
     listen(kSGRelayLockLyricsNone, ^{
         sg_lyricsWait++;
+        sg_lyricsNone = YES;
         [lyricsView() clear];
         apply();
     });
     listen(kSGRelayLockLyricsPending, ^{
         NSUInteger wait = ++sg_lyricsWait;
+        sg_lyricsNone = NO;
         [lyricsView() hold];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kSGRelayLockLyricsWait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (wait != sg_lyricsWait) return;
@@ -707,5 +713,8 @@ static void listen(const char *name, void (^handler)(void)) {
         uint64_t lastClock = 0;
         if (notify_get_state(clockToken, &lastClock) == NOTIFY_STATUS_OK && lastClock) [lyricsView() setClockState:lastClock];
     });
+    // A MediaRemoteUI that went away with the lyrics up left their band in the notification's state, SpringBoard's catcher
+    // over the list and Spotify's lock screen line on the artist: it says there are none.
+    tellArea((SGLockGestureAreaState){NO, 0, 0});
     NSLog(@"[vitrine-addon] MediaRemoteUI ready for the lock screen's Canvas");
 }

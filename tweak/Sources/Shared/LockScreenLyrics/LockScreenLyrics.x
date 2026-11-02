@@ -16,6 +16,7 @@
 #import "Shared/Lyrics/Lyrics.h"
 #import "Headers/SPTPlayer.h"
 #import "Shared/Haptics/SGHapticRelay.h"
+#import "Shared/AnimatedArtwork/AnimatedArtwork.h"
 #import <notify.h>
 
 // How often to look while the line cannot be worked out yet.
@@ -96,7 +97,9 @@ static double elapsedAt(NSDictionary *info, CFAbsoluteTime reportedAt, CFAbsolut
 // cannot be worked out yet, negative for not again.
 static NSString *lineFor(NSDictionary *info, double elapsed, NSTimeInterval *wait) {
     *wait = kTick;
-    if (sg_coverLyrics) {
+    // Only while the large cover's lyrics are switched on and picked: a MediaRemoteUI that went away with them up left the
+    // state set, which its next start clears.
+    if (sg_coverLyrics && SGLockCoverLyricsWanted() && SGLockCoverLyricsPicked()) {
         *wait = -1;   // looked at again as the lyrics go
         return nil;
     }
@@ -285,6 +288,13 @@ static void lookNow(void) {
         BOOL shown = SGLockGestureAreaRead(state).lyricsShown;
         if (shown == sg_coverLyrics) return;
         sg_coverLyrics = shown;
+        tick();
+    });
+    // The Canvas picked: the line is back at once, whatever the area's state says.
+    static int canvasToken;
+    notify_register_dispatch(kSGRelayLockModeCanvas, &canvasToken, dispatch_get_main_queue(), ^(int t) {
+        if (!sg_coverLyrics) return;
+        sg_coverLyrics = NO;
         tick();
     });
     uint64_t lastArea = 0;

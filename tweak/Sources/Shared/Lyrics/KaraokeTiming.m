@@ -99,29 +99,39 @@ static id lineInPlist(SGKaraokeLine *line) {
     return plist;
 }
 
-static SGKaraokeLine *lineFromPlist(id plist) {
-    if (![plist isKindOfClass:NSDictionary.class] || ![plist[@"w"] isKindOfClass:NSArray.class]) return nil;
+// A number of the plist, or nil for anything else: a file another process reads may hold anything.
+static NSNumber *numberIn(id value) {
+    return [value isKindOfClass:NSNumber.class] ? value : nil;
+}
+
+// `depth` keeps a line's backing and pronunciation, which hold lines of their own, from nesting past what a line has.
+static SGKaraokeLine *lineFromPlist(id plist, int depth) {
+    if (depth > 2 || ![plist isKindOfClass:NSDictionary.class] || ![plist[@"w"] isKindOfClass:NSArray.class]) return nil;
     NSMutableArray<SGKaraokeWord *> *words = [NSMutableArray array];
     for (NSArray *fields in plist[@"w"]) {
         if (![fields isKindOfClass:NSArray.class] || fields.count < 4 || ![fields[0] isKindOfClass:NSString.class]) return nil;
+        NSNumber *start = numberIn(fields[1]), *end = numberIn(fields[2]), *joined = numberIn(fields[3]);
+        if (!start || !end || !joined) return nil;
         SGKaraokeWord *word = [SGKaraokeWord new];
         word.text = fields[0];
-        word.start = [fields[1] integerValue];
-        word.end = [fields[2] integerValue];
-        word.joined = [fields[3] boolValue];
+        word.start = start.integerValue;
+        word.end = end.integerValue;
+        word.joined = joined.boolValue;
         [words addObject:word];
     }
+    NSNumber *start = numberIn(plist[@"s"]), *end = numberIn(plist[@"e"]);
+    if (!start || !end) return nil;
     SGKaraokeLine *line = [SGKaraokeLine new];
     line.words = words;
-    line.start = [plist[@"s"] integerValue];
-    line.end = [plist[@"e"] integerValue];
-    line.align = [plist[@"a"] unsignedIntegerValue] == SGKaraokeAlignTrailing ? SGKaraokeAlignTrailing : SGKaraokeAlignLeading;
-    line.timing = MIN([plist[@"t"] unsignedIntegerValue], (NSUInteger)SGKaraokeTimingNone);
+    line.start = start.integerValue;
+    line.end = end.integerValue;
+    line.align = numberIn(plist[@"a"]).unsignedIntegerValue == SGKaraokeAlignTrailing ? SGKaraokeAlignTrailing : SGKaraokeAlignLeading;
+    line.timing = MIN(numberIn(plist[@"t"]).unsignedIntegerValue, (NSUInteger)SGKaraokeTimingNone);
     if ([plist[@"v"] isKindOfClass:NSString.class]) line.voice = plist[@"v"];
-    line.backing = lineFromPlist(plist[@"b"]);
-    line.pronunciation = lineFromPlist(plist[@"p"]);
+    line.backing = lineFromPlist(plist[@"b"], depth + 1);
+    line.pronunciation = lineFromPlist(plist[@"p"], depth + 1);
     if ([plist[@"tr"] isKindOfClass:NSString.class]) line.translation = plist[@"tr"];
-    line.translationMade = [plist[@"tm"] boolValue];
+    line.translationMade = numberIn(plist[@"tm"]).boolValue;
     return line;
 }
 
@@ -135,7 +145,7 @@ NSArray<SGKaraokeLine *> *SGKaraokeLinesFromPlist(id plist) {
     if (![plist isKindOfClass:NSArray.class]) return nil;
     NSMutableArray<SGKaraokeLine *> *lines = [NSMutableArray arrayWithCapacity:[plist count]];
     for (id entry in plist) {
-        SGKaraokeLine *line = lineFromPlist(entry);
+        SGKaraokeLine *line = lineFromPlist(entry, 0);
         if (!line) return nil;
         [lines addObject:line];
     }

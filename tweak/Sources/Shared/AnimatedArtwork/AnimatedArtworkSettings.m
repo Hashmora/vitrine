@@ -54,7 +54,7 @@ NSArray *SGLockScreenMotionRows(void) {
             SGHapticRelaySendLockArt();
             if (on && !SGHapticRelayAvailable()) SGHapticAddonExplain(@"The full-screen artwork");
         };
-        SGModRow *lyrics = SGSwitchRow(@"Lyrics on the large cover", @"A button in the large cover's corner puts the song's lyrics over the Canvas, and takes them away again", SGKeyLockCoverLyrics);
+        SGModRow *lyrics = SGSwitchRow(@"Lyrics on the large cover", @"A button in the lock screen player, while the large cover is open, puts the song's lyrics over the Canvas, and takes them away again", SGKeyLockCoverLyrics);
         lyrics.changed = ^(BOOL on) { SGHapticRelaySendLockArt(); };
         lyrics.visible = ^BOOL { return SGFlag(SGKeyLockCoverAddon, NO); };
         // The add-on's update, offered here as on the Vibrations page: it draws this screen too.

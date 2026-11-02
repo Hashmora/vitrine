@@ -28,7 +28,7 @@
 enum { kSGRelayLevels = 10, kSGRelaySharpnesses = 3 };
 // The add-on's build, set on its pong; raise it with every change to addons/haptics, so an older add-on is offered the copy
 // inside Spotify.
-enum { kSGRelayAddonBuild = 22 };
+enum { kSGRelayAddonBuild = 23 };
 // Below iOS 26, the add-on also fills the lock screen with the now playing cover while Spotify's switch for it is on
 // (AnimatedArtwork.h, SGKeyLockCoverAddon): told "lockart.1" and "lockart.0" as the switch is set and each time the
 // add-on answers. It reads the cover from MediaRemote, as the lock screen's own player does.
@@ -62,6 +62,9 @@ static inline NSString *SGLockSharedClipPath(void) {
 #define kSGRelayLockLyricsPending kSGRelayPrefix "locklyrics.pending"
 #define kSGRelayLockLyricsShared kSGRelayPrefix "locklyrics.shared"
 #define kSGLockLyricsName "VitrineLockLyrics.json"
+// The most of it SpringBoard copies and MediaRemoteUI reads: a song's lines, with their words, translations and Latin
+// letters, are a few hundred KB.
+#define kSGLockLyricsMostBytes (4 * 1024 * 1024)
 #define kSGRelayLockLyricsWait 2.0
 static inline NSString *SGLockSharedLyricsPath(void) {
     NSString *root = [NSFileManager.defaultManager fileExistsAtPath:@"/var/jb"] ? @"/var/jb/var/mobile" : @"/var/mobile";
@@ -90,24 +93,22 @@ static inline uint16_t SGLockLyricsTag(NSString *track) {
 // The large cover takes no touches: MediaRemoteUI draws it in a window behind SpringBoard's cover sheet, whose
 // notification list gets every touch over it, scrolls the player with the finger and closes the cover on a tap. So
 // SpringBoard lays a catcher over the list where the lyrics are (LockCover.x) while the cover is open, and hands its
-// drags and taps to MediaRemoteUI: "lockgesture.area" from MediaRemoteUI says where the lyrics are and whether they show,
-// and where the clip or cover itself is drawn (SGLockGestureArea); "lockgesture.pan" and "lockgesture.tap" carry a drag
+// drags and taps to MediaRemoteUI: "lockgesture.area" from MediaRemoteUI says where the lyrics are and whether they show
+// (SGLockGestureArea); "lockgesture.pan" and "lockgesture.tap" carry a drag
 // (SGLockGesturePan) and a tap (SGLockGestureTap) back, in screen points.
 #define kSGRelayLockGestureArea kSGRelayPrefix "lockgesture.area"
 #define kSGRelayLockGesturePan kSGRelayPrefix "lockgesture.pan"
 #define kSGRelayLockGestureTap kSGRelayPrefix "lockgesture.tap"
 typedef struct {
     BOOL lyricsShown;
-    CGFloat lyricsTop, lyricsBottom, coverTop, coverBottom;   // screen points, 0 for none
+    CGFloat lyricsTop, lyricsBottom;   // screen points, 0 for none
 } SGLockGestureAreaState;
 static inline uint64_t SGLockGestureArea(SGLockGestureAreaState area) {
     uint64_t (^field)(CGFloat) = ^uint64_t(CGFloat value) { return (uint64_t)MAX(0, MIN(round(value), 32767.0)) & 0x7FFF; };
-    return (uint64_t)(area.lyricsShown ? 1 : 0) | field(area.lyricsTop) << 1 | field(area.lyricsBottom) << 16 | field(area.coverTop) << 31
-         | field(area.coverBottom) << 46;
+    return (uint64_t)(area.lyricsShown ? 1 : 0) | field(area.lyricsTop) << 1 | field(area.lyricsBottom) << 16;
 }
 static inline SGLockGestureAreaState SGLockGestureAreaRead(uint64_t state) {
-    return (SGLockGestureAreaState){(BOOL)(state & 1), (CGFloat)((state >> 1) & 0x7FFF), (CGFloat)((state >> 16) & 0x7FFF),
-                                    (CGFloat)((state >> 31) & 0x7FFF), (CGFloat)((state >> 46) & 0x7FFF)};
+    return (SGLockGestureAreaState){(BOOL)(state & 1), (CGFloat)((state >> 1) & 0x7FFF), (CGFloat)((state >> 16) & 0x7FFF)};
 }
 // A drag: its phase (0 began, 1 moved, 2 ended), how far the finger has gone down since it began and how fast it goes
 // down, in points and points a second, each in quarters of a point as a signed 31-bit number.
@@ -131,7 +132,7 @@ static inline uint64_t SGLockGestureTap(CGPoint point) {
 static inline CGPoint SGLockGestureTapRead(uint64_t state) {
     return CGPointMake((state & 0xFFFFFFFF) / 4.0, (state >> 32) / 4.0);
 }
-// Lyrics or the Canvas on the large cover, picked by the button in its corner: MediaRemoteUI posts "lockmode.lyrics" or
+// Lyrics or the Canvas on the large cover, picked by the button in the lock screen player's header: MediaRemoteUI posts "lockmode.lyrics" or
 // "lockmode.canvas" as it is tapped, SpringBoard keeps the choice for the next song and the next boot, and posts it again
 // when MediaRemoteUI asks with "lockmode.ask" as it starts. The Canvas until the lyrics are picked.
 #define kSGRelayLockModeLyrics kSGRelayPrefix "lockmode.lyrics"
