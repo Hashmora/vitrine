@@ -4,6 +4,8 @@
 #import "SGRRepaint.h"
 #import "SGRGlass.h"
 #import "SGRChips.h"
+#import "SGRRestyle.h"
+#import "SGRPass.h"
 
 __weak UIView *sgr_nowPlayingRoot = nil;
 NSHashTable<UIView *> *sgr_nowPlayingPainted = nil;
@@ -141,22 +143,12 @@ enum { kInNowPlaying = 1, kInLyrics = 2, kInPage = 4 };
 }
 %end
 
-%group SheetPaint
-// A row coming into the sheet after its chrome was stripped (scrolled in, reused, picked up to be dragged)
-// carries its grey with it, and is painted before it is inside the sheet for the hook above to hear of it,
-// so it is cleared from its own layout pass, like SGRClearCellPaint does for the pages.
-%hook UITableViewCell
-- (void)layoutSubviews {
-    %orig;
-    UIView *root = sgr_sheetChromeRoot;
-    if (root && SGIsInside((UIView *)self, root)) SGRClearSheetCellPaint((UIView *)self, root);
-}
-%end
+#pragma mark - a glassed sheet, watched
 
-// Paint that lands before the layer hook can place it: a view given its grey while it has no parent yet, or
-// through UIKit's own setter, is not inside the sheet when it is painted. That is the grey seen for a moment
-// when the queue opens and cleared a beat later by the next chrome pass. These two catch it as it is set and
-// as it is attached, so it is never drawn. Gated on one pointer, so every other screen pays a load and a test.
+// Paint that lands before the layer hook above can place it: a view given its grey while it has no parent yet, or
+// before it has a size (SGKeepsColor spares a view of no size), is not seen as the sheet's when it is painted. It is
+// cleared from the next layout of the sheet or of a list in it, which UIKit runs before the frame that would show it:
+// the sheet and its lists are watched themselves, instance by instance, not every view of the app.
 static BOOL isSheetPaint(UIView *view, CGColorRef color) {
     UIView *root = sgr_sheetChromeRoot;
     if (!root || root.bounds.size.width < 1 || !SGRIsSheetSurface(color)) return NO;
@@ -164,52 +156,47 @@ static BOOL isSheetPaint(UIView *view, CGColorRef color) {
     return SGRIsSheetChromeArea(view, root) || view.bounds.size.width >= root.bounds.size.width * SGRSheetBandShare;
 }
 
-static void clearAttachedPaint(UIView *view) {
-    if (!sgr_sheetChromeRoot) return;
+static char kSheetWatchedKey;
+static void watchSheetView(UIView *view, void (^pass)(UIView *view));
+
+// The grey of every view under `view` that is the sheet's, and of the rows of every list in it, cleared; a list met
+// for the first time is watched from then on, so a row scrolled or reused into it is cleared as it lays out.
+static void sweepSheet(UIView *view, int depth) {
+    UIView *root = sgr_sheetChromeRoot;
+    if (!root || !view || depth > 16) return;
     CGColorRef paint = view.layer.backgroundColor;
     if (paint && isSheetPaint(view, paint)) view.backgroundColor = UIColor.clearColor;
+    if ([view isKindOfClass:UITableViewCell.class] || [view isKindOfClass:UICollectionViewCell.class]) {
+        SGRClearSheetCellPaint(view, root);
+        return;
+    }
+    if ([view isKindOfClass:UIScrollView.class]) watchSheetView(view, ^(UIView *list) { sweepSheet(list, 0); });
+    for (UIView *sub in view.subviews) sweepSheet(sub, depth + 1);
 }
 
-%hook UIView
-- (void)setBackgroundColor:(UIColor *)color {
-    if (sgr_sheetChromeRoot && color && isSheetPaint((UIView *)self, color.CGColor)) color = UIColor.clearColor;
-    %orig(color);
+// `pass` after every layout of `view`: by a subclass of the instance, or, for one of Spotify's own Swift classes that
+// cannot be subclassed, on that class (never on one of UIKit's, which every screen of the app is made of).
+static void watchSheetView(UIView *view, void (^pass)(UIView *view)) {
+    if (objc_getAssociatedObject(view, &kSheetWatchedKey)) return;
+    objc_setAssociatedObject(view, &kSheetWatchedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (SGRObserveLayout(view, pass)) return;
+    Class cls = object_getClass(view);
+    NSString *name = NSStringFromClass(cls);
+    if ([name hasPrefix:@"UI"] || [name hasPrefix:@"_UI"]) return;
+    static NSMutableSet<Class> *passed;
+    if (!passed) passed = [NSMutableSet set];
+    if ([passed containsObject:cls]) return;
+    [passed addObject:cls];
+    SGRPassView(cls, ^(UIView *v) { if (sgr_sheetChromeRoot && SGIsInside(v, sgr_sheetChromeRoot)) pass(v); });
 }
 
-- (void)didMoveToSuperview {
-    %orig;
-    clearAttachedPaint((UIView *)self);
+void SGRWatchSheetPaint(UIView *root) {
+    if (!root) return;
+    watchSheetView(root, ^(UIView *sheet) { if (sheet == sgr_sheetChromeRoot) sweepSheet(sheet, 0); });
+    sweepSheet(root, 0);
 }
-
-// A subtree built off screen (the queue's table and its bars) is attached to the sheet as a whole: only its
-// root hears didMoveToSuperview, with every view below it still painted and, when it was set, not yet inside
-// the sheet. didMoveToWindow reaches each of them with the full chain above it, so the grey a descendant
-// carried in is cleared before its first frame instead of at the next chrome pass.
-- (void)didMoveToWindow {
-    %orig;
-    if (((UIView *)self).window) clearAttachedPaint((UIView *)self);
-}
-%end
-
-// Spotify builds a view and paints it before it is laid out: its bounds are zero then, which SGKeepsColor
-// reads as a hairline and spares, and nothing paints it again once it has its size. So the grey of the queue's
-// table, its header rows and the cell laid out last stood until the next chrome pass, which is a viewDidAppear
-// away. This catches the moment such a view gets its size.
-%hook CALayer
-- (void)setBounds:(CGRect)bounds {
-    %orig;
-    if (!sgr_sheetChromeRoot || bounds.size.height <= 4 || bounds.size.width < 1) return;
-    CGColorRef paint = self.backgroundColor;
-    if (!paint || !SGRIsSheetSurface(paint)) return;   // the cheap test first: this runs for every layer
-    UIView *view = (UIView *)self.delegate;
-    if ([view isKindOfClass:UIView.class] && view.layer == self && isSheetPaint(view, paint)) view.backgroundColor = UIColor.clearColor;
-}
-%end
-%end
 
 %ctor {
     if (!SGRedesignedUI()) return;
     %init;
-    if (!SGBelowiOS26()) return;
-    %init(SheetPaint);
 }
