@@ -24,6 +24,9 @@ static BOOL sg_rumbling;
 // When the rumble was last asked for, and whether it may play while the phone is locked (Spotify's switch) and is.
 static CFTimeInterval sg_rumbleHeardAt;
 static BOOL sg_lockScreen = YES, sg_locked;
+// Stops a rumble Spotify has stopped speaking for: armed for kSGRelayRumbleLapse on every rumble post, idle otherwise, so
+// SpringBoard is woken only while a rumble plays.
+static dispatch_source_t sg_lapse;
 
 static BOOL engineUp(void) {
     if (!CHHapticEngine.capabilitiesForHardware.supportsHaptics) return NO;
@@ -70,13 +73,20 @@ static void tap(float intensity, float sharpness) {
     [player startAtTime:CHHapticTimeImmediate error:nil];
 }
 
+static void armLapse(BOOL armed) {
+    dispatch_time_t when = armed ? dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kSGRelayRumbleLapse * NSEC_PER_SEC)) : DISPATCH_TIME_FOREVER;
+    dispatch_source_set_timer(sg_lapse, when, DISPATCH_TIME_FOREVER, (uint64_t)(0.05 * NSEC_PER_SEC));
+}
+
 static void rumble(float level) {
     sg_rumbleHeardAt = CACurrentMediaTime();
     if (level <= 0 || !plays()) {
         if (sg_rumbling) [sg_rumble stopAtTime:CHHapticTimeImmediate error:nil];
         sg_rumbling = NO;
+        armLapse(NO);
         return;
     }
+    armLapse(YES);
     if (!engineUp()) return;
     if (!sg_rumble) {
         CHHapticEvent *hum = [[CHHapticEvent alloc] initWithEventType:CHHapticEventTypeHapticContinuous parameters:@[
@@ -94,15 +104,14 @@ static void rumble(float level) {
     if (!sg_rumbling) sg_rumbling = [sg_rumble startAtTime:CHHapticTimeImmediate error:nil];
 }
 
-// Stops a rumble Spotify has stopped speaking for (kSGRelayRumbleLapse): checked a few times a second.
 static void watchRumble(void) {
-    static dispatch_source_t timer;
-    timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, sg_queue);
-    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 0), (uint64_t)(0.2 * NSEC_PER_SEC), (uint64_t)(0.05 * NSEC_PER_SEC));
-    dispatch_source_set_event_handler(timer, ^{
-        if (sg_rumbling && CACurrentMediaTime() - sg_rumbleHeardAt > kSGRelayRumbleLapse) rumble(0);
+    sg_lapse = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, sg_queue);
+    dispatch_source_set_timer(sg_lapse, DISPATCH_TIME_FOREVER, DISPATCH_TIME_FOREVER, 0);
+    dispatch_source_set_event_handler(sg_lapse, ^{
+        if (CACurrentMediaTime() - sg_rumbleHeardAt >= kSGRelayRumbleLapse) rumble(0);
+        else armLapse(YES);
     });
-    dispatch_resume(timer);
+    dispatch_resume(sg_lapse);
 }
 
 static void listen(const char *name, void (^handler)(void)) {
@@ -113,6 +122,7 @@ static void listen(const char *name, void (^handler)(void)) {
 %ctor {
     if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
     sg_queue = dispatch_queue_create("com.vitrine.haptics", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0));
+    watchRumble();
     for (int level = 1; level <= kSGRelayLevels; level++) {
         for (int sharp = 0; sharp < kSGRelaySharpnesses; sharp++) {
             char name[64];
@@ -140,7 +150,12 @@ static void listen(const char *name, void (^handler)(void)) {
         sg_locked = state != 0;
         if (sg_locked && !sg_lockScreen) rumble(0);
     });
-    watchRumble();
+    // As it is now: SpringBoard starts locked after a respring, and nothing is posted until it changes. Read on the queue
+    // the handler writes it on.
+    dispatch_async(sg_queue, ^{
+        uint64_t lockState = 0;
+        if (notify_get_state(lockToken, &lockState) == NOTIFY_STATUS_OK) sg_locked = lockState != 0;
+    });
     // The pong carries the add-on's build, so Spotify can tell an older one from the copy it carries.
     static int pong;
     notify_register_check(kSGRelayPong, &pong);

@@ -11,6 +11,10 @@ NSNotificationName const SGHapticRelayAvailableNotification = @"SGHapticRelayAva
 static BOOL sg_available;
 // The rumble's level as last posted, so an unchanged one is not posted again; -1 before any.
 static atomic_int sg_rumbleSent = -1;
+// Locked with the lock screen switch off, the add-on would only drop what it is sent: nothing goes. Read on the audio
+// thread, kept by the lock state's notification and the switch as they change.
+static atomic_bool sg_quiet;
+static BOOL sg_locked;
 static atomic_uint_fast64_t sg_rumbleSentAt;
 
 BOOL SGHapticRelayAvailable(void) {
@@ -50,10 +54,13 @@ BOOL SGHapticEverywhereOffered(void) {
     return sg_available || SGJailbroken();
 }
 
+static void watchLock(void);
+
 void SGHapticRelayAsk(void) {
     static int token;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        watchLock();
         notify_register_dispatch(kSGRelayPong, &token, dispatch_get_main_queue(), ^(int t) {
             uint64_t build = 0;
             if (notify_get_state(t, &build) == NOTIFY_STATUS_OK) sg_installedBuild = build;
@@ -120,8 +127,31 @@ void SGHapticAddonExplain(NSString *feature) {
     [SGTopController() presentViewController:alert animated:YES completion:nil];
 }
 
+static void updateQuiet(void) {
+    BOOL quiet = sg_locked && !SGFlag(SGKeyMusicHapticsLockScreen, YES);
+    // Quiet first, so a rumble the audio thread sends meanwhile is dropped; then a rumble going on is stopped, as a level
+    // of 0 still goes.
+    BOOL was = atomic_exchange(&sg_quiet, quiet);
+    if (quiet && !was) SGHapticRelayRumble(0);
+}
+
 void SGHapticRelaySendLockScreen(void) {
     notify_post(SGFlag(SGKeyMusicHapticsLockScreen, YES) ? kSGRelayLockOn : kSGRelayLockOff);
+    updateQuiet();
+}
+
+// The phone's lock state, as SpringBoard's notification's state has it (1 locked), read now and as it changes.
+static void watchLock(void) {
+    static int token;
+    notify_register_dispatch("com.apple.springboard.lockstate", &token, dispatch_get_main_queue(), ^(int t) {
+        uint64_t state = 0;
+        notify_get_state(t, &state);
+        sg_locked = state != 0;
+        updateQuiet();
+    });
+    uint64_t state = 0;
+    if (notify_get_state(token, &state) == NOTIFY_STATUS_OK) sg_locked = state != 0;
+    updateQuiet();
 }
 
 static int bucket(float value, int count) {
@@ -130,7 +160,7 @@ static int bucket(float value, int count) {
 }
 
 void SGHapticRelayTap(float intensity, float sharpness) {
-    if (!sg_available) return;
+    if (!sg_available || atomic_load(&sg_quiet)) return;
     int level = MAX(1, bucket(intensity, kSGRelayLevels));
     int sharp = MIN(kSGRelaySharpnesses - 1, (int)(MAX(0, MIN(1, sharpness)) * kSGRelaySharpnesses));
     char name[64];
@@ -140,7 +170,7 @@ void SGHapticRelayTap(float intensity, float sharpness) {
 
 void SGHapticRelayRumble(float level) {
     int b = bucket(level, kSGRelayLevels);
-    if (!sg_available) return;
+    if (!sg_available || (b > 0 && atomic_load(&sg_quiet))) return;
     uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
     BOOL same = atomic_exchange(&sg_rumbleSent, b) == b;
     // Unchanged, it goes again now and then while it is on, the add-on's sign that Spotify still means it.

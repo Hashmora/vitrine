@@ -1,5 +1,6 @@
 #import "LockClipView.h"
 #import <AVFoundation/AVFoundation.h>
+#import <stdatomic.h>
 
 static const NSTimeInterval kFade = 0.35;
 // One cover or clip giving way to the next: the new one fades in over the old, which fades out under it.
@@ -48,6 +49,107 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     }
 }
 
+// One clip's reading, made for each load: the asset, its track, the reader and its output and how far its loops have
+// run. Only the feed queue reads and writes these, and the feed's blocks hold the run they were made for, so a new
+// clip taking its place on the main thread cannot let go of what the feed is still reading; the old run is cancelled,
+// its reader cancelled on the feed queue, and goes once the feed's last block does.
+@interface SGVClipRun : NSObject
+@property (nonatomic, readonly) AVURLAsset *asset;
+@property (nonatomic, readonly) AVAssetTrack *track;
+- (instancetype)initWithAsset:(AVURLAsset *)asset track:(AVAssetTrack *)track feed:(dispatch_queue_t)feed;
+- (void)cancel;
+@property (nonatomic, readonly) BOOL cancelled;
+- (void)feed:(AVSampleBufferDisplayLayer *)video;
+@end
+
+@implementation SGVClipRun {
+    dispatch_queue_t _feed;
+    AVAssetReader *_reader;
+    AVAssetReaderTrackOutput *_output;
+    CMTime _offset;
+    atomic_bool _cancelled;
+}
+
+- (instancetype)initWithAsset:(AVURLAsset *)asset track:(AVAssetTrack *)track feed:(dispatch_queue_t)feed {
+    if (!(self = [super init])) return nil;
+    _feed = feed;
+    _asset = asset;
+    _track = track;
+    _offset = kCMTimeZero;
+    return self;
+}
+
+// Main thread: the feed stops at its next sample, and the reader is cancelled on the feed queue, where it is read; the
+// layer has stopped asking by then, so the feed's own check may never run again.
+- (void)cancel {
+    atomic_store(&_cancelled, true);
+    dispatch_async(_feed, ^{ [self->_reader cancelReading]; });
+}
+
+- (BOOL)cancelled {
+    return atomic_load(&_cancelled);
+}
+
+// Feed queue.
+- (BOOL)startReader {
+    NSError *error = nil;
+    AVAssetReader *reader = [AVAssetReader assetReaderWithAsset:_asset error:&error];
+    AVAssetReaderTrackOutput *output = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:_track outputSettings:nil];
+    if (!reader || ![reader canAddOutput:output]) return NO;
+    [reader addOutput:output];
+    if (![reader startReading]) return NO;
+    _reader = reader;
+    _output = output;
+    return YES;
+}
+
+// Feed queue: as many samples as the layer takes, the clip read again from its start each time it ends, its times moved
+// on by a loop's length so the layer's clock runs straight through.
+- (void)feed:(AVSampleBufferDisplayLayer *)video {
+    if (!_reader && ![self startReader]) {
+        [video stopRequestingMediaData];
+        return;
+    }
+    while (video.isReadyForMoreMediaData) {
+        if (self.cancelled) {
+            [video stopRequestingMediaData];
+            [_reader cancelReading];
+            return;
+        }
+        CMSampleBufferRef sample = [_output copyNextSampleBuffer];
+        if (!sample) {
+            if (_reader.status != AVAssetReaderStatusCompleted) {
+                [video stopRequestingMediaData];
+                return;
+            }
+            _offset = CMTimeAdd(_offset, _asset.duration);
+            if (![self startReader]) {
+                [video stopRequestingMediaData];
+                return;
+            }
+            continue;
+        }
+        CMItemCount count = 0;
+        CMSampleBufferGetSampleTimingInfoArray(sample, 0, NULL, &count);
+        CMSampleTimingInfo stack[8];
+        CMSampleTimingInfo *timing = count <= 8 ? stack : malloc(sizeof(CMSampleTimingInfo) * count);
+        CMSampleBufferGetSampleTimingInfoArray(sample, count, timing, &count);
+        for (CMItemCount i = 0; i < count; i++) {
+            if (CMTIME_IS_VALID(timing[i].presentationTimeStamp)) timing[i].presentationTimeStamp = CMTimeAdd(timing[i].presentationTimeStamp, _offset);
+            if (CMTIME_IS_VALID(timing[i].decodeTimeStamp)) timing[i].decodeTimeStamp = CMTimeAdd(timing[i].decodeTimeStamp, _offset);
+        }
+        CMSampleBufferRef moved = NULL;
+        CMSampleBufferCreateCopyWithNewTiming(kCFAllocatorDefault, sample, count, timing, &moved);
+        if (timing != stack) free(timing);
+        CFRelease(sample);
+        if (!moved) continue;
+        [video enqueueSampleBuffer:moved];
+        CFRelease(moved);
+    }
+}
+
+@end
+
 @implementation SGVLockClip {
     CAGradientLayer *_bands;
     AVSampleBufferDisplayLayer *_video;
@@ -59,11 +161,7 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     NSURL *_wanted;   // the clip asked for, kept while suspended
     BOOL _suspended;
     dispatch_queue_t _feed;
-    AVURLAsset *_asset;
-    AVAssetTrack *_track;
-    AVAssetReader *_reader;
-    AVAssetReaderTrackOutput *_output;
-    CMTime _offset;
+    SGVClipRun *_current;   // the clip being read, nil for none
     CGSize _natural;
     NSURL *_playing;
     NSUInteger _run;
@@ -125,6 +223,13 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     NSURL *clip = _wanted;
     [self load:nil];
     [self load:clip];
+}
+
+// Out of a window, nothing is read or decoded; back in one, the clip asked for plays again unless the screen is dark.
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    if (!self.window) [self load:nil];
+    else if (!_suspended) [self load:_wanted];
 }
 
 - (void)setSuspended:(BOOL)suspended {
@@ -200,6 +305,8 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
 }
 
 - (void)load:(NSURL *)clip {
+    // Out of a window nothing is read or decoded, whoever asks: didMoveToWindow loads the clip asked for as it comes back.
+    if (!self.window) clip = nil;
     if ((clip == nil && _playing == nil) || [clip isEqual:_playing]) return;
     _playing = clip;
     _run++;
@@ -215,21 +322,21 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
         [_video flush];
         [_video removeFromSuperlayer];
     }
-    [_reader cancelReading];
+    [_current cancel];
+    _current = nil;
     _video = nil;
-    _reader = nil;
-    _output = nil;
     if (!clip) return;
-    _asset = [AVURLAsset URLAssetWithURL:clip options:nil];
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:clip options:nil];
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    _track = [_asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+    AVAssetTrack *track = [asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
 #pragma clang diagnostic pop
-    if (!_track) {
+    if (!track) {
         [self dropLeaving];
         return;
     }
-    CGSize size = CGSizeApplyAffineTransform(_track.naturalSize, _track.preferredTransform);
+    SGVClipRun *current = _current = [[SGVClipRun alloc] initWithAsset:asset track:track feed:_feed];
+    CGSize size = CGSizeApplyAffineTransform(track.naturalSize, track.preferredTransform);
     _natural = CGSizeMake(fabs(size.width), fabs(size.height));
     _video = [AVSampleBufferDisplayLayer layer];
     _video.videoGravity = AVLayerVideoGravityResizeAspect;
@@ -245,9 +352,8 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     _video.opacity = 0;
     [self.layer addSublayer:_video];
     [self setNeedsLayout];
-    _offset = kCMTimeZero;
 
-    AVAssetImageGenerator *frames = [AVAssetImageGenerator assetImageGeneratorWithAsset:_asset];
+    AVAssetImageGenerator *frames = [AVAssetImageGenerator assetImageGeneratorWithAsset:asset];
     frames.appliesPreferredTrackTransform = YES;
     frames.maximumSize = CGSizeMake(64, 64);
     __weak SGVLockClip *weakSelf = self;
@@ -272,11 +378,12 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
         });
     }];
 
-    NSUInteger run = _run;
+    // The feed's blocks hold the run and the layer, not the view.
     AVSampleBufferDisplayLayer *video = _video;
-    dispatch_async(_feed, ^{
-        if (run != self->_run || ![self startReader]) return;
-        [video requestMediaDataWhenReadyOnQueue:self->_feed usingBlock:^{ [self feed:video run:run]; }];
+    dispatch_queue_t feed = _feed;
+    dispatch_async(feed, ^{
+        if (current.cancelled) return;
+        [video requestMediaDataWhenReadyOnQueue:feed usingBlock:^{ [current feed:video]; }];
     });
 }
 
@@ -297,52 +404,6 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
 - (void)setPlaying:(BOOL)playing {
     _startsPlaying = playing;
     if (_video.controlTimebase) CMTimebaseSetRate(_video.controlTimebase, playing ? 1 : 0);
-}
-
-- (BOOL)startReader {
-    NSError *error = nil;
-    AVAssetReader *reader = [AVAssetReader assetReaderWithAsset:_asset error:&error];
-    AVAssetReaderTrackOutput *output = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:_track outputSettings:nil];
-    if (!reader || ![reader canAddOutput:output]) return NO;
-    [reader addOutput:output];
-    if (![reader startReading]) return NO;
-    _reader = reader;
-    _output = output;
-    return YES;
-}
-
-- (void)feed:(AVSampleBufferDisplayLayer *)video run:(NSUInteger)run {
-    while (video.isReadyForMoreMediaData && run == _run) {
-        CMSampleBufferRef sample = [_output copyNextSampleBuffer];
-        if (!sample) {
-            if (_reader.status != AVAssetReaderStatusCompleted) {
-                [video stopRequestingMediaData];
-                return;
-            }
-            _offset = CMTimeAdd(_offset, _asset.duration);
-            if (![self startReader]) {
-                [video stopRequestingMediaData];
-                return;
-            }
-            continue;
-        }
-        CMItemCount count = 0;
-        CMSampleBufferGetSampleTimingInfoArray(sample, 0, NULL, &count);
-        CMSampleTimingInfo stack[8];
-        CMSampleTimingInfo *timing = count <= 8 ? stack : malloc(sizeof(CMSampleTimingInfo) * count);
-        CMSampleBufferGetSampleTimingInfoArray(sample, count, timing, &count);
-        for (CMItemCount i = 0; i < count; i++) {
-            if (CMTIME_IS_VALID(timing[i].presentationTimeStamp)) timing[i].presentationTimeStamp = CMTimeAdd(timing[i].presentationTimeStamp, _offset);
-            if (CMTIME_IS_VALID(timing[i].decodeTimeStamp)) timing[i].decodeTimeStamp = CMTimeAdd(timing[i].decodeTimeStamp, _offset);
-        }
-        CMSampleBufferRef moved = NULL;
-        CMSampleBufferCreateCopyWithNewTiming(kCFAllocatorDefault, sample, count, timing, &moved);
-        if (timing != stack) free(timing);
-        CFRelease(sample);
-        if (!moved) continue;
-        [video enqueueSampleBuffer:moved];
-        CFRelease(moved);
-    }
 }
 
 @end

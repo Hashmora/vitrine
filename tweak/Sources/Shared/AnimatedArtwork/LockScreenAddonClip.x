@@ -12,6 +12,7 @@
 // Threading: the walk answers on the main queue; the copy runs on a queue of its own.
 #import <notify.h>
 #import "Core/SGCore.h"
+#import "Core/SGRebind.h"
 #import "AnimatedArtwork.h"
 #import "Shared/Haptics/SGHapticRelay.h"
 #import "Shared/Player/PlayerState.h"
@@ -62,6 +63,8 @@ static void offer(NSURL *file, NSUInteger walk) {
 
 %ctor {
     if (@available(iOS 26.0, *)) return;
+    // Only a jailbroken phone can have the add-on that draws it.
+    if (!SGJailbroken()) return;
     sg_queue = dispatch_queue_create("spotifyglass.lockscreen.addon-clip", DISPATCH_QUEUE_SERIAL);
     sg_follower = [[SGMotionFollower alloc] initWithBegin:^BOOL(NSString *uri, SPTPlayerState *state) {
         sg_walk++;

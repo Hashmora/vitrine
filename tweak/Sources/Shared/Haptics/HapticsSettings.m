@@ -19,9 +19,7 @@ static NSString *const kMusicInfo = @"The iPhone taps along with the drums and r
 static NSString *const kEverywhereInfo = @"With a jailbreak, Music Haptics above keeps playing when Spotify leaves the screen: on the home screen, in other apps and on the lock screen. Spotify still listens to its own sound, and SpringBoard, which iOS lets play haptics at any time, plays the taps and the rumble for it.\n\nThat part is an add-on, Vitrine Addon, installed once with a package manager (Sileo, Zebra or Filza): Vitrine itself lives in Spotify and cannot reach SpringBoard.";
 // The add-on's .deb inside Spotify handed to the package manager, once the alert it is picked from has gone.
 static void shareAddon(void) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        SGHapticAddonShare(SGTopController().view);
-    });
+    SGHapticAddonShareSoon();
 }
 
 // Everywhere switched on without the add-on: what it needs, and the add-on two taps away (SGHapticAddonExplain).

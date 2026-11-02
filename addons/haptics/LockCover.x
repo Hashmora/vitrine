@@ -23,6 +23,9 @@
 // Threading: the notifications and MediaRemote's answers come on the main queue.
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
+#import <sys/stat.h>
+#import <fcntl.h>
+#import <unistd.h>
 #import <notify.h>
 #import "../../tweak/Sources/Shared/Haptics/SGHapticRelay.h"
 
@@ -71,31 +74,80 @@ static void hideWidgets(BOOL away) {
     }
 }
 
-// A file of the now playing app's caches into the jailbreak's shared caches, for MediaRemoteUI: copied beside it and
-// moved over the last one, so a reader of the last one keeps its own file; `shared` posted once it is there.
-static void share(NSString *name, NSString *sharedPath, const char *shared) {
-    if (!sg_getApp) return;
-    sg_getApp(dispatch_get_main_queue(), ^(CFStringRef bundle) {
-        NSString *identifier = (__bridge NSString *)bundle;
-        Class proxies = NSClassFromString(@"LSApplicationProxy");
-        NSURL *container = identifier.length && proxies ? [[proxies applicationProxyForIdentifier:identifier] dataContainerURL] : nil;
-        NSURL *source = [container URLByAppendingPathComponent:[@"Library/Caches/" stringByAppendingString:name]];
-        NSFileManager *files = NSFileManager.defaultManager;
-        if (!source || ![files fileExistsAtPath:source.path]) {
-            NSLog(@"[vitrine-addon] no %@ in %@", name, identifier);
-            return;
+// The largest files taken from Spotify: a Canvas is a few MB, an animated cover a little more; a song's lines with their
+// words, translations and Latin letters a few hundred KB.
+static const off_t kMostClipBytes = 50 * 1024 * 1024, kMostLyricsBytes = 4 * 1024 * 1024;
+
+// Copies the regular file at `source` to `target`, opened once without following a link (O_NOFOLLOW) and checked on that
+// descriptor (fstat), so what is checked is what is copied, and never more than `most` bytes of it. NO for a link, a
+// directory, an empty or a larger file, or a failed write. On the share queue alone, which owns the buffer.
+static BOOL copyRegularFile(NSURL *source, NSURL *target, off_t most) {
+    int in = open(source.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (in < 0) return NO;
+    struct stat info;
+    if (fstat(in, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 0 || info.st_size > most) {
+        close(in);
+        return NO;
+    }
+    int out = open(target.fileSystemRepresentation, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (out < 0) {
+        close(in);
+        return NO;
+    }
+    static char buffer[256 * 1024];
+    off_t copied = 0;
+    BOOL done = YES;
+    for (;;) {
+        ssize_t got = read(in, buffer, sizeof buffer);
+        if (got == 0) break;
+        if (got < 0 || copied + got > most) {
+            done = NO;
+            break;
         }
+        for (ssize_t written = 0; written < got;) {
+            ssize_t wrote = write(out, buffer + written, (size_t)(got - written));
+            if (wrote <= 0) {
+                done = NO;
+                break;
+            }
+            written += wrote;
+        }
+        if (!done) break;
+        copied += got;
+    }
+    close(in);
+    if (close(out) != 0) done = NO;
+    return done && copied > 0;
+}
+
+// A file of Spotify's caches into the jailbreak's shared caches, for MediaRemoteUI: copied beside it and moved over the
+// last one, so a reader of the last one keeps its own file; `shared` posted once it is there. Any process can post the
+// notification that starts it, so it is taken from Spotify alone (MediaRemoteUI's still cover is Spotify's alone too),
+// off SpringBoard's main thread, as the copy crosses volumes, and only a regular file of at most `most` bytes.
+static void share(NSString *name, NSString *sharedPath, const char *shared, off_t most) {
+    if (!sg_getApp) return;
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("com.vitrine.addon.share", DISPATCH_QUEUE_SERIAL); });
+    sg_getApp(queue, ^(CFStringRef bundle) {
+        NSString *identifier = (__bridge NSString *)bundle;
+        if (![identifier isEqualToString:@"com.spotify.client"]) return;
+        NSURL *container = [[NSClassFromString(@"LSApplicationProxy") applicationProxyForIdentifier:identifier] dataContainerURL];
+        NSURL *source = [container URLByAppendingPathComponent:[@"Library/Caches/" stringByAppendingString:name]];
+        if (!source) return;
+        NSFileManager *files = NSFileManager.defaultManager;
         NSURL *target = [NSURL fileURLWithPath:sharedPath];
         [files createDirectoryAtURL:target.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
         NSURL *staging = [target URLByAppendingPathExtension:@"part"];
         [files removeItemAtURL:staging error:nil];
-        NSError *error = nil;
-        BOOL done = [files copyItemAtURL:source toURL:staging error:&error];
-        if (done) {
-            [files removeItemAtURL:target error:nil];
-            done = [files moveItemAtURL:staging toURL:target error:&error];
+        if (!copyRegularFile(source, staging, most)) {
+            [files removeItemAtURL:staging error:nil];
+            NSLog(@"[vitrine-addon] no %@ to take from Spotify", name);
+            return;
         }
-        if (!done) {
+        NSError *error = nil;
+        [files removeItemAtURL:target error:nil];
+        if (![files moveItemAtURL:staging toURL:target error:&error]) {
             NSLog(@"[vitrine-addon] %@ not shared: %@", name, error.localizedDescription);
             return;
         }
@@ -221,11 +273,11 @@ static void tellPicked(void) {
     %init;
     int clipToken, noneToken, showingToken, hiddenToken;
     notify_register_dispatch(kSGRelayLockClip, &clipToken, dispatch_get_main_queue(), ^(int t) {
-        share(@kSGLockClipName, SGLockSharedClipPath(), kSGRelayLockClipShared);
+        share(@kSGLockClipName, SGLockSharedClipPath(), kSGRelayLockClipShared, kMostClipBytes);
     });
     int lyricsToken, lyricsPickedToken, canvasPickedToken, askToken;
     notify_register_dispatch(kSGRelayLockLyrics, &lyricsToken, dispatch_get_main_queue(), ^(int t) {
-        share(@kSGLockLyricsName, SGLockSharedLyricsPath(), kSGRelayLockLyricsShared);
+        share(@kSGLockLyricsName, SGLockSharedLyricsPath(), kSGRelayLockLyricsShared, kMostLyricsBytes);
     });
     // The button's choice kept; a post of it here answers MediaRemoteUI, which hears its own the same way.
     notify_register_dispatch(kSGRelayLockModeLyrics, &lyricsPickedToken, dispatch_get_main_queue(), ^(int t) {
