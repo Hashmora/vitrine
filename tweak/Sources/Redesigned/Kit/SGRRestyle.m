@@ -300,6 +300,33 @@ Class SGRSwiftClass(NSString *module, NSString *name) {
     return NSClassFromString(mangled) ?: NSClassFromString([NSString stringWithFormat:@"%@.%@", module, name]);
 }
 
+Class SGRPrivateSwiftClass(NSString *module, NSString *suffix) {
+    NSString *prefix = [NSString stringWithFormat:@"_TtC%lu%@", (unsigned long)module.length, module];
+    // The names of the app's own classes, read once and without realizing any (objc_copyClassList realizes every class
+    // of the process, which a launch pays for).
+    static NSArray<NSString *> *names;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSMutableArray<NSString *> *all = [NSMutableArray array];
+        const char *bundle = NSBundle.mainBundle.bundlePath.fileSystemRepresentation;
+        unsigned int imageCount = 0;
+        const char **images = objc_copyImageNames(&imageCount);
+        for (unsigned int i = 0; i < imageCount; i++) {
+            if (!bundle || strncmp(images[i], bundle, strlen(bundle)) != 0) continue;
+            unsigned int count = 0;
+            const char **classes = objc_copyClassNamesForImage(images[i], &count);
+            for (unsigned int j = 0; j < count; j++) [all addObject:@(classes[j])];
+            free(classes);
+        }
+        free(images);
+        names = all;
+    });
+    for (NSString *name in names) {
+        if ([name hasPrefix:prefix] && [name hasSuffix:suffix]) return NSClassFromString(name);
+    }
+    return nil;
+}
+
 void SGRConceal(UIView *view) {
     if (!view) return;
     if (!view.layer.hidden) view.layer.hidden = YES;

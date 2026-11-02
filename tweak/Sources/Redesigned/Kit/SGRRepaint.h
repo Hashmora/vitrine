@@ -30,6 +30,10 @@ extern __weak UIView *sgr_showSearchField;
 // The same page's header, the SearchHeader view around the field and Cancel that Spotify paints #000000: kept clear while it is set.
 extern __weak UIView *sgr_showSearchHeader;
 
+// Playlist/PlaylistAddSearch.x, iOS < 26: the grey search bar at the bottom of the Add songs sheet's pages, kept clear
+// while it is set (Spotify paints it again when the field is focused).
+extern __weak UIView *sgr_addSongsSearchBar;
+
 // Keeps `view`'s own fill clear from now on, below iOS 26 (weakly held, so a view that goes needs no undoing). For a control
 // dressed with glass whose Spotify paint comes back as it is pressed, let go or reused: the plus of the account lists
 // (Pages/AccountPlus.x). Clear it once as well: this keeps it clear, it does not clear it.

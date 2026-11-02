@@ -48,6 +48,11 @@ void SGRShowGlass(UIView *shape, BOOL shown);
 // where plain glass over black or over text reads as no plate at all. Safe to call on every pass.
 UIView *SGRGlassFlatBox(UIView *box, const void *key, BOOL prominent);
 
+// An Encore button of Spotify's on a glass capsule (SGRGlassFlatBox under `key`, no film): its own fill goes, the button's and
+// that of the plain view of its size inside it, and with `accent` the accent is laid over the glass under the label,
+// for a button Spotify draws with a black one. Returns the glass. Below iOS 26.
+UIView *SGRGlassEncoreButton(UIView *button, const void *key, BOOL accent);
+
 // A floating card of Spotify's (a toast, a tooltip) on glass: its paint off, its corners half its height up to
 // `maxRadius`, and a pane (under `glassKey`) and a film (under `filmKey`) of its size. Not clipped with the legacy
 // glass, whose pane has the corners and whose press grows past it. Returns the pane.
@@ -74,6 +79,9 @@ UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radiu
 // at that list and leaves its rows alone. Also records the sheet in sgr_sheetChromeRoot (SGRRepaint.h), whose
 // hook keeps the fill clear when Spotify paints it back.
 UIView *SGRGlassSheetChrome(UIView *content);
+// The pane of the sheet `navigation` is presented in (its view's superview): a card at least 300pt wide with a gap
+// above it, never as tall as the screen. Nil for a navigation controller that is not in such a sheet.
+UIView *SGRSheetPaneOfNavigation(UINavigationController *navigation);
 // The pane of Navigation's sheet `view` stands in (id=sheet-view), `view` itself included; nil outside one.
 UIView *SGRSheetPaneOf(UIView *view);
 // The same for a sheet that carries no "sheet-view" identifier, handed over as the view that is the pane itself

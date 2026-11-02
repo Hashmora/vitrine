@@ -12,6 +12,7 @@ __weak UIView *sgr_playlistRoot = nil;
 __weak UIView *sgr_albumRoot = nil;
 __weak UIView *sgr_artistRoot = nil;
 __weak UIView *sgr_sheetChromeRoot = nil;
+__weak UIView *sgr_addSongsSearchBar = nil;
 __weak UIView *sgr_showSearchField = nil;
 __weak UIView *sgr_showSearchHeader = nil;
 
@@ -51,6 +52,8 @@ enum { kInNowPlaying = 1, kInLyrics = 2, kInPage = 4 };
     if (legacyLook && color && sgr_showSearchField && self.delegate == sgr_showSearchField && (isNeutralTint(color) || CGColorGetAlpha(color) > 0.5)) color = NULL;
     // The podcast search page's header, Spotify's black behind the field row: it goes and the field and Cancel float.
     if (legacyLook && color && sgr_showSearchHeader && self.delegate == sgr_showSearchHeader && CGColorGetAlpha(color) > 0.5) color = NULL;
+    // The Add songs sheet's search bar: its grey goes, the glass (Playlist/PlaylistAddSearch.x) stands in its place.
+    if (legacyLook && color && sgr_addSongsSearchBar && self.delegate == sgr_addSongsSearchBar && CGColorGetAlpha(color) > 0.5) color = NULL;
     // A fill the Kit holds clear (SGRHoldClear): the button or disc is on glass, and Spotify's paint goes whenever it is set.
     if (legacyLook && color && heldClear.count && CGColorGetAlpha(color) > 0.05 && NSThread.isMainThread) {
         UIView *held = (UIView *)self.delegate;

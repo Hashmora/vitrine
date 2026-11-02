@@ -82,6 +82,10 @@ UINavigationController *SGRNavigationOf(UIView *view);
 // app has neither.
 Class SGRSwiftClass(NSString *module, NSString *name);
 
+// A class of `module` whose mangled name carries a private discriminator (P33_...), found by the ending the trees
+// print. Walks every class, so it is for a %ctor, once.
+Class SGRPrivateSwiftClass(NSString *module, NSString *suffix);
+
 // Invisible for good, whatever Spotify does to it. `hidden` on the layer costs nothing and, unlike -[UIView
 // setHidden:], tells neither KVO nor the stack views, which is what makes it safe on Encore's layouts; an empty mask
 // holds when Spotify shows the view again with -setHidden:NO. Out of touches and VoiceOver, still there to be read
