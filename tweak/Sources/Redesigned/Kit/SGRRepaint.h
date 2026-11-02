@@ -24,4 +24,7 @@ extern __weak UIView *sgr_artistRoot;
 // repaints outside the sheet's own list (SGRIsSheetChromeArea) is cleared here on every repaint: Spotify
 // draws it back on its own later, and a view built after the first pass is never stripped otherwise.
 extern __weak UIView *sgr_sheetChromeRoot;
+// That sheet watched from now on: its own layouts and those of the lists in it clear the grey Spotify paints on views
+// it puts in later, before their first frame. Called by SGRGlassSheetChrome as it glasses the sheet.
+void SGRWatchSheetPaint(UIView *root);
 
