@@ -139,3 +139,26 @@ void SGRShowGlass(UIView *shape, BOOL shown) {
         shape.alpha = shown ? 1 : 0;
     }
 }
+
+#pragma mark - a film over glass
+
+UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radius) {
+    if (@available(iOS 26.0, *)) return nil;
+    UIView *film = SGLazyChild(host, key, ^UIView *{
+        UIView *view = [UIView new];
+        view.backgroundColor = SGRGlassFilmColor();
+        view.userInteractionEnabled = NO;
+        view.layer.cornerCurve = kCACornerCurveContinuous;
+        view.layer.masksToBounds = YES;
+        return view;
+    });
+    if (film.superview != host) [host insertSubview:film aboveSubview:glass];
+    if (!CGRectEqualToRect(film.frame, glass.frame)) film.frame = glass.frame;
+    if (film.layer.cornerRadius != radius) film.layer.cornerRadius = radius;
+    // The film covers its pane, and with it the pane's own highlight, so the film carries one.
+    if ([glass isKindOfClass:SGLegacyGlassView.class]) {
+        if (((SGLegacyGlassView *)glass).classic) SGLegacyGlassClassicSpecular(film.layer, film.bounds, radius);
+        else SGLegacyGlassSpecular(film.layer, film.bounds, radius);
+    }
+    return film;
+}

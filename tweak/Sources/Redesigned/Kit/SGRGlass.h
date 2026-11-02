@@ -30,3 +30,8 @@ UIView *SGRGlassCapsuleInside(UIView *control, const void *key, CGSize size, BOO
 // in the caller's animation.
 void SGRShowGlass(UIView *shape, BOOL shown);
 
+// The faint white film over a floating bar's glass (the tab bar's platter, the now playing card), without
+// which the bar disappears into Spotify's near-black chrome. Made once under `key`, kept just above `glass`
+// and on its frame, with corners of `radius`. Nil on iOS 26, where the system glass needs none.
+UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radius);
+
