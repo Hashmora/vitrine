@@ -25,6 +25,10 @@ extern __weak UIView *sgr_artistRoot;
 // draws it back on its own later, and a view built after the first pass is never stripped otherwise.
 extern __weak UIView *sgr_sheetChromeRoot;
 
+// Search/SearchHeader.x, iOS < 26: the view of the search results header (Spotify's #1F1F1F backing, which the page
+// puts back on its own passes) and the grey capsule inside its field. Both are kept clear while they are set.
+extern __weak UIView *sgr_searchHeaderRoot;
+extern __weak UIView *sgr_searchFieldFill;
 // Pages/ShowSearch.x, iOS < 26: the "Find in this show" field of a podcast's search page, whose grey Spotify paints again as it is focused.
 extern __weak UIView *sgr_showSearchField;
 // The same page's header, the SearchHeader view around the field and Cancel that Spotify paints #000000: kept clear while it is set.
@@ -38,4 +42,11 @@ extern __weak UIView *sgr_addSongsSearchBar;
 // dressed with glass whose Spotify paint comes back as it is pressed, let go or reused: the plus of the account lists
 // (Pages/AccountPlus.x). Clear it once as well: this keeps it clear, it does not clear it.
 void SGRHoldClear(UIView *view);
+// The same for every view of `cls`, those made later included, from the moment Spotify paints one: for a view the page
+// makes again (Home's header element, rebuilt with the feed) that is painted as it is made, before any pass reaches it.
+void SGRHoldClearClass(Class cls);
 
+// Defined in Redesigned/Library/LibraryHeader.x, declared here because the repaint hook is lower than the
+// part: a library filter chip's fill was just painted (selected, deselected, pressed), so its glass is brought
+// in line with the paint -- shown over a clear fill, hidden under a selected colour -- without a layout pass.
+void SGRLibraryChipPainted(UIView *chip);

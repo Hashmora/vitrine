@@ -107,3 +107,12 @@ void SGRPassSwiftController(NSString *module, NSString *name, SGRControllerPass 
     if (scroll) self.follow(scroll);
 }
 @end
+
+void SGRFollowOffset(UIScrollView *scroll, const void *key, void (^follow)(UIScrollView *scroll)) {
+    if (!scroll || !key || !follow || objc_getAssociatedObject(scroll, key)) return;
+    SGROffsetFollower *follower = [SGROffsetFollower new];
+    follower.scroll = scroll;
+    follower.follow = follow;
+    [scroll addObserver:follower forKeyPath:@"contentOffset" options:0 context:NULL];
+    objc_setAssociatedObject(scroll, key, follower, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
