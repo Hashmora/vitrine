@@ -92,3 +92,7 @@ BOOL SGRFire(UIControl *control);
 // other scroll view off it: for text that stays over a page scrolling under it (Home's kept title, HomeHeader.x).
 // iOS 26 on; nothing before.
 void SGRHardTopEdge(UIScrollView *scrollView);
+
+// A Swift class by module and name, under the mangled spelling or the dotted one the trees print; nil when the
+// app has neither.
+Class SGRSwiftClass(NSString *module, NSString *name);

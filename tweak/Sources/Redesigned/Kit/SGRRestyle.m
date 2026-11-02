@@ -456,3 +456,8 @@ BOOL SGRFire(UIControl *control) {
     [control sendActionsForControlEvents:fire];
     return YES;
 }
+
+Class SGRSwiftClass(NSString *module, NSString *name) {
+    NSString *mangled = [NSString stringWithFormat:@"_TtC%lu%@%lu%@", (unsigned long)module.length, module, (unsigned long)name.length, name];
+    return NSClassFromString(mangled) ?: NSClassFromString([NSString stringWithFormat:@"%@.%@", module, name]);
+}
