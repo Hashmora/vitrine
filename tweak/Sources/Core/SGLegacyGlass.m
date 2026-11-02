@@ -1,5 +1,6 @@
 #import "SGLegacyGlass.h"
 #import "SGRuntime.h"
+#import "SGLog.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
