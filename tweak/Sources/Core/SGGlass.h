@@ -5,6 +5,7 @@
 #import <UIKit/UIKit.h>
 #import "SGLegacyGlass.h"
 #import "SGGlassTouch.h"
+#import "SGGlassThumb.h"
 
 #define SGKeyLegacyGlass @"spotifyglass.redesign.legacyglass"
 // What the switch was stored under before it became the redesign's.
