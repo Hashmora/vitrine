@@ -140,7 +140,7 @@ void SGRShowGlass(UIView *shape, BOOL shown) {
     }
 }
 
-#pragma mark - a film over glass
+#pragma mark - flat boxes and floating films
 
 UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radius) {
     if (@available(iOS 26.0, *)) return nil;
@@ -162,3 +162,66 @@ UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radiu
     }
     return film;
 }
+
+#pragma mark - a sheet's pane
+
+// A sheet is a big pane, and the glass of a small control is too thin for one: the page under it came through
+// nearly sharp (blur 2) and took the eye off the sheet. So the pane blurs far more and carries a dark body
+// and a hairline edge, which is what tells it from a plain blur -- the rim catching light, over a body dense
+// enough to hold the content. Under Reduce Transparency the body is the solid fill alone.
+static const CGFloat kSheetBlur = 10;
+static char kSheetBodyKey, kSheetRimKey, kSheetDimKey;
+
+// A layer of the pane's body (the tint, the rim, the dim): a plain view over the whole of `host`, made once under `key`.
+static UIView *bodyLayer(UIView *host, const void *key) {
+    UIView *view = SGLazyChild(host, key, ^UIView *{
+        UIView *made = [UIView new];
+        made.userInteractionEnabled = NO;
+        made.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        return made;
+    });
+    if (!CGRectEqualToRect(view.frame, host.bounds)) view.frame = host.bounds;
+    return view;
+}
+
+void SGRThickenSheetGlass(UIView *glass, CGFloat cornerRadius) {
+    if ([glass isKindOfClass:SGLegacyGlassView.class]) ((SGLegacyGlassView *)glass).blurRadius = kSheetBlur;
+    UIView *host = glassContent(glass);
+    UIView *body = bodyLayer(host, &kSheetBodyKey);
+    UIColor *tint = SGRReduceTransparency() ? SGRSolidGlassFill() : [UIColor colorWithWhite:1 alpha:0.24];
+    if (![body.backgroundColor isEqual:tint]) body.backgroundColor = tint;
+    // The rim: a hairline of light round the pane, drawn over the body.
+    UIView *rim = bodyLayer(host, &kSheetRimKey);
+    if (rim.layer.borderWidth == 0) {
+        rim.layer.borderWidth = 1.0 / UIScreen.mainScreen.scale;
+        rim.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.28].CGColor;
+        rim.layer.cornerCurve = kCACornerCurveContinuous;
+    }
+    if (rim.layer.cornerRadius != cornerRadius) rim.layer.cornerRadius = cornerRadius;
+    if (body.superview == host && host.subviews.firstObject != body) [host sendSubviewToBack:body];
+    if (rim.superview == host && host.subviews.lastObject != rim) [host bringSubviewToFront:rim];
+}
+
+void SGRDimSheetGlass(UIView *glass, CGFloat alpha) {
+    UIView *host = glassContent(glass);
+    UIView *dim = bodyLayer(host, &kSheetDimKey);
+    UIColor *tint = SGRReduceTransparency() ? UIColor.blackColor : [UIColor colorWithWhite:0 alpha:alpha];
+    if (![dim.backgroundColor isEqual:tint]) dim.backgroundColor = tint;
+    // Over the body, under the rim.
+    UIView *body = objc_getAssociatedObject(host, &kSheetBodyKey);
+    if (dim.superview != host) [host addSubview:dim];
+    if (body.superview == host) [host insertSubview:dim aboveSubview:body];
+    UIView *rim = objc_getAssociatedObject(host, &kSheetRimKey);
+    if (rim.superview == host) [host bringSubviewToFront:rim];
+}
+
+UIView *SGRGlassPaneIn(UIView *host, const void *key, CGFloat radius) {
+    UIView *glass = SGGlassFor(host, key);
+    if (glass.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    if (!CGRectEqualToRect(glass.frame, host.bounds)) glass.frame = host.bounds;
+    SGShapeGlass(glass, radius, NO);
+    SGRThickenSheetGlass(glass, radius);
+    return glass;
+}
+

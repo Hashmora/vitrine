@@ -35,3 +35,13 @@ void SGRShowGlass(UIView *shape, BOOL shown);
 // and on its frame, with corners of `radius`. Nil on iOS 26, where the system glass needs none.
 UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radius);
 
+// A sheet's body on a pane: heavier blur, a light tint and a hairline rim, for a pane big enough that the glass of a
+// small control would let the page under it through nearly sharp.
+void SGRThickenSheetGlass(UIView *glass, CGFloat cornerRadius);
+// A black layer over the body SGRThickenSheetGlass gives a pane, for menus whose white text the light body
+// leaves too little contrast to read. Call it after SGRThickenSheetGlass.
+void SGRDimSheetGlass(UIView *glass, CGFloat alpha);
+// A pane over the whole of `host` with that body (SGRThickenSheetGlass), dark, its corners `radius`, made once under
+// `key` and kept to the host's size: a card of Spotify's on glass (a dialog, a popup, a menu). The caller dims it.
+UIView *SGRGlassPaneIn(UIView *host, const void *key, CGFloat radius);
+

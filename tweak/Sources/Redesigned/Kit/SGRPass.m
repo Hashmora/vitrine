@@ -13,6 +13,16 @@ void SGRRepeatPass(UIViewController *controller, NSArray<NSNumber *> *delays, SG
     }
 }
 
+void SGRRepeatViewPass(UIView *view, NSArray<NSNumber *> *delays, void (^pass)(UIView *view)) {
+    __weak UIView *weak = view;
+    for (NSNumber *delay in delays) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *strong = weak;
+            if (strong.window) pass(strong);
+        });
+    }
+}
+
 #pragma mark - following a scroll
 
 @interface SGROffsetFollower : NSObject

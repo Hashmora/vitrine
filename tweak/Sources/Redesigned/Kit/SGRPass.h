@@ -12,3 +12,6 @@ typedef void (^SGRControllerPass)(UIViewController *controller);
 // Runs `pass` on the controller after each delay (seconds), while it lives.
 void SGRRepeatPass(UIViewController *controller, NSArray<NSNumber *> *delays, SGRControllerPass pass);
 
+// Runs `pass` on the view after each delay (seconds), while it is in a window.
+void SGRRepeatViewPass(UIView *view, NSArray<NSNumber *> *delays, void (^pass)(UIView *view));
+
