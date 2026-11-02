@@ -520,7 +520,7 @@ Redesigned:
                   The page behind it is only dimmed a little (kScrimAlert, kScrimSheet), never blurred
                   Spotify's own white pop-up dialogs (Get smoother transitions, Discard changes?, Make this playlist private?,
                   Update preferred location: id=PopUp.Dialog and PopUpConfirmationDialog, each in a window of its own) are
-                  shown the same way, on every OS: the window goes invisible the moment the dialog comes into it, the dialog's
+                  shown the same way below iOS 26: the window goes invisible the moment the dialog comes into it, the dialog's
                   title, text and buttons are read once Spotify has filled them in, and a UIAlertController made of them is
                   presented over the app's window (SGRDialogPopups.x), its actions firing Spotify's own buttons. Nothing of
                   Spotify's is repainted, so there is no frame of the white dialog first; one that cannot be read in a second

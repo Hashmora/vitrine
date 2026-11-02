@@ -50,6 +50,8 @@ static void dressAbout(UIView *card) {
 // Found by name in the cell the artist's list lays out (ArtistSections.x), which knows the About cell by its
 // identifier: a class pass on the card's private class does not run.
 void SGRArtistDressAbout(UIView *cell) {
+    // Below iOS 26 only: on iOS 26 the card keeps Spotify's grey, as on main.
+    if (!SGBelowiOS26()) return;
     // The card is 452pt tall; a shorter cell is never it, and is not walked on every pass of the scroll.
     if (cell.bounds.size.height < 300) return;
     UIView *card = objc_getAssociatedObject(cell, &kAboutCardKey);

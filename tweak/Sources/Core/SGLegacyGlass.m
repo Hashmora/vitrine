@@ -29,7 +29,12 @@ static id SGSaturationFilter(void) {
     };
     id filter = SGFilterOfType(@"colorMatrix");
     [filter setValue:[NSValue valueWithBytes:matrix objCType:"{CAColorMatrix=ffffffffffffffffffff}"] forKey:@"inputColorMatrix"];
-    [filter setValue:@YES forKey:@"inputBackdropAware"];
+    // A key CAFilter may not have on every iOS (checked on 26 only): a missing one is left out, not a crash.
+    @try {
+        [filter setValue:@YES forKey:@"inputBackdropAware"];
+    } @catch (NSException *e) {
+        SGLog(@"legacy glass: the colour matrix filter has no inputBackdropAware (%@)", e.reason);
+    }
     return filter;
 }
 
@@ -394,7 +399,8 @@ static CAShapeLayer *stroke(CGColorRef color, CGFloat width) {
 }
 
 // White at the rim's brightness for its normal at each point, a point per pixel.
-static CGImageRef SGRimLight(CGSize size, CGFloat radius) {
+// An object, so the caller holds it however soon the cache lets it go.
+static id SGRimLight(CGSize size, CGFloat radius) {
     static NSCache<NSString *, id> *cache;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 32; });
@@ -402,7 +408,7 @@ static CGImageRef SGRimLight(CGSize size, CGFloat radius) {
     radius = MIN(radius, MIN(size.width, size.height) / 2);
     NSString *key = [NSString stringWithFormat:@"%zu %zu %.1f", w, h, radius];
     id cached = [cache objectForKey:key];
-    if (cached) return (__bridge CGImageRef)cached;
+    if (cached) return cached;
 
     const CGFloat lx = -M_SQRT1_2, ly = -M_SQRT1_2;   // towards the light, top left, in the layer's y-down space
     uint8_t *pixels = calloc(w * h, 4);
@@ -423,11 +429,10 @@ static CGImageRef SGRimLight(CGSize size, CGFloat radius) {
     if (context) CGContextRelease(context);
     CGColorSpaceRelease(space);
     free(pixels);
-    if (!image) return NULL;
+    if (!image) return nil;
     id object = (__bridge_transfer id)image;
     [cache setObject:object forKey:key];
-    // The cache holds it for the caller, which sets it as a layer's contents at once.
-    return (__bridge CGImageRef)object;
+    return object;
 }
 
 // The classic pane's rim: the glare it first had, a one point line bright at the top-left and the bottom-right corners
@@ -488,8 +493,8 @@ void SGLegacyGlassSpecular(CALayer *host, CGRect bounds, CGFloat radius) {
     }
     rim.hidden = NO;
     rim.frame = bounds;
-    CGImageRef light = SGRimLight(bounds.size, radius);
-    if ((__bridge id)light != rim.contents) rim.contents = (__bridge id)light;
+    id light = SGRimLight(bounds.size, radius);
+    if (light != rim.contents) rim.contents = light;
     CAShapeLayer *line = (CAShapeLayer *)rim.mask;
     line.frame = rim.bounds;
     line.path = rimPath(rim.bounds, kRimWidth / 2, radius);
@@ -622,7 +627,8 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     self.layer.cornerRadius = radius;
     _backdropLayer.frame = self.bounds;
     id mesh = SGMakeGlassMesh(size, radius, _magnification, _lensScale, classic);
-    if (mesh) [_backdropLayer setValue:mesh forKey:@"meshTransform"];
+    // No mesh (a radius of 0): the last one goes rather than staying for a shape it was not made for.
+    [_backdropLayer setValue:mesh forKey:@"meshTransform"];
     [CATransaction commit];
 }
 

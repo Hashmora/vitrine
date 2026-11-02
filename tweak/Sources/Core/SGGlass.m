@@ -1,6 +1,7 @@
 #import "SGGlass.h"
 #import "SGPrefs.h"
 #import "SGRuntime.h"
+#import "SGUIMode.h"
 
 // +effectWithStyle: is the only initializer UIGlassEffect has; a bare -init leaves the material
 // unresolved and the pane renders as a plain blur, while the capsule shape, which is the view's
@@ -11,13 +12,15 @@ UIVisualEffect *SGGlassEffect(void) {
     return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark];
 }
 
-// Read once: the switch, like every switch, takes effect at the next launch.
+// Read once: the switch, like every switch, takes effect at the next launch. The redesign's only: the native look
+// never draws legacy glass.
 BOOL SGUseLegacyGlass(void) {
     static BOOL on;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         if (@available(iOS 26.0, *)) return;
-        on = SGFlag(SGKeyLegacyGlass, NO) && SGLegacyGlassAvailable();
+        SGMigrateKey(SGKeyLegacyGlassWas, SGKeyLegacyGlass);
+        on = SGRedesignedUI() && SGFlag(SGKeyLegacyGlass, NO) && SGLegacyGlassAvailable();
     });
     return on;
 }

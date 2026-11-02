@@ -412,8 +412,13 @@ static NSArray<UIView *> *tabButtons(UITabBar *bar) {
 static void pruneStrayButtons(UITabBar *bar) {
     NSMutableSet<UIView *> *owned = [NSMutableSet set];
     for (UITabBarItem *item in bar.items) {
-        UIView *view = [item valueForKey:@"view"];
-        if (view) [owned addObject:view];
+        id view = nil;
+        @try {
+            view = [item valueForKey:@"view"];
+        } @catch (NSException *e) {
+            return;
+        }
+        if ([view isKindOfClass:UIView.class]) [owned addObject:view];
     }
     if (!bar.items.count || owned.count != bar.items.count) return;
     for (UIView *v in tabButtons(bar)) {

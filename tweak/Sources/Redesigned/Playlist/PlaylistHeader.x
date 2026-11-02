@@ -453,6 +453,14 @@ static SGRHeaderInfo *applyInfo(UIView *block, UIView *headerRoot, UIViewControl
 
 // Find on this page and Sort sit above the cover, shown as the page is pulled down. They stay Spotify's own
 // controls, so the tap opens Spotify's find page; only the grey box becomes glass.
+static void glassUp(UIView *box, const void *key) {
+    CGSize size = box.bounds.size;
+    if (size.width < 1 || size.height < 1) return;
+    if (box.backgroundColor != UIColor.clearColor) box.backgroundColor = UIColor.clearColor;
+    if (box.layer.cornerRadius != size.height / 2) box.layer.cornerRadius = size.height / 2;
+    SGRGlassCapsuleInside(box, key, size, NO);
+}
+
 static void applyToolbar(UIView *headerRoot) {
     static char kFieldKey, kSortBoxKey, kFieldGlassKey, kSortGlassKey;
     SGRPinnedBack(SGRPlaylistPageOf(headerRoot), headerRoot);
@@ -460,8 +468,15 @@ static void applyToolbar(UIView *headerRoot) {
     // field alone, straight in the header.
     UIView *toolbar = SGRFindByIdentifier(headerRoot, @"Components.Header.UI.Toolbar.Content", &kToolbarKey);
     UIView *field = SGRFindByIdentifier(toolbar ?: headerRoot, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey);
-    SGRGlassFlatBox(field, &kFieldGlassKey, NO);
-    if (toolbar) SGRGlassFlatBox(SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.ButtonContainer", &kSortBoxKey), &kSortGlassKey, NO);
+    UIView *sort = toolbar ? SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.ButtonContainer", &kSortBoxKey) : nil;
+    if (SGBelowiOS26()) {
+        SGRGlassFlatBox(field, &kFieldGlassKey, NO);
+        SGRGlassFlatBox(sort, &kSortGlassKey, NO);
+    } else if (toolbar) {
+        // iOS 26: the system's glass in the boxes, as before the legacy glass.
+        glassUp(field, &kFieldGlassKey);
+        glassUp(sort, &kSortGlassKey);
+    }
     static BOOL logged;
     if (!logged && field.window) {
         logged = YES;

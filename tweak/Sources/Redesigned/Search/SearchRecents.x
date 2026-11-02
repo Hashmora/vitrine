@@ -43,7 +43,8 @@ static Class encoreButtonClass(void) {
 }
 
 %ctor {
-    if (!SGRedesignedUI()) return;
+    // Below iOS 26 only: on iOS 26 the crosses keep the look they have on main.
+    if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     Class button = encoreButtonClass();
     if (button) {
         SGRPassView(button, ^(UIView *v) { dressCross(v); });

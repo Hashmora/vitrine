@@ -24,7 +24,8 @@ static void dressOutlined(UIView *button) {
 }
 
 %ctor {
-    if (!SGRedesignedUI()) return;
+    // Below iOS 26 only: on iOS 26 the page keeps the look it has on main.
+    if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     Class button = SGRSwiftClass(@"LegacyUI_ECMCoreKit", @"CallToActionButton");
     if (button) SGRPassView(button, ^(UIView *v) { dressOutlined(v); });
     else SGLog(@"class LegacyUI_ECMCoreKit.CallToActionButton not found, outlined buttons keep Spotify's ring");

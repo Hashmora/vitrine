@@ -713,7 +713,7 @@ static void styleNowPlayingBar(UIViewController *container) {
 // Spotify hides the bar while Create's menu is up, because the menu covers the bar's place above the tab bar. The
 // card in the minimized row is below the menu, so it stays: the minimized bar does not go away with the menu.
 - (void)setHidden:(BOOL)hidden {
-    if (hidden && sg_inline && [sg_inline isDescendantOfView:(UIView *)self] && SGRTabBarMinimized() && SGRCreateMenuUp((UIView *)self)) {
+    if (hidden && SGBelowiOS26() && sg_inline && [sg_inline isDescendantOfView:(UIView *)self] && SGRTabBarMinimized() && SGRCreateMenuUp((UIView *)self)) {
         %orig(NO);
         return;
     }
@@ -783,8 +783,11 @@ static void restyleAfterPlayer(void) {
 %ctor {
     if (!SGRedesignedUI()) return;
     %init;
-    [NSNotificationCenter.defaultCenter addObserverForName:SGPlayerTransitionEndedNotification object:nil queue:nil
-                                                usingBlock:^(NSNotification *note) { restyleAfterPlayer(); }];
+    // Below iOS 26 only: the redesign's iOS 26 bar stays as it is on main.
+    if (SGBelowiOS26()) {
+        [NSNotificationCenter.defaultCenter addObserverForName:SGPlayerTransitionEndedNotification object:nil queue:nil
+                                                    usingBlock:^(NSNotification *note) { restyleAfterPlayer(); }];
+    }
     SGRequireClasses(@[
         @"_TtC18NowPlaying_BarImpl36NowPlayingBarContainerViewController",
         @"_TtC18NowPlaying_BarImpl27NowPlayingBarViewController",

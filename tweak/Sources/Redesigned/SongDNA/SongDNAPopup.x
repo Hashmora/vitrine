@@ -65,7 +65,8 @@ static void dressPopup(UIView *popup) {
 %end
 
 %ctor {
-    if (!SGRedesignedUI()) return;
+    // Below iOS 26 only: on iOS 26 the page keeps the look it has on main.
+    if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     Class popup = SGRSwiftClass(@"SongDNA_MapKit", @"DNAPopupView");
     if (!popup) {
         SGLog(@"class SongDNA_MapKit.DNAPopupView not found, the contributor pop-up keeps Spotify's grey");

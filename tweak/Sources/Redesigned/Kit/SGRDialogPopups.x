@@ -1,4 +1,4 @@
-// Redesign: Spotify's own white pop-up dialogs, shown as the system's notification: a UIAlertController, which
+// Redesign, iOS < 26: Spotify's own white pop-up dialogs, shown as the system's notification: a UIAlertController, which
 // SGRAlertHook.x draws as the redesign's alert below iOS 26 (SGRAlertScreen.m: a glass card with 35pt corners, white
 // text, a capsule button filled with the accent for the main action and one of 10% white for the rest) and the system
 // draws as its own glass alert from iOS 26 on.
@@ -29,6 +29,11 @@
 //
 // The window is made visible again a second after the dialog is gone, so a window Spotify keeps and uses for the next
 // dialog is not left invisible. If Spotify takes the dialog down itself while the alert is up, the alert goes too.
+//
+// The dialog is found from its window, not from a hook on every view: a window above the app's (a plain UIWindow or one
+// of Spotify's, never UIKit's own keyboard and text effect windows) is looked through as it is shown, laid out or given a
+// view, and a moment after it is shown, as Spotify fills it in; its taking down is seen as the window is hidden or no
+// longer holds the dialog. On iOS 26 none of this runs, and Spotify's dialogs are its own, as on main.
 //
 // Create cover art > Cancel > "Are you sure" is a web page, not a view of Spotify's: nothing to replace.
 #import "Core/SGCore.h"
@@ -299,6 +304,7 @@ static BOOL presentNotification(SGRDialogTake *take, NSDictionary *read) {
     }
     if (main) alert.preferredAction = main;
 
+    SGPresentDark(alert);
     [presenter presentViewController:alert animated:YES completion:nil];
     take.presenter = presenter;
     take.presented = YES;
@@ -393,24 +399,84 @@ static void dressWindow(UIWindow *window) {
     for (UIView *host in hosts) dressLater(host);
 }
 
-%hook UIView
-- (void)willMoveToWindow:(UIWindow *)newWindow {
-    UIView *view = (UIView *)self;
-    UIWindow *old = view.window;
-    if (old && !newWindow && old.windowLevel > UIWindowLevelNormal && view.accessibilityIdentifier.length && hostOf(view)) abandon(old);
-    %orig;
+// A window a dialog of Spotify's can be in: above the app's, shown, and not one of UIKit's own (the keyboard's, text
+// effects') or the mod's.
+static BOOL dialogWindow(UIWindow *window) {
+    if (window.hidden || window.windowLevel <= UIWindowLevelNormal) return NO;
+    NSString *name = NSStringFromClass(window.class);
+    if ([name isEqualToString:@"UIWindow"]) return YES;
+    return ![name hasPrefix:@"UI"] && ![name hasPrefix:@"_UI"] && ![name hasPrefix:@"SG"];
 }
 
-- (void)didMoveToWindow {
-    %orig;
-    UIView *view = (UIView *)self;
-    if (!view.window || !view.accessibilityIdentifier.length) return;
-    UIView *host = hostOf(view);
-    if (host && !takeOver(view.window)) dressLater(host);
+static UIView *dialogIn(UIWindow *window) {
+    __block UIView *host = nil;
+    SGForEachView(window, ^(UIView *view) {
+        if (!host && view.accessibilityIdentifier.length) host = hostOf(view);
+    });
+    return host;
 }
+
+// While a taken dialog is up: once its window is hidden or holds it no more, Spotify took it down.
+static void watchGone(UIWindow *window) {
+    __weak UIWindow *weak = window;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIWindow *still = weak;
+        SGRDialogTake *take = still ? objc_getAssociatedObject(still, &kTakeKey) : nil;
+        if (!take || take.done) return;
+        if (still.hidden || !dialogIn(still)) abandon(still);
+        else watchGone(still);
+    });
+}
+
+static void lookForDialog(UIWindow *window) {
+    if (!dialogWindow(window)) return;
+    SGRDialogTake *current = objc_getAssociatedObject(window, &kTakeKey);
+    if (current && !current.done) return;
+    UIView *host = dialogIn(window);
+    if (!host) return;
+    if (takeOver(window)) watchGone(window);
+    else dressLater(host);
+}
+
+// Shown: looked through now and as Spotify fills it in.
+static void lookSoon(UIWindow *window) {
+    lookForDialog(window);
+    __weak UIWindow *weak = window;
+    for (NSNumber *after in @[@0.02, @0.08, @0.2, @0.4]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(after.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIWindow *still = weak;
+            if (still) lookForDialog(still);
+        });
+    }
+}
+
+%group SGRDialogs
+%hook UIWindow
+- (void)setHidden:(BOOL)hidden {
+    %orig;
+    UIWindow *window = (UIWindow *)self;
+    if (!hidden) lookSoon(window);
+    else if (objc_getAssociatedObject(window, &kTakeKey)) abandon(window);
+}
+
+- (void)makeKeyAndVisible {
+    %orig;
+    lookSoon((UIWindow *)self);
+}
+
+- (void)layoutSubviews {
+    %orig;
+    lookForDialog((UIWindow *)self);
+}
+
+- (void)didAddSubview:(UIView *)subview {
+    %orig;
+    lookForDialog((UIWindow *)self);
+}
+%end
 %end
 
 %ctor {
-    if (!SGRedesignedUI()) return;
-    %init;
+    if (!SGRedesignedUI() || !SGBelowiOS26()) return;
+    %init(SGRDialogs);
 }

@@ -152,7 +152,8 @@ static void barPass(UIView *bar) {
 }
 
 %ctor {
-    if (!SGRedesignedUI()) return;
+    // Below iOS 26 only: on iOS 26 the page keeps the look it has on main.
+    if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     Class hosting = SGRSwiftClass(@"Navigation_PageAPIIntegrationImpl", @"MusicAppPageHostingViewController");
     if (!hosting) {
         SGLog(@"class Navigation_PageAPIIntegrationImpl.MusicAppPageHostingViewController not found, Chapters, Listening stats, Your Premium and Manage subscription keep Spotify's bar");
