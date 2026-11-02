@@ -184,6 +184,29 @@ static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
     } completion:nil];
 }
 
+// Create's menu dims the page behind the bar, and the bar reads best then: its tabs stand out on the glass whatever
+// the page under it shows. The glass carries that dimming itself, always: a black layer inside the pane, over what the
+// glass shows of the page and under its rim, the white film and the tabs.
+static const CGFloat kTabBarDim = 0.45;
+static char kNavDimKey, kCircleDimKey;
+
+static void darkenPane(UIView *pane, const void *key, CGFloat radius) {
+    UIView *content = [pane isKindOfClass:UIVisualEffectView.class] ? ((UIVisualEffectView *)pane).contentView
+                    : [pane isKindOfClass:SGLegacyGlassView.class] ? ((SGLegacyGlassView *)pane).contentView : nil;
+    if (!content) return;
+    UIView *dim = SGLazyChild(content, key, ^UIView *{
+        UIView *view = [UIView new];
+        view.userInteractionEnabled = NO;
+        view.backgroundColor = [UIColor colorWithWhite:0 alpha:kTabBarDim];
+        view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        return view;
+    });
+    if (dim.superview != content) [content insertSubview:dim atIndex:0];
+    if (!CGRectEqualToRect(dim.frame, content.bounds)) dim.frame = content.bounds;
+    if (dim.layer.cornerRadius != radius) dim.layer.cornerRadius = radius;
+    if (dim.layer.cornerCurve != pane.layer.cornerCurve) dim.layer.cornerCurve = pane.layer.cornerCurve;
+}
+
 // A round control of the compact bar: a glass circle with one tab's glyph on it. The glass is SGGlassFor's, so
 // it is a legacy glass pane with Legacy Liquid Glass on and a plain blur without it, and comes and goes by its
 // effect (SGRShowGlass), never by an alpha on the control, which UIKit draws a blur wrongly under. The control
@@ -238,6 +261,7 @@ static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
     if (!CGRectEqualToRect(_pane.frame, bounds)) _pane.frame = bounds;
     SGShapeGlass(_pane, radius, YES);
     _pane.layer.cornerCurve = kCACornerCurveCircular;
+    darkenPane(_pane, &kCircleDimKey, radius);
     SGRGlassFilm(self, &kCircleFilmKey, _pane, radius).layer.cornerCurve = kCACornerCurveCircular;
     // bounds and center, not frame: the glyph is turned while Create's menu is up.
     _glyph.bounds = (CGRect){CGPointZero, bounds.size};
@@ -1494,6 +1518,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     if (!CGSizeEqualToSize(navGlass.bounds.size, glassFrame.size)) navGlass.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navGlass.center, glassCenter)) navGlass.center = glassCenter;
     SGShapeGlass(navGlass, glassFrame.size.height / 2, NO);
+    darkenPane(navGlass, &kNavDimKey, glassFrame.size.height / 2);
 
     UIView *navTint = SGRGlassFilm(host, &kNavTintKey, navGlass, glassFrame.size.height / 2);
     // SGRGlassFilm sets the film's frame from the pane's; the film is given the pane's bounds and center as well.
