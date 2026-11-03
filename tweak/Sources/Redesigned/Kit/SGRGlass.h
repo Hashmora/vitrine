@@ -78,6 +78,14 @@ void SGRGlassSetFilm(UIView *shape, BOOL on, CGFloat radius);
 // and on its frame, with corners of `radius`. Nil on iOS 26, where the system glass needs none.
 UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radius);
 
+// How much floating glass is dimmed (SGRDarkenGlass): what Create's menu dims the page behind the tab bar by, under
+// which the bar read best.
+extern const CGFloat SGRBarDim;
+// A black layer of `alpha` inside `pane` (a legacy glass pane or a blur), made once under `key`: over what the glass
+// shows of the page, under its rim, its film and what stands on it, so the controls on floating glass (the tab bar,
+// the now playing card, the top buttons, the toast) stand out over a bright page. Corners of `radius`. Nil on iOS 26.
+UIView *SGRDarkenGlass(UIView *pane, const void *key, CGFloat radius, CGFloat alpha);
+
 // The chrome of a bottom sheet Spotify draws around an opaque "sheet-view" pane: the ⋯ context menu, the
 // queue, and the pop-art track info under the now playing bar. A glass pane goes behind the pane's own
 // paint and the plain wrapper views between it and the sheet's first scrolling list lose their fill. Stops
