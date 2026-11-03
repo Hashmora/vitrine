@@ -253,6 +253,28 @@ void SGRGlassSetFilm(UIView *shape, BOOL on, CGFloat radius) {
     }
 }
 
+const CGFloat SGRBarDim = 0.45;
+
+UIView *SGRDarkenGlass(UIView *pane, const void *key, CGFloat radius, CGFloat alpha) {
+    if (@available(iOS 26.0, *)) return nil;
+    UIView *content = [pane isKindOfClass:UIVisualEffectView.class] ? ((UIVisualEffectView *)pane).contentView
+                    : [pane isKindOfClass:SGLegacyGlassView.class] ? ((SGLegacyGlassView *)pane).contentView : nil;
+    if (!content) return nil;
+    UIView *dim = SGLazyChild(content, key, ^UIView *{
+        UIView *view = [UIView new];
+        view.userInteractionEnabled = NO;
+        view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        return view;
+    });
+    UIColor *color = [UIColor colorWithWhite:0 alpha:alpha];
+    if (![dim.backgroundColor isEqual:color]) dim.backgroundColor = color;
+    if (dim.superview != content) [content insertSubview:dim atIndex:0];
+    if (!CGRectEqualToRect(dim.frame, content.bounds)) dim.frame = content.bounds;
+    if (dim.layer.cornerRadius != radius) dim.layer.cornerRadius = radius;
+    if (dim.layer.cornerCurve != pane.layer.cornerCurve) dim.layer.cornerCurve = pane.layer.cornerCurve;
+    return dim;
+}
+
 UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radius) {
     if (@available(iOS 26.0, *)) return nil;
     UIView *film = SGLazyChild(host, key, ^UIView *{
