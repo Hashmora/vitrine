@@ -68,7 +68,7 @@ static const CGFloat kActionInset = 9;
 // The space between the label and the glass round the action.
 static const CGFloat kLabelGap = 16;
 
-static char kGlassKey, kFilmKey, kActionGlassKey, kDressedKey;
+static char kGlassKey, kFilmKey, kDimKey, kActionGlassKey, kDressedKey;
 // The toast on screen, for the tab bar's minimize to move.
 static __weak UIView *sg_snackbar;
 
@@ -229,6 +229,8 @@ static void dressSnackbar(UIView *snackbar) {
     if (!CGPointEqualToPoint(card.center, center)) card.center = center;
     followNowPlayingBar(snackbar);
     UIView *glass = SGRGlassFloatingCard(card, &kGlassKey, &kFilmKey, kMaxRadius);
+    // Dimmed as the tab bar's glass is, so its text stands out over a bright page.
+    SGRDarkenGlass(glass, &kDimKey, MIN(kMaxRadius, bounds.size.height / 2), SGRBarDim);
 
     // What the card holds follows it, and the label and the button are placed for its width.
     for (UIView *sub in card.subviews) {
