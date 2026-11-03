@@ -11,13 +11,14 @@
 //
 // Footer: DJMFooterUnitView holds the share button, the DJ button, Connect and an empty view, not in a stack.
 // Connect and the DJ button stay Spotify's and are only moved, by a transform that survives relayout. Lyrics
-// and Queue are the Kit's glyph buttons; Queue, the Music app's list.bullet (issue #109), opens spotify:now-playing:queue.
+// and Queue are the Kit's glyph buttons; Queue, the Music app's list.bullet (issue #109), opens the DJ's own list of the tracks to come (DJQueue.m):
+// Spotify's queue page shows only the track playing under the DJ.
 // The DJ button's blue disc is masked away and the Music app's waveform drawn over it: the mask hides what the button
 // draws but not its touches or its accessibility, which stay Spotify's. With Spotify's icons (SGRKeyPlayerSpotifyIcons)
 // the disc stays, and Lyrics and Queue draw Spotify's Encore glyphs.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
-#import "Shared/Navigation/Links.h"
+#import "DJQueue.h"
 #import "Player.h"
 
 static const CGFloat kSkipGlyphSize = 32, kFooterGlyphSize = 20;
@@ -195,7 +196,7 @@ static void styleFooter(UIViewController *unit) {
     }
 
     SGRGlyphButton *queue = glyphButtonIn(host, &kQueueKey, @"list.bullet", @"Queue", SGRPrimary(), ^{
-        SGOpenSpotifyURI([NSURL URLWithString:@"spotify:now-playing:queue"]);
+        SGRShowDJQueue();
     });
     queue.bounds = CGRectMake(0, 0, 44, 44);
     queue.center = CGPointMake(slot(2), middleY);
