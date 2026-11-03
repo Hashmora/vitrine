@@ -29,7 +29,7 @@
 #import "Redesigned/ContextMenu/ContextMenu.h"
 #import "Player.h"
 
-static char kGlassKey, kCloseKey, kMoreKey, kPressKey;
+static char kGlassKey, kDimKey, kCloseKey, kMoreKey, kPressKey;
 static const CGFloat kPressScale = 0.92;
 
 @interface SGRHeaderPress : NSObject
@@ -84,6 +84,8 @@ static void glassInside(UIViewController *unit, NSArray<NSArray<NSString *> *> *
             continue;
         }
         UIView *circle = SGRGlassInside(button, &kGlassKey, SGRGlassCircleSize);
+        // The down arrow and the ⋯ dimmed as the tab bar's glass is, below iOS 26.
+        SGRDarkenGlass(circle, &kDimKey, SGRGlassCircleSize / 2, SGRBarDim);
         if (![said containsObject:name] && button.bounds.size.width > 0) {
             [said addObject:name];
             SGLog(@"redesign player: a %.0fpt glass circle in %@ (id %@, %.0fx%.0f, %@)", circle.bounds.size.width, NSStringFromClass(button.class),
