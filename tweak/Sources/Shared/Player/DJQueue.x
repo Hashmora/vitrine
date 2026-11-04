@@ -38,7 +38,8 @@ static void lineUpTheFuture(id queue, NSString *reader) {
     NSMutableArray<SPTPlayerTrack *> *ahead = [sAhead mutableCopy];
     BOOL overlaps = NO;
     for (SPTPlayerTrack *track in future) overlaps = overlaps || has(ahead, track);
-    if (![state.contextURI isEqual:sAheadContext] || !overlaps) [ahead removeAllObjects];
+    // Hand-queued tracks can fill the player's two: then it says nothing of the DJ's, and what was kept stands.
+    if (![state.contextURI isEqual:sAheadContext] || (future.count && !overlaps)) [ahead removeAllObjects];
     sAheadContext = state.contextURI;
     for (NSUInteger i = 0; i < ahead.count; i++) {
         if ([ahead[i].URI isEqual:state.track.URI]) {
@@ -111,7 +112,9 @@ static void lineUpTheFuture(id queue, NSString *reader) {
 %hook _TtC14Queue_ViewImpl19QueueViewController
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger section = tableView.numberOfSections - 1;
-    NSInteger first = [tableView numberOfRowsInSection:section] - (NSInteger)sInjected.count;
+    NSInteger rows = [tableView numberOfRowsInSection:section], first = rows - (NSInteger)sInjected.count;
+    SGLog(@"queue page: tap on section %ld row %ld of %ld sections, %ld rows in the last, %lu put in", (long)indexPath.section,
+          (long)indexPath.row, (long)tableView.numberOfSections, (long)rows, (unsigned long)sInjected.count);
     if (sInjected.count && first >= 0 && indexPath.section == section && indexPath.row >= first) {
         SPTPlayerTrack *track = sInjected[indexPath.row - first];
         [tableView deselectRowAtIndexPath:indexPath animated:YES];
