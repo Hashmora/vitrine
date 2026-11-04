@@ -40,6 +40,19 @@ static BOOL isDJTrack(SPTPlayerTrack *track) {
     return [uri hasPrefix:@"spotify:track:"] || [uri hasPrefix:@"spotify:episode:"];
 }
 
+// Whether `candidate` is what the player is on now. While the DJ speaks, the player's track is the narration
+// (spotify:media:ID, the same UID as the song it introduces), and the song (spotify:track:ID) still stands first in
+// the state's future. It is the same item, so it is taken out of the tracks to come the moment the voice starts and
+// does not show twice, first under the playing row and then jumping out of it.
+static BOOL isCurrent(SPTPlayerTrack *candidate, SPTPlayerTrack *current) {
+    if (!current) return NO;
+    if ([candidate.URI isEqual:current.URI]) return YES;
+    NSString *uri = SGURIString(current.URI), *prefix = @"spotify:media:";
+    if (![uri hasPrefix:prefix]) return NO;
+    if (current.UID.length && [candidate.UID isEqualToString:current.UID]) return YES;
+    return [SGURIString(candidate.URI) hasSuffix:[@":" stringByAppendingString:[uri substringFromIndex:prefix.length]]];
+}
+
 // The tracks the DJ has to come in the state's future: they end at the delimiter, after which the core puts the whole
 // session again as hidden stand-ins, and a track the list has already named is such a stand-in too.
 static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
@@ -67,7 +80,7 @@ static void dumpFuture(SPTPlayerState *state) {
     for (SPTPlayerTrack *track in state.future) [signature appendFormat:@"%@|", track.UID];
     if ([signature isEqualToString:last]) return;
     last = [signature copy];
-    NSArray<NSString *> *words = @[@"hidden", @"delimiter", @"page", @"segment", @"iteration", @"advancing"];
+    NSArray<NSString *> *words = @[@"hidden", @"delimiter", @"page", @"segment", @"iteration", @"advancing", @"image", @"title", @"artist_name"];
     NSUInteger place = 0;
     for (SPTPlayerTrack *track in state.future) {
         NSMutableArray<NSString *> *flags = [NSMutableArray array];
@@ -111,7 +124,7 @@ static void lineUpTheFuture(id queue, NSString *reader) {
         }
     }
     for (NSUInteger i = 0; i < ahead.count; i++) {
-        if ([ahead[i].URI isEqual:state.track.URI]) {
+        if (isCurrent(ahead[i], state.track)) {
             [ahead removeObjectsInRange:NSMakeRange(0, i + 1)];
             break;
         }
@@ -134,8 +147,9 @@ static void lineUpTheFuture(id queue, NSString *reader) {
     if (injected.count) [queue setValue:merged forKey:@"nextTracks"];
     SGLog(@"queue (%@): context %@, playing %@, %lu next before, %lu now, state's future %lu", reader, SGURIString(state.contextURI),
           state.track.trackTitle, (unsigned long)next.count, (unsigned long)merged.count, (unsigned long)state.future.count);
-    SGLog(@"queue (%@): future %lu raw, %lu of the DJ's, ahead %lu, first uid %@, last uid %@", reader, (unsigned long)state.future.count,
-          (unsigned long)future.count, (unsigned long)ahead.count, future.firstObject.UID, future.lastObject.UID);
+    SGLog(@"queue (%@): future %lu raw, %lu of the DJ's, ahead %lu, first uid %@, last uid %@, current %@ uid %@", reader,
+          (unsigned long)state.future.count, (unsigned long)future.count, (unsigned long)ahead.count, future.firstObject.UID,
+          future.lastObject.UID, SGURIString(state.track.URI), state.track.UID);
 }
 
 %hook _TtC16Queue_UpNextImpl19UpNextTrackProvider
