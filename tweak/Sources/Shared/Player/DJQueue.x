@@ -6,6 +6,10 @@
 // its rows, Spotify's. The readers are the queue page's own two observers (the page does not go through the Up
 // next card's provider) and that provider.
 //
+// The two is the request's, not the core's: the player's subscription asks the core for the state with a cap on the
+// tracks to come (ESPGetStateRequest.nextTracksCap), so the state's future is as long as that. It is raised here to what
+// the core keeps ahead of the DJ, and the copy of the session that follows the DJ's last page is cut off.
+//
 // The page takes a tap on one of them for a row of the core's queue, which it is not, and gives no command; it is
 // skipped to as the player's here. The queue is logged as each reader is told of it, and so are the commands the
 // page gives the player, for the phone's log.
@@ -27,11 +31,34 @@ static NSUInteger indexIn(NSArray<SPTPlayerTrack *> *tracks, SPTPlayerTrack *tra
 static NSArray<SPTPlayerTrack *> *sAhead = @[], *sQueue = @[], *sInjected = @[];
 static id sAheadContext;
 
+// What the DJ's pages need: three segments of five and the narration between them, with room for the hand-queued.
+static const int64_t kFutureCap = 80;
+
+// A track of the DJ's to come: not the narration, a page marker or the delimiter that ends the pages.
+static BOOL isDJTrack(SPTPlayerTrack *track) {
+    NSString *uri = SGURIString(track.URI);
+    return [uri hasPrefix:@"spotify:track:"] || [uri hasPrefix:@"spotify:episode:"];
+}
+
+// The tracks the DJ has to come in the state's future: they end at the delimiter, after which the core puts the whole
+// session again as hidden stand-ins, and a track the list has already named is such a stand-in too.
+static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
+    NSMutableArray<SPTPlayerTrack *> *tracks = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (SPTPlayerTrack *track in future) {
+        if ([track.provider isEqualToString:@"queue"]) continue;
+        if ([SGURIString(track.URI) isEqualToString:@"spotify:delimiter"]) break;
+        if (!isDJTrack(track)) continue;
+        if (track.UID.length && ![seen addObject:track.UID]) break;
+        [tracks addObject:track];
+    }
+    return tracks;
+}
+
 static void lineUpTheFuture(id queue, NSString *reader) {
     SPTPlayerState *state = SGPlayerState();
     NSArray<SPTPlayerTrack *> *next = [queue valueForKey:@"nextTracks"];
-    NSMutableArray<SPTPlayerTrack *> *future = [NSMutableArray array];
-    for (SPTPlayerTrack *track in state.future) if (![track.provider isEqualToString:@"queue"]) [future addObject:track];
+    NSArray<SPTPlayerTrack *> *future = djFuture(state.future);
 
     // The state's own, then what was kept after its last one. When hand-queued tracks fill the state's two it names
     // none of the DJ's, and what was kept stands. A list that does not go on from the kept one is the DJ's new.
@@ -68,6 +95,8 @@ static void lineUpTheFuture(id queue, NSString *reader) {
     if (injected.count) [queue setValue:merged forKey:@"nextTracks"];
     SGLog(@"queue (%@): context %@, playing %@, %lu next before, %lu now, state's future %lu", reader, SGURIString(state.contextURI),
           state.track.trackTitle, (unsigned long)next.count, (unsigned long)merged.count, (unsigned long)state.future.count);
+    SGLog(@"queue (%@): future %lu raw, %lu of the DJ's, ahead %lu, first uid %@, last uid %@", reader, (unsigned long)state.future.count,
+          (unsigned long)future.count, (unsigned long)ahead.count, future.firstObject.UID, future.lastObject.UID);
 }
 
 %hook _TtC16Queue_UpNextImpl19UpNextTrackProvider
@@ -88,6 +117,25 @@ static void lineUpTheFuture(id queue, NSString *reader) {
 - (void)player:(id)player queueDidChange:(id)queue {
     lineUpTheFuture(queue, @"page queued");
     %orig;
+}
+%end
+
+// The request the player's subscription makes of the core, with the caps it puts on the tracks before and after the
+// current one. The future's cap is raised; what the request had is logged, for the phone's log.
+%hook SPTPlayerSubscriptionImplementation
+- (id)makeObservationRequest {
+    id request = %orig;
+    id prev = [request valueForKey:@"prevTracksCap"], next = [request valueForKey:@"nextTracksCap"];
+    SGLog(@"state request: caps %@ / %@ (previous / next), has next cap %@", [prev valueForKey:@"value"], [next valueForKey:@"value"],
+          [request valueForKey:@"hasNextTracksCap"]);
+    Class optional = NSClassFromString(@"ESPOptionalInt64");
+    if (optional && [[next valueForKey:@"value"] longLongValue] < kFutureCap) {
+        id cap = [[optional alloc] init];
+        [cap setValue:@(kFutureCap) forKey:@"value"];
+        [request setValue:cap forKey:@"nextTracksCap"];
+        SGLog(@"state request: next cap raised to %lld", kFutureCap);
+    }
+    return request;
 }
 %end
 
@@ -135,5 +183,5 @@ static void lineUpTheFuture(id queue, NSString *reader) {
     %init;
     SGRequireClasses(@[@"_TtC16Queue_UpNextImpl19UpNextTrackProvider", @"_TtC14Queue_ViewImpl22PlayerStateEventSource",
                        @"_TtC14Queue_ViewImpl20QueuedTracksObserver", @"_TtC14Queue_ViewImpl19QueueViewController",
-                       @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer"]);
+                       @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer", @"SPTPlayerSubscriptionImplementation"]);
 }
