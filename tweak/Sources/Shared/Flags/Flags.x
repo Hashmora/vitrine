@@ -14,21 +14,43 @@
 static _Atomic uint64_t sg_reads, sg_mainReads, sg_ticks;
 static const NSTimeInterval kCountFor = 15;
 
-// AutoMix is present in 9.1.78 but its rollout is split across several remote-config
-// flags. Keep the probe observational: the All Flags override can turn one on at a
-// time, while this names every candidate Spotify actually asks for.
+// Playlist mixing (Spotify's custom transitions, the editor, the Mix button) is one remote-config component,
+// SPTPlaylistMixing_ConfigurationImplProperties (isEnabled, freeExperienceEnabled, headerMixButtonEnabled,
+// trackSwapEnabled, curveEditingEnabled, beatmatchToggleEnabled, ...). The AutoMix flags the probe first named are
+// only the DJ ones in it. Every flag Spotify asks of the component is logged once, so the names are the real ones.
+static NSString *const kMixingComponent = @"ios-playlistcuration-mats.";
+
 static BOOL isAutoMixProbeFlag(NSString *key) {
-    static NSSet<NSString *> *keys;
+    return [key hasPrefix:kMixingComponent];
+}
+
+// What the transition experiment (AutoMix > Testing) turns on: the master switch, the free experience, the Mix button
+// and the editors, and the DJ and backend transition flags. Not the debug, sharing and messaging ones.
+static BOOL isMixingExperimentFlag(NSString *key) {
+    static NSArray<NSString *> *wanted;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        keys = [NSSet setWithObjects:
-            @"ios-playlistcuration-mats.auto_mix_enabled_for_dj",
-            @"ios-playlistcuration-mats.dj_auto_mix_context_menu_enabled",
-            @"ios-playlistcuration-mats.debug_bypass_mixability_for_dj",
-            @"ios-playlistcuration-mats.backend_auto_transition_enabled",
-            @"ios-playlistcuration-mats.smart_reorder_on_auto_mix_enabled", nil];
+        wanted = @[@"is_enabled", @"free_experience", @"header_mix_button", @"auto_mix", @"automix", @"backend_auto",
+                   @"beatmatch", @"track_swap", @"curve_editing", @"effects_style", @"transition_curation",
+                   @"debug_bypass_mixability", @"smart_reorder", @"auto_lens"];
     });
-    return [keys containsObject:key];
+    if (![key hasPrefix:kMixingComponent]) return NO;
+    NSString *name = [key substringFromIndex:kMixingComponent.length];
+    for (NSString *part in wanted) if ([name containsString:part]) return YES;
+    return NO;
+}
+
+// Each flag once: Spotify asks for the same ones many times.
+static void logMixingFlag(NSString *key, BOOL orig, id value) {
+    static NSMutableSet<NSString *> *seen;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ seen = [NSMutableSet set]; });
+    @synchronized (seen) {
+        if ([seen containsObject:key]) return;
+        [seen addObject:key];
+    }
+    SGLog(@"automix flag: %@ Spotify %@, handed %@%@", key, orig ? @"on" : @"off",
+          value ? ([value boolValue] ? @"on" : @"off") : (orig ? @"on" : @"off"), value ? @" (override/forcer)" : @"");
 }
 
 static id forced(NSString *key) {
@@ -42,13 +64,9 @@ static id forced(NSString *key) {
 
 static BOOL boolFor(NSString *key, BOOL orig) {
     id value = forced(key);
-    // The transition experiment (AutoMix > Testing): the AutoMix flags on unless the Flags page set one itself.
-    if (!value && isAutoMixProbeFlag(key) && SGAutoMixExperimentOn()) value = @YES;
-    if (isAutoMixProbeFlag(key)) {
-        SGLog(@"automix flag: %@ Spotify %@, handed %@%@", key, orig ? @"on" : @"off",
-              value ? ([value boolValue] ? @"on" : @"off") : (orig ? @"on" : @"off"),
-              value ? @" (override/forcer)" : @"");
-    }
+    // The transition experiment (AutoMix > Testing): the mixing flags on unless the Flags page set one itself.
+    if (!value && SGAutoMixExperimentOn() && isMixingExperimentFlag(key)) value = @YES;
+    if (isAutoMixProbeFlag(key)) logMixingFlag(key, orig, value);
     return value ? [value boolValue] : orig;
 }
 
