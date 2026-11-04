@@ -21,7 +21,7 @@ static BOOL sameTrack(SPTPlayerTrack *a, SPTPlayerTrack *b) {
 static void lineUpTheFuture(id queue, NSString *reader) {
     SPTPlayerState *state = SGPlayerState();
     NSArray<SPTPlayerTrack *> *next = [queue valueForKey:@"nextTracks"];
-    NSMutableArray<SPTPlayerTrack *> *merged = [next mutableCopy];
+    NSMutableArray<SPTPlayerTrack *> *merged = next ? [next mutableCopy] : [NSMutableArray array];
     for (SPTPlayerTrack *track in state.future) {
         BOOL known = NO;
         for (SPTPlayerTrack *queued in next) known = known || sameTrack(queued, track);
