@@ -49,7 +49,10 @@ static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
         if ([track.provider isEqualToString:@"queue"]) continue;
         if ([SGURIString(track.URI) isEqualToString:@"spotify:delimiter"]) break;
         if (!isDJTrack(track)) continue;
-        if (track.UID.length && ![seen addObject:track.UID]) break;
+        if (track.UID.length) {
+            if ([seen containsObject:track.UID]) break;
+            [seen addObject:track.UID];
+        }
         [tracks addObject:track];
     }
     return tracks;
