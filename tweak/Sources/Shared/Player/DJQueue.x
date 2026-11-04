@@ -58,9 +58,45 @@ static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
     return tracks;
 }
 
+// What the state's future is made of, for the phone's log, when it changes: each entry's place, URI, provider and
+// UID, the metadata keys that tell what it is (hidden, delimiter, page, segment), and every list in the state's own
+// dictionary with its length, to see where the core stops giving tracks.
+static void dumpFuture(SPTPlayerState *state) {
+    static NSString *last;
+    NSMutableString *signature = [NSMutableString string];
+    for (SPTPlayerTrack *track in state.future) [signature appendFormat:@"%@|", track.UID];
+    if ([signature isEqualToString:last]) return;
+    last = [signature copy];
+    NSArray<NSString *> *words = @[@"hidden", @"delimiter", @"page", @"segment", @"iteration", @"advancing"];
+    NSUInteger place = 0;
+    for (SPTPlayerTrack *track in state.future) {
+        NSMutableArray<NSString *> *flags = [NSMutableArray array];
+        for (NSString *key in track.metadata) {
+            for (NSString *word in words) {
+                if ([key rangeOfString:word options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                    [flags addObject:[NSString stringWithFormat:@"%@=%@", key, track.metadata[key]]];
+                    break;
+                }
+            }
+        }
+        SGLog(@"future[%lu] %@ [%@] uid %@ %@", (unsigned long)place++, SGURIString(track.URI), track.provider, track.UID,
+              [flags componentsJoinedByString:@" "]);
+    }
+    id dictionary = [state valueForKey:@"dictionary"];
+    if ([dictionary isKindOfClass:[NSDictionary class]]) {
+        NSMutableArray<NSString *> *lists = [NSMutableArray array];
+        for (NSString *key in dictionary) {
+            id value = dictionary[key];
+            if ([value isKindOfClass:[NSArray class]]) [lists addObject:[NSString stringWithFormat:@"%@:%lu", key, (unsigned long)[value count]]];
+        }
+        SGLog(@"state dictionary: %lu keys, lists %@", (unsigned long)[dictionary count], [lists componentsJoinedByString:@" "]);
+    }
+}
+
 static void lineUpTheFuture(id queue, NSString *reader) {
     SPTPlayerState *state = SGPlayerState();
     NSArray<SPTPlayerTrack *> *next = [queue valueForKey:@"nextTracks"];
+    dumpFuture(state);
     NSArray<SPTPlayerTrack *> *future = djFuture(state.future);
 
     // The state's own, then what was kept after its last one. When hand-queued tracks fill the state's two it names
