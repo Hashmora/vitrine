@@ -7,6 +7,8 @@
 #import "Shared/Sing/Sing.h"
 #import "Shared/SpotifyPrefs/SpotifyPrefs.h"
 #import "AutoMix.h"
+#import "AutoMixPolicy.h"
+#import <objc/runtime.h>
 
 @interface SPTCoreProductState : NSObject
 - (NSString *)stringForKey:(NSString *)key;
@@ -59,6 +61,7 @@ static void applyStyle(SGAutoMixStyle style, NSInteger milliseconds) {
 }
 
 static void startProbe(void);
+static void resetAdaptive(void);
 
 void SGAutoMixApply(BOOL on) {
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
@@ -73,12 +76,17 @@ void SGAutoMixApply(BOOL on) {
             [defaults setObject:@[@(now.automix), @(now.crossfade), @(now.milliseconds)] forKey:SGKeyAutoMixSaved];
             SGLog(@"automix: on, Spotify was %@", describe(now));
         }
-        applyStyle(SGInt(SGKeyAutoMixStyle, SGAutoMixBeatMatched), now.milliseconds);
+        // The length the person had chosen is the base the adaptive blend works from.
+        SGSetInt(SGKeyAutoMixBase, now.milliseconds > 0 ? now.milliseconds : kDefaultMilliseconds);
+        applyStyle(SGInt(SGKeyAutoMixStyle, SGAutoMixBeatMatched), SGAutoMixBaseMilliseconds());
+        resetAdaptive();
         startProbe();
     } else if (saved.count == 3) {
         SGTransitionSettings before = {saved[0].boolValue, saved[1].boolValue, saved[2].integerValue};
         SGTransitionSettingsWrite(before);
         [defaults removeObjectForKey:SGKeyAutoMixSaved];
+        [defaults removeObjectForKey:SGKeyAutoMixBase];
+        resetAdaptive();
         SGLog(@"automix: off, Spotify back to %@", describe(before));
     }
 }
@@ -99,7 +107,7 @@ SGAutoMixStyle SGAutoMixCurrentStyle(void) {
 void SGAutoMixSetStyle(SGAutoMixStyle style) {
     SGSetInt(SGKeyAutoMixStyle, style);
     SGTransitionSettings s;
-    if (SGFlag(SGKeyAutoMix, NO) && SGTransitionSettingsRead(&s)) applyStyle(style, s.milliseconds);
+    if (SGFlag(SGKeyAutoMix, NO) && SGTransitionSettingsRead(&s)) applyStyle(style, SGAutoMixBaseMilliseconds());
 }
 
 void SGAutoMixSetSeconds(NSInteger seconds) {
@@ -109,8 +117,34 @@ void SGAutoMixSetSeconds(NSInteger seconds) {
         return;
     }
     s.milliseconds = seconds * 1000;
-    if (SGFlag(SGKeyAutoMix, NO)) s.crossfade = YES;
+    if (SGFlag(SGKeyAutoMix, NO)) {
+        s.crossfade = YES;
+        SGSetInt(SGKeyAutoMixBase, s.milliseconds);
+        resetAdaptive();   // the next pair is worked out from the new length
+    }
     SGTransitionSettingsWrite(s);
+}
+
+NSInteger SGAutoMixBaseMilliseconds(void) {
+    NSInteger base = SGInt(SGKeyAutoMixBase, 0);
+    if (base > 0 && SGFlag(SGKeyAutoMix, NO)) return base;
+    SGTransitionSettings s;
+    return SGTransitionSettingsRead(&s) && s.milliseconds > 0 ? s.milliseconds : kDefaultMilliseconds;
+}
+
+BOOL SGAutoMixExperimentOn(void) {
+    return SGFlag(SGKeyAutoMixExperiment, NO);
+}
+
+void SGAutoMixAdaptiveChanged(BOOL on) {
+    resetAdaptive();
+    SGTransitionSettings s;
+    if (on || !SGFlag(SGKeyAutoMix, NO) || !SGTransitionSettingsRead(&s)) return;
+    // Off: Spotify's own length is the chosen one again, whatever the last pair left in it.
+    s.milliseconds = SGAutoMixBaseMilliseconds();
+    s.crossfade = YES;
+    SGTransitionSettingsWrite(s);
+    SGLog(@"automix adaptive: off, Spotify back to %@", describe(s));
 }
 
 BOOL SGAutoMixAccountAllows(void) {
@@ -165,6 +199,110 @@ static NSString *trackLine(id track) {
     NSDictionary *metadata = t.metadata;
     return [NSString stringWithFormat:@"%@ \"%@\" album \"%@\" provider %@, %@", SGURIString(t.URI), t.trackTitle ?: metadata[@"title"],
             metadata[@"album_title"], t.provider, automixKeys(t)];
+}
+
+#pragma mark - the adaptive blend
+
+// The length Spotify's settings were last given by this section, -1 before the first write, and the pair of songs
+// it was worked out for. A length in Spotify's settings that is not the one written is a change made in Settings >
+// Playback since, and becomes the base.
+static NSInteger sg_adaptWritten = -1;
+static NSString *sg_adaptPair;
+
+static void resetAdaptive(void) {
+    sg_adaptWritten = -1;
+    sg_adaptPair = nil;
+}
+
+static NSString *albumOf(id track) {
+    if (![track isKindOfClass:NSClassFromString(@"SPTPlayerTrack")]) return nil;
+    id album = ((SPTPlayerTrack *)track).metadata[@"album_title"];
+    return [album isKindOfClass:NSString.class] ? album : nil;
+}
+
+static BOOL isEpisode(NSString *uri) {
+    return [uri hasPrefix:@"spotify:episode:"] || [uri hasPrefix:@"spotify:chapter:"];
+}
+
+// Called with every report: when the pair (this song, the next) is new, works out the blend into the next and
+// writes it to Spotify's settings, which its player reads at the change (the probe's line for that change shows
+// what it did: `left` near the length written means it took it). A DJ transition is Spotify's own recipe and is
+// left alone.
+static void adapt(SPTPlayerState *state) {
+    if (!SGFlag(SGKeyAutoMix, NO) || !SGFlag(SGKeyAutoMixAdaptive, YES)) return;
+    id next = state.future.firstObject;
+    if (![next isKindOfClass:NSClassFromString(@"SPTPlayerTrack")]) return;
+    NSString *a = SGURIString(state.track.URI), *b = SGURIString(((SPTPlayerTrack *)next).URI);
+    if (!a || !b) return;
+    NSString *pair = [NSString stringWithFormat:@"%@>%@", a, b];
+    if ([pair isEqualToString:sg_adaptPair]) return;
+    SGTransitionSettings s;
+    if (!SGTransitionSettingsRead(&s)) return;
+    sg_adaptPair = pair;
+    if (sg_adaptWritten > 0 && s.milliseconds > 0 && s.milliseconds != sg_adaptWritten) {
+        SGSetInt(SGKeyAutoMixBase, s.milliseconds);
+        SGLog(@"automix adaptive: Settings > Playback changed to %ld ms, now the base", (long)s.milliseconds);
+    }
+    if (djTransitionSummary(state.track) || djTransitionSummary(next)) {
+        SGLog(@"automix adaptive: %@ -> %@ is a DJ transition, left to Spotify", a, b);
+        return;
+    }
+    NSInteger base = SGAutoMixBaseMilliseconds();
+    NSString *reason;
+    BOOL continues = SGAutoMixPolicyContinues(SGURIString(state.contextURI), albumOf(state.track), albumOf(next));
+    NSInteger ms = SGAutoMixPolicyBlend(state.duration, base, continues, isEpisode(a) || isEpisode(b), &reason);
+    SGTransitionSettings w = s;
+    w.crossfade = ms > 0;
+    w.milliseconds = ms > 0 ? ms : base;   // off keeps the length, as Spotify's own slider does at 0
+    if (w.crossfade == s.crossfade && w.milliseconds == s.milliseconds) {
+        sg_adaptWritten = w.milliseconds;
+        SGLog(@"automix adaptive: %@ -> %@: %@, already %@", a, b, reason, describe(s));
+        return;
+    }
+    SGTransitionSettingsWrite(w);
+    sg_adaptWritten = w.milliseconds;
+    SGLog(@"automix adaptive: %@ -> %@: %@ (%@), Spotify was %@, now %@", a, b, ms > 0 ? [NSString stringWithFormat:@"%ld ms", (long)ms] : @"no blend",
+          reason, describe(s), describe(w));
+}
+
+#pragma mark - the experiment
+
+// Custom transitions on ordinary playlists, for free accounts too: what Spotify loads them with is Swift, and its
+// methods are not in the Objective-C runtime, so this only logs what is: the classes with a transition's name, their
+// ivars and any Objective-C methods, and the account's product state, once per launch with the experiment switch on.
+// Flags.x forces the AutoMix flags under the same switch. Read the log beside `automix flag:` and the DJ lines.
+static void surveyTransitionClasses(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        SGLog(@"automix experiment: account type %@, catalogue %@, Spoof Premium %d",
+              [sg_productState stringForKey:@"type"] ?: @"unknown", [sg_productState stringForKey:@"catalogue"] ?: @"unknown",
+              SGHidden(SGKeyFakePremium));
+        unsigned count = 0;
+        Class *classes = objc_copyClassList(&count);
+        NSArray<NSString *> *needles = @[@"automix", @"autotransition", @"transitioncurat", @"mixingtransition", @"transitionloader"];
+        NSUInteger shown = 0;
+        for (unsigned i = 0; i < count && shown < 60; i++) {
+            NSString *name = NSStringFromClass(classes[i]);
+            NSString *lower = name.lowercaseString;
+            BOOL match = NO;
+            for (NSString *needle in needles) if ([lower containsString:needle]) { match = YES; break; }
+            if (!match || [lower containsString:@"storageclass"] || [lower containsString:@"event"]) continue;
+            shown++;
+            NSMutableArray<NSString *> *methods = [NSMutableArray array], *ivars = [NSMutableArray array];
+            unsigned n = 0;
+            Method *list = class_copyMethodList(classes[i], &n);
+            for (unsigned j = 0; j < n && j < 24; j++) [methods addObject:NSStringFromSelector(method_getName(list[j]))];
+            free(list);
+            Ivar *vars = class_copyIvarList(classes[i], &n);
+            for (unsigned j = 0; j < n && j < 12; j++) [ivars addObject:@(ivar_getName(vars[j]) ?: "?")];
+            free(vars);
+            SGLog(@"automix experiment: class %@ : %@, ivars {%@}, methods {%@}", name,
+                  NSStringFromClass(class_getSuperclass(classes[i])), [ivars componentsJoinedByString:@", "],
+                  [methods componentsJoinedByString:@", "]);
+        }
+        free(classes);
+        SGLog(@"automix experiment: %lu classes matched", (unsigned long)shown);
+    });
 }
 
 // The previous state, kept from every report so the line can say how much of the old track was left at the change:
@@ -222,6 +360,7 @@ static NSUInteger metadataCount(id track) {
     _metadataCount = count;
     _last = state;
     _silent = silent;
+    adapt(state);
 }
 
 - (void)playerStateDidChange:(SPTPlayerState *)state {
@@ -274,5 +413,6 @@ NSDictionary *SGAutoMixProbeCommand(NSDictionary *p, NSString **error) {
 %ctor {
     %init;
     SGRequireClasses(@[@"SPTCoreProductState"]);
+    if (SGAutoMixExperimentOn()) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ surveyTransitionClasses(); });
     startProbe();   // the probe only logs, so it runs with the switch off too: Spotify's own crossfade can be measured
 }

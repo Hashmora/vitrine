@@ -19,15 +19,23 @@ UIViewController *SGAutoMixSettingsPage(void) {
 
     SGModRow *blend = SGSliderRow(@"Blend length", nil, kShortest, kLongest, 1,
         ^double {
-            SGTransitionSettings s;
-            return SGTransitionSettingsRead(&s) ? MAX(kShortest, MIN(kLongest, s.milliseconds / 1000.0)) : 5;
+            return MAX(kShortest, MIN(kLongest, SGAutoMixBaseMilliseconds() / 1000.0));
         },
         ^(double value) { SGAutoMixSetSeconds(lround(value)); },
         ^NSString *(double value) { return [NSString stringWithFormat:@"%ld s", lround(value)]; });
     blend.waitsOn = SGKeyAutoMix;
 
+    // On until switched off: the length above is the longest a blend gets, and each pair of songs is given what it
+    // suits (AutoMixPolicy.h).
+    SGModRow *adaptive = SGSwitchRow(@"Adapt to each song", @"Shorter for short songs, none between songs that follow each other on an album or for podcasts", SGKeyAutoMixAdaptive);
+    adaptive.changed = ^(BOOL on) { SGAutoMixAdaptiveChanged(on); };
+    adaptive.waitsOn = SGKeyAutoMix;
+
+    SGModRow *experiment = SGOptionRow(@"Transition experiments", @"Forces Spotify's AutoMix flags on and logs what loads transitions. For testing; restart after changing", SGKeyAutoMixExperiment);
+
     NSString *note = SGAutoMixAccountAllows() ? nil : @"AutoMix needs Premium, or Spoof Premium under Premium, ads & privacy.";
     return [[SGModPage alloc] initWithTitle:@"AutoMix" intro:nil sections:@[
-        SGNotedSection(nil, @[toggle, style, blend], note),
+        SGNotedSection(nil, @[toggle, style, blend, adaptive], note),
+        SGNotedSection(@"Testing", @[experiment], nil),
     ] footer:nil];
 }

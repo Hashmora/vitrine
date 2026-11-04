@@ -8,6 +8,7 @@
 #import <stdatomic.h>
 #import "Core/SGCore.h"
 #import "Flags.h"
+#import "Shared/AutoMix/AutoMix.h"
 
 // What the mod's answers cost as Spotify starts, logged once (harness/launch measures it on the Mac).
 static _Atomic uint64_t sg_reads, sg_mainReads, sg_ticks;
@@ -41,6 +42,8 @@ static id forced(NSString *key) {
 
 static BOOL boolFor(NSString *key, BOOL orig) {
     id value = forced(key);
+    // The transition experiment (AutoMix > Testing): the AutoMix flags on unless the Flags page set one itself.
+    if (!value && isAutoMixProbeFlag(key) && SGAutoMixExperimentOn()) value = @YES;
     if (isAutoMixProbeFlag(key)) {
         SGLog(@"automix flag: %@ Spotify %@, handed %@%@", key, orig ? @"on" : @"off",
               value ? ([value boolValue] ? @"on" : @"off") : (orig ? @"on" : @"off"),

@@ -17,6 +17,14 @@
 // Spotify's [automix, crossfade, crossfade time] from before the switch went on; set only while it is on.
 #define SGKeyAutoMixSaved @"spotifyglass.automix.saved"
 
+// The blend length adapted to each pair of songs (AutoMixPolicy.h), on by default while the switch is on.
+#define SGKeyAutoMixAdaptive @"spotifyglass.automix.adaptive"
+// The length the person chose, in ms, while the adaptive blend rewrites Spotify's own from song to song.
+#define SGKeyAutoMixBase @"spotifyglass.automix.base"
+// Experiments for custom transitions on ordinary playlists: forces the AutoMix flags on and logs a survey of the
+// classes that load transitions, once per launch.
+#define SGKeyAutoMixExperiment @"spotifyglass.automix.experiment"
+
 typedef NS_ENUM(NSInteger, SGAutoMixStyle) { SGAutoMixBeatMatched, SGAutoMixCrossfade };
 
 // Spotify's own playback settings, read and written through its preferences object.
@@ -38,6 +46,12 @@ void SGAutoMixReconcile(void);
 SGAutoMixStyle SGAutoMixCurrentStyle(void);
 void SGAutoMixSetStyle(SGAutoMixStyle style);
 void SGAutoMixSetSeconds(NSInteger seconds);
+// The blend length the person chose: what the slider shows, whatever the adaptive blend has written to Spotify.
+NSInteger SGAutoMixBaseMilliseconds(void);
+// Main thread. Turning the adaptive blend off puts the chosen length back into Spotify's settings.
+void SGAutoMixAdaptiveChanged(BOOL on);
+// YES while the experiment switch is on (Flags.x forces the AutoMix flags under it).
+BOOL SGAutoMixExperimentOn(void);
 // YES on a Premium account, or a Free one under Spoof Premium; YES too before the product state is known.
 BOOL SGAutoMixAccountAllows(void);
 
