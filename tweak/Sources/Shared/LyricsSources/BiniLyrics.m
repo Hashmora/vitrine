@@ -21,7 +21,8 @@ static NSDictionary *bestOf(id results, NSInteger seconds) {
     NSInteger bestOff = NSIntegerMax;
     for (NSDictionary *found in [results isKindOfClass:NSArray.class] ? results : @[]) {
         if (![found isKindOfClass:NSDictionary.class] || ![found[@"lyricsUrl"] isKindOfClass:NSString.class]) continue;
-        NSInteger length = [found[@"duration"] integerValue];
+        id duration = found[@"duration"];
+        NSInteger length = [duration respondsToSelector:@selector(integerValue)] ? [duration integerValue] : 0;
         NSInteger off = seconds > 0 && length > 0 ? labs(length - seconds) : 0;
         if (off > kLengthSlack) continue;
         BOOL wordTimed = [found[@"timing_type"] isEqual:@"word"];
@@ -68,8 +69,9 @@ static void search(SGLyricsQuery *query, void (^done)(SGLyricsResult *result)) {
             done(nil);
             return;
         }
-        SGLyricsGetText([NSURL URLWithString:found[@"lyricsUrl"]], ^(NSString *ttml) {
-            SGLyricsResult *result = resultFor(ttml, [found[@"timing_type"] isEqual:@"word"]);
+        SGLyricsGetTextThen([NSURL URLWithString:found[@"lyricsUrl"]], ^id(NSString *ttml) {
+            return resultFor(ttml, [found[@"timing_type"] isEqual:@"word"]);
+        }, ^(SGLyricsResult *result) {
             if (!result) SGLog(@"binilyrics: %@ gave nothing the page could show", found[@"lyricsUrl"]);
             else SGLog(@"binilyrics: %@ by %@ has %lu %@ lines", query.title, query.artist,
                        (unsigned long)result.karaokeLines.count, result.wordTimed ? @"word timed" : @"line timed");
@@ -89,8 +91,9 @@ SGLyricsAsk SGBiniLyricsAsk = ^(SGLyricsQuery *query, void (^done)(SGLyricsResul
             search(query, done);
             return;
         }
-        SGLyricsGetText([NSURL URLWithString:[NSString stringWithFormat:kByISRC, isrc]], ^(NSString *ttml) {
-            SGLyricsResult *result = resultFor(ttml, [ttml containsString:@"timing=\"Word\""]);
+        SGLyricsGetTextThen([NSURL URLWithString:[NSString stringWithFormat:kByISRC, isrc]], ^id(NSString *ttml) {
+            return resultFor(ttml, [ttml containsString:@"timing=\"Word\""]);
+        }, ^(SGLyricsResult *result) {
             if (!result) {
                 SGLog(@"binilyrics: nothing filed under %@, searched by name", isrc);
                 search(query, done);

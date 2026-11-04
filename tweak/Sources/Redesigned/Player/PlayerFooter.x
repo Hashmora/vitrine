@@ -16,6 +16,8 @@
 // Spotify has no lyrics control down here, so that one is the Kit's glyph button, and it turns the
 // lyrics in the player on and off (PlayerLyrics.x): filled while they are up, dimmed and dead for a
 // track that has none.
+// Spotify's icons (SGRKeyPlayerSpotifyIcons) leaves Connect's and the queue's glyphs Spotify's, and draws the Lyrics
+// glyph as Spotify's Encore "lyrics", lit in the primary color while the lyrics are up.
 //
 // The row sits lower than Spotify puts it, just over the home indicator the way the Music app's does
 // (issue #54): the footer unit's view is translated down, the controls follow it part of the way, and a
@@ -31,6 +33,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Headers/SPTEncoreIconView.h"
 #import "Player.h"
+#import <objc/message.h>
 
 static const CGFloat kLyricsGlyphSize = 20;
 // Filled and at full strength while the lyrics are up, the way the Music app marks the control that is on.
@@ -55,6 +58,7 @@ static const CGFloat kVolumeLift = 10;
 // "airplayaudio" is the name iOS 16 knows; iOS 18 calls it airplay.audio and keeps this one as its alias.
 static NSString *const kConnectSymbol = @"airplayaudio", *const kQueueSymbol = @"list.bullet";
 
+static char kEncoreKey;
 static char kConnectKey, kShareKey, kTrimmerKey, kSharedByKey, kQueueKey, kQueueIconKey, kLyricsGlyphKey, kReachKey, kRowKey;
 static __weak SGRGlyphButton *sg_lyricsGlyph;
 
@@ -73,12 +77,50 @@ static CGFloat untransformedX(UIView *arranged, UIView *view, CGPoint point, UIV
     return [arranged.superview convertPoint:inRow toView:host].x;
 }
 
-static CGFloat moveTo(UIView *arranged, UIView *view, CGPoint point, UIView *host, CGFloat x) {
+CGFloat SGRPlayerTranslateArranged(UIView *arranged, UIView *view, CGPoint point, UIView *host, CGFloat x) {
     if (!arranged) return -1;
     CGFloat from = untransformedX(arranged, view, point, host);
     CGAffineTransform transform = CGAffineTransformMakeTranslation(round(x - from), 0);
     if (!CGAffineTransformEqualToTransform(arranged.transform, transform)) arranged.transform = transform;
     return from;
+}
+
+#pragma mark - Spotify's icons
+
+BOOL SGRPlayerSpotifyIcons(void) {
+    static BOOL on;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ on = SGHidden(SGRKeyPlayerSpotifyIcons); });
+    return on;
+}
+
+UIView *SGRPlayerEncoreGlyphIn(SGRGlyphButton *button, NSString *name) {
+    if (!button) return nil;
+    SPTEncoreIconView *encore = objc_getAssociatedObject(button, &kEncoreKey);
+    if (!encore) {
+        Class icons = NSClassFromString(@"SPTEncoreIcon"), view = NSClassFromString(@"SPTEncoreIconView");
+        SEL glyphSel = NSSelectorFromString(name);
+        if (!icons || !view || ![icons respondsToSelector:glyphSel]) {
+            SGLog(@"redesign player: no Encore glyph %@, the Music app's stays", name);
+            return nil;
+        }
+        id glyph = ((id (*)(id, SEL))objc_msgSend)(icons, glyphSel);
+        encore = glyph ? [[view alloc] initWithIcon:glyph] : nil;
+        if (!encore) return nil;
+        encore.userInteractionEnabled = NO;
+        encore.isAccessibilityElement = NO;
+        CGSize size = encore.intrinsicContentSize;
+        encore.bounds = CGRectMake(0, 0, size.width > 0 ? size.width : 24, size.height > 0 ? size.height : 24);
+        encore.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin
+                                | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+        encore.foregroundColor = button.glyph.tintColor ?: SGRPrimary();
+        objc_setAssociatedObject(button, &kEncoreKey, encore, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    // Hidden rather than clear: the button puts its glyph's alpha back as it is pressed.
+    button.glyph.hidden = YES;
+    if (encore.superview != button) [button addSubview:encore];
+    encore.center = CGPointMake(CGRectGetMidX(button.bounds), CGRectGetMidY(button.bounds));
+    return encore;
 }
 
 #pragma mark - lyrics
@@ -98,6 +140,7 @@ void SGRPlayerLyricsChanged(void) {
     void (^mark)(void) = ^{
         glyph.enabled = enabled;
         glyph.glyph.tintColor = open ? SGRPrimary() : SGRSecondary();
+        ((SPTEncoreIconView *)objc_getAssociatedObject(glyph, &kEncoreKey)).foregroundColor = glyph.glyph.tintColor;
     };
     if (animated) SGRAnimate(SGRMotionFade, mark, nil);
     else mark();
@@ -112,6 +155,7 @@ SGRGlyphButton *SGRPlayerLyricsGlyphIn(UIView *host) {
         objc_setAssociatedObject(host, &kLyricsGlyphKey, glyph, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (glyph.superview != host) [host addSubview:glyph];
+    if (SGRPlayerSpotifyIcons()) SGRPlayerEncoreGlyphIn(glyph, @"lyrics");
     sg_lyricsGlyph = glyph;
     return glyph;
 }
@@ -189,6 +233,7 @@ static void takeConnectImage(UIImageView *drawn) {
 // tells the stand-in; the clear image set back in reports too, and stops there. Each pass looks too, at the cost of a
 // compare, for a view the image cannot be watched on.
 static void standInForConnect(UIImageView *drawn) {
+    if (SGRPlayerSpotifyIcons()) return;
     BOOL made = objc_getAssociatedObject(drawn, &kStandInKey) != nil;
     if (!standIn(drawn, kConnectSymbol)) return;
     takeConnectImage(drawn);
@@ -208,6 +253,7 @@ static void tintQueueStandIn(SPTEncoreIconView *icon) {
 }
 
 static void standInForQueue(SPTEncoreIconView *icon) {
+    if (SGRPlayerSpotifyIcons()) return;
     if (![icon isKindOfClass:%c(SPTEncoreIconView)]) return;
     BOOL made = objc_getAssociatedObject(icon, &kStandInKey) != nil;
     if (!standIn(icon, kQueueSymbol) || made) return;
@@ -296,7 +342,7 @@ UIView *SGRPlayerConnectGlyphIn(UIView *host, UIView *connect) {
         dispatch_async(dispatch_get_main_queue(), ^{ [weakHost setNeedsLayout]; });
     }
     SGForEachView(connect, ^(UIView *view) {
-        if ([view isKindOfClass:UILabel.class] || [NSStringFromClass(view.class) containsString:@"MarqueeLabel"]) SGRPlayerVanish(view);
+        if ([view isKindOfClass:UILabel.class] || SGClassNamed(view.class, @"MarqueeLabel")) SGRPlayerVanish(view);
     });
     if (glyph) standInForConnect((UIImageView *)glyph);
     return glyph;
@@ -360,8 +406,8 @@ void SGRPlayerLowerRow(UIView *row) {
     // Only the controls, and only straight above: a volume row between them keeps its place and theirs.
     UIView *above = rowAbove(row);
     // The ordinary player's controls unit, or the AI DJ's head unit (DJPlayer.x), which holds the same buttons.
-    NSString *unit = NSStringFromClass(unitOf(above).class);
-    BOOL controls = [unit containsString:@"PlaybackControlsElementsUnit"] || [unit containsString:@"DJMHeadUnitViewController"];
+    Class unit = unitOf(above).class;
+    BOOL controls = SGClassNamed(unit, @"PlaybackControlsElementsUnit") || SGClassNamed(unit, @"DJMHeadUnitViewController");
     // With the volume row, the controls stay where Spotify put them and the row takes the room the footer leaves.
     // The volume row is placed against the controls where they would stand for it; one that does not show leaves them
     // following the footer as they do without it.
@@ -408,19 +454,20 @@ void SGRPlayerLowerRow(UIView *row) {
     CGFloat width = host.bounds.size.width, middleY = CGRectGetMidY(host.bounds);
     BOOL rtl = host.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
 
-    UIView *share = SGRFindByIdentifier(host, @"ShareButtonNowPlayingView", &kShareKey);
-    // The arranged view goes too: a view that takes touches swallows them even with nothing on it.
-    SGRPlayerVanish(share);
-    SGRPlayerVanish(arrangedAround(share, host));
-    // Spotify's clip button, hidden in every clean tree, would turn up where the queue moves to.
-    UIView *trimmer = SGRFindByIdentifier(host, @"nowplaying-npv-media-trimmer-navigation-button", &kTrimmerKey);
-    SGRPlayerVanish(trimmer);
-    SGRPlayerVanish(arrangedAround(trimmer, host));
-    // "From <friend>" on a track a friend shared sits in the middle of the row, over Connect, which the
-    // row moves there; the Music app has no such chip.
-    UIView *sharedBy = SGRFindByIdentifier(host, @"Components.UI.SharedByChip", &kSharedByKey);
-    SGRPlayerVanish(sharedBy);
-    SGRPlayerVanish(arrangedAround(sharedBy, host));
+    // Share; Spotify's clip button, hidden in every clean tree, which would turn up where the queue moves to; and
+    // "From <friend>" on a track a friend shared, which sits in the middle of the row, over Connect, which the row
+    // moves there (the Music app has no such chip). Found in one walk: nothing between them touches the tree.
+    static const void *const goneKeys[] = {&kShareKey, &kTrimmerKey, &kSharedByKey};
+    UIView *gone[3];
+    static NSArray<NSString *> *goneIdentifiers;
+    if (!goneIdentifiers) goneIdentifiers = @[@"ShareButtonNowPlayingView", @"nowplaying-npv-media-trimmer-navigation-button", @"Components.UI.SharedByChip"];
+    SGRFindByIdentifiers(host, goneIdentifiers, goneKeys, gone);
+    UIView *share = gone[0];
+    for (NSUInteger i = 0; i < 3; i++) {
+        SGRPlayerVanish(gone[i]);
+        // The arranged view goes too: a view that takes touches swallows them even with nothing on it.
+        SGRPlayerVanish(arrangedAround(gone[i], host));
+    }
 
     SGRGlyphButton *lyrics = SGRPlayerLyricsGlyphIn(host);
     lyrics.bounds = CGRectMake(0, 0, 44, 44);
@@ -429,11 +476,11 @@ void SGRPlayerLowerRow(UIView *row) {
 
     UIView *connect = SGRFindByIdentifier(host, @"Components.ConnectButtonOutputSwitcher", &kConnectKey);
     UIView *glyph = SGRPlayerConnectGlyphIn(host, connect);
-    CGFloat connectFrom = glyph ? moveTo(arrangedAround(connect, host), glyph, CGPointMake(CGRectGetMidX(glyph.bounds), CGRectGetMidY(glyph.bounds)), host, round(width * kMiddle)) : -1;
+    CGFloat connectFrom = glyph ? SGRPlayerTranslateArranged(arrangedAround(connect, host), glyph, CGPointMake(CGRectGetMidX(glyph.bounds), CGRectGetMidY(glyph.bounds)), host, round(width * kMiddle)) : -1;
 
     UIView *queue = SGRFindByIdentifier(host, @"QueueButtonNowPlaying", &kQueueKey);
     standInForQueue((SPTEncoreIconView *)SGRFindByIdentifier(queue, @"Encore.IconView", &kQueueIconKey));
-    CGFloat queueFrom = moveTo(arrangedAround(queue, host), queue, CGPointMake(CGRectGetMidX(queue.bounds), CGRectGetMidY(queue.bounds)), host, round(width * (rtl ? kLeading : kTrailing)));
+    CGFloat queueFrom = SGRPlayerTranslateArranged(arrangedAround(queue, host), queue, CGPointMake(CGRectGetMidX(queue.bounds), CGRectGetMidY(queue.bounds)), host, round(width * (rtl ? kLeading : kTrailing)));
 
     SGRPlayerLowerRow(host);
     SGRPlayerCoverConnect(arrangedAround(connect, host), glyph);
@@ -446,8 +493,50 @@ void SGRPlayerLowerRow(UIView *row) {
 }
 %end
 
+// The Connect button lays itself out again when the device changes (its name comes or goes, another device's glyph,
+// the button's width with them),
+// with no pass of the footer around it: the glyph moved inside it while the footer's transform, worked out from where
+// the glyph was, stayed, so Connect slid off its place (the phone, 2026-10-24: switched to another device from
+// elsewhere, the DJ footer's Connect 11pt left of its slot). The footer is laid out again whenever the glyph moves, and
+// its pass puts the button back on its place, the ordinary player's and the DJ's alike.
+static char kGlyphSeenKey;
+
+%hook _TtC23Connect_EntryPointsImpl37ConnectButtonOutputSwitcherViewHolder
+- (void)layoutSubviews {
+    %orig;
+    UIView *connect = (UIView *)self;
+    UIView *glyph = connectGlyphIn(connect);
+    if (!glyph) return;
+    // The glyph's place in the button and the button's size: the glyph keeps its place at the button's leading edge while
+    // the button grows and shrinks with the device's name (101.5pt with "iPhone", 51 without, the phone, 2026-10-24), and
+    // the element holding it is laid out again round its new size, so either one moving is a move of the glyph.
+    CGRect seen = [glyph convertRect:glyph.bounds toView:connect];
+    seen.size = connect.bounds.size;
+    NSValue *was = objc_getAssociatedObject(connect, &kGlyphSeenKey);
+    if (was && CGRectEqualToRect(was.CGRectValue, seen)) return;
+    objc_setAssociatedObject(connect, &kGlyphSeenKey, [NSValue valueWithCGRect:seen], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!was) return;
+    // The footer unit's view: the first ancestor a controller owns.
+    for (UIView *v = connect.superview; v; v = v.superview) {
+        if (!unitOf(v)) continue;
+        [v setNeedsLayout];
+        break;
+    }
+}
+%end
+
+%group VolumeSlider
+%hook UISlider
+- (void)setValue:(float)value animated:(BOOL)animated {
+    %orig;
+    SGRPlayerVolumeSliderSet(self);
+}
+%end
+%end
+
 %ctor {
     if (!SGRedesignedUI()) return;
     %init;
+    if (SGRPlayerVolumeOn()) %init(VolumeSlider);
     SGRequireClasses(@[@"_TtC20NowPlaying_ModesImpl18FooterElementsUnit", @"SPTEncoreIconView"]);
 }
