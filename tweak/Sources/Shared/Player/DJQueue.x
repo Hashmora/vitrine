@@ -16,18 +16,49 @@ static BOOL sameTrack(SPTPlayerTrack *a, SPTPlayerTrack *b) {
     return [a.URI isEqual:b.URI] && [a.provider isEqualToString:b.provider];
 }
 
-// The queue's next tracks, then the state's future tracks that are not among them (the person's own, which are in
+static BOOL has(NSArray<SPTPlayerTrack *> *tracks, SPTPlayerTrack *track) {
+    for (SPTPlayerTrack *other in tracks) if (sameTrack(other, track)) return YES;
+    return NO;
+}
+
+// The DJ's tracks to come as the player last said them, and which of them are put in the queue on the page. The
+// player's future holds two tracks in all, the person's hand-queued ones among them, so a track the DJ had sent
+// as the second is gone from it when one is queued: this keeps it, until it has played or the DJ's list is another.
+static NSArray<SPTPlayerTrack *> *sAhead = @[], *sInjected = @[];
+static id sAheadContext;
+
+// The queue's next tracks, then the DJ's tracks to come that are not among them (the person's own, which are in
 // both, stay where the queue has them).
 static void lineUpTheFuture(id queue, NSString *reader) {
     SPTPlayerState *state = SGPlayerState();
     NSArray<SPTPlayerTrack *> *next = [queue valueForKey:@"nextTracks"];
-    NSMutableArray<SPTPlayerTrack *> *merged = next ? [next mutableCopy] : [NSMutableArray array];
-    for (SPTPlayerTrack *track in state.future) {
-        BOOL known = NO;
-        for (SPTPlayerTrack *queued in next) known = known || sameTrack(queued, track);
-        if (!known) [merged addObject:track];
+    NSMutableArray<SPTPlayerTrack *> *future = [NSMutableArray array];
+    for (SPTPlayerTrack *track in state.future) if (![track.provider isEqualToString:@"queue"]) [future addObject:track];
+
+    NSMutableArray<SPTPlayerTrack *> *ahead = [sAhead mutableCopy];
+    BOOL overlaps = NO;
+    for (SPTPlayerTrack *track in future) overlaps = overlaps || has(ahead, track);
+    if (![state.contextURI isEqual:sAheadContext] || !overlaps) [ahead removeAllObjects];
+    sAheadContext = state.contextURI;
+    for (NSUInteger i = 0; i < ahead.count; i++) {
+        if ([ahead[i].URI isEqual:state.track.URI]) {
+            [ahead removeObjectsInRange:NSMakeRange(0, i + 1)];
+            break;
+        }
     }
-    if (merged.count > next.count) [queue setValue:merged forKey:@"nextTracks"];
+    for (SPTPlayerTrack *track in future) if (!has(ahead, track)) [ahead addObject:track];
+    sAhead = ahead;
+
+    NSMutableArray<SPTPlayerTrack *> *merged = next ? [next mutableCopy] : [NSMutableArray array];
+    NSMutableArray<SPTPlayerTrack *> *injected = [NSMutableArray array];
+    for (SPTPlayerTrack *track in ahead) {
+        if (!has(next, track)) {
+            [merged addObject:track];
+            [injected addObject:track];
+        }
+    }
+    sInjected = injected;
+    if (injected.count) [queue setValue:merged forKey:@"nextTracks"];
     SGLog(@"queue (%@): context %@, playing %@, %lu next before, %lu now, state's future %lu", reader, SGURIString(state.contextURI),
           state.track.trackTitle, (unsigned long)next.count, (unsigned long)merged.count, (unsigned long)state.future.count);
 }
@@ -75,9 +106,26 @@ static void lineUpTheFuture(id queue, NSString *reader) {
 }
 %end
 
+// A tap on one of the tracks put in. The page takes it for a row of the core's queue, which it is not, and gives no
+// command; they are the last rows of the table (the DJ has nothing after them), and are skipped to as the player's.
+%hook _TtC14Queue_ViewImpl19QueueViewController
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    NSInteger section = tableView.numberOfSections - 1;
+    NSInteger first = [tableView numberOfRowsInSection:section] - (NSInteger)sInjected.count;
+    if (sInjected.count && first >= 0 && indexPath.section == section && indexPath.row >= first) {
+        SPTPlayerTrack *track = sInjected[indexPath.row - first];
+        [tableView deselectRowAtIndexPath:indexPath animated:YES];
+        SGLog(@"queue page: tap on %@, skipped to", track.trackTitle);
+        [(id<SPTPlayer>)SGPlayer() skipToNextTrackWithOptions:nil track:track];
+        return;
+    }
+    %orig;
+}
+%end
+
 %ctor {
     %init;
     SGRequireClasses(@[@"_TtC16Queue_UpNextImpl19UpNextTrackProvider", @"_TtC14Queue_ViewImpl22PlayerStateEventSource",
-                       @"_TtC14Queue_ViewImpl20QueuedTracksObserver", @"ESPContextPlayerClientImpl",
-                       @"SPTEsperantoPlayer"]);
+                       @"_TtC14Queue_ViewImpl20QueuedTracksObserver", @"_TtC14Queue_ViewImpl19QueueViewController",
+                       @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer"]);
 }
