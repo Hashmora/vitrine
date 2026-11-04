@@ -40,19 +40,6 @@ static BOOL isDJTrack(SPTPlayerTrack *track) {
     return [uri hasPrefix:@"spotify:track:"] || [uri hasPrefix:@"spotify:episode:"];
 }
 
-// Whether `candidate` is what the player is on now. While the DJ speaks, the player's track is the narration
-// (spotify:media:ID, the same UID as the song it introduces), and the song (spotify:track:ID) still stands first in
-// the state's future. It is the same item, so it is taken out of the tracks to come the moment the voice starts and
-// does not show twice, first under the playing row and then jumping out of it.
-static BOOL isCurrent(SPTPlayerTrack *candidate, SPTPlayerTrack *current) {
-    if (!current) return NO;
-    if ([candidate.URI isEqual:current.URI]) return YES;
-    NSString *uri = SGURIString(current.URI), *prefix = @"spotify:media:";
-    if (![uri hasPrefix:prefix]) return NO;
-    if (current.UID.length && [candidate.UID isEqualToString:current.UID]) return YES;
-    return [SGURIString(candidate.URI) hasSuffix:[@":" stringByAppendingString:[uri substringFromIndex:prefix.length]]];
-}
-
 // The tracks the DJ has to come in the state's future: they end at the delimiter, after which the core puts the whole
 // session again as hidden stand-ins, and a track the list has already named is such a stand-in too.
 static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
@@ -124,7 +111,7 @@ static void lineUpTheFuture(id queue, NSString *reader) {
         }
     }
     for (NSUInteger i = 0; i < ahead.count; i++) {
-        if (isCurrent(ahead[i], state.track)) {
+        if ([ahead[i].URI isEqual:state.track.URI]) {
             [ahead removeObjectsInRange:NSMakeRange(0, i + 1)];
             break;
         }
@@ -229,8 +216,27 @@ static void lineUpTheFuture(id queue, NSString *reader) {
 }
 %end
 
+// The reason of an exception nothing catches: Spotify's crash reporter keeps it out of the .ips, so it goes to the
+// phone's log before the app aborts.
+static NSUncaughtExceptionHandler *sPreviousHandler;
+static void logUncaught(NSException *exception) {
+    NSArray<NSString *> *stack = exception.callStackSymbols;
+    SGLog(@"uncaught exception %@: %@", exception.name, exception.reason);
+    for (NSUInteger i = 0; i < stack.count && i < 14; i++) SGLog(@"uncaught exception frame %lu: %@", (unsigned long)i, stack[i]);
+    if (sPreviousHandler) sPreviousHandler(exception);
+}
+
+static void installExceptionLog(void) {
+    if (NSGetUncaughtExceptionHandler() == &logUncaught) return;
+    sPreviousHandler = NSGetUncaughtExceptionHandler();
+    NSSetUncaughtExceptionHandler(&logUncaught);
+}
+
 %ctor {
     %init;
+    installExceptionLog();
+    // Crash reporters set their handler at launch; the log goes in front of whichever is last.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ installExceptionLog(); });
     SGRequireClasses(@[@"_TtC16Queue_UpNextImpl19UpNextTrackProvider", @"_TtC14Queue_ViewImpl22PlayerStateEventSource",
                        @"_TtC14Queue_ViewImpl20QueuedTracksObserver", @"_TtC14Queue_ViewImpl19QueueViewController",
                        @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer"]);
