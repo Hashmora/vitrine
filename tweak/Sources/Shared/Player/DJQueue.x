@@ -123,26 +123,23 @@ static void lineUpTheFuture(id queue, NSString *reader) {
 }
 %end
 
-// The request the player's subscription makes of the core, with the caps it puts on the tracks before and after the
-// current one. The future's cap is raised; what the request had is logged, for the phone's log.
-%hook SPTPlayerSubscriptionImplementation
-- (id)makeObservationRequest {
-    id request = %orig;
-    id prev = [request valueForKey:@"prevTracksCap"], next = [request valueForKey:@"nextTracksCap"];
-    SGLog(@"state request: caps %@ / %@ (previous / next), has next cap %@", [prev valueForKey:@"value"], [next valueForKey:@"value"],
-          [request valueForKey:@"hasNextTracksCap"]);
-    Class optional = NSClassFromString(@"ESPOptionalInt64");
-    if (optional && [[next valueForKey:@"value"] longLongValue] < kFutureCap) {
-        id cap = [[optional alloc] init];
-        [cap setValue:@(kFutureCap) forKey:@"value"];
-        [request setValue:cap forKey:@"nextTracksCap"];
-        SGLog(@"state request: next cap raised to %lld", kFutureCap);
-    }
-    return request;
-}
-%end
-
 %hook ESPContextPlayerClientImpl
+// The state request the player's subscription makes of the core carries caps on the tracks before and after the current
+// one. The future's cap is raised before the request goes; what it had is logged, for the phone's log.
+- (void)getState:(id)request onResponse:(id)onResponse {
+    Class requestClass = NSClassFromString(@"ESPGetStateRequest"), optional = NSClassFromString(@"ESPOptionalInt64");
+    if (requestClass && optional && [request isKindOfClass:requestClass]) {
+        id prev = [request valueForKey:@"prevTracksCap"], next = [request valueForKey:@"nextTracksCap"];
+        SGLog(@"state request: caps %@ / %@ (previous / next)", [prev valueForKey:@"value"], [next valueForKey:@"value"]);
+        if ([[next valueForKey:@"value"] longLongValue] < kFutureCap) {
+            id cap = [[optional alloc] init];
+            [cap setValue:@(kFutureCap) forKey:@"value"];
+            [request setValue:cap forKey:@"nextTracksCap"];
+            SGLog(@"state request: next cap raised to %lld", (long long)kFutureCap);
+        }
+    }
+    %orig;
+}
 - (void)addToQueue:(id)request onResponse:(id)onResponse {
     SGLog(@"queue command: addToQueue %@", request);
     %orig;
@@ -186,5 +183,5 @@ static void lineUpTheFuture(id queue, NSString *reader) {
     %init;
     SGRequireClasses(@[@"_TtC16Queue_UpNextImpl19UpNextTrackProvider", @"_TtC14Queue_ViewImpl22PlayerStateEventSource",
                        @"_TtC14Queue_ViewImpl20QueuedTracksObserver", @"_TtC14Queue_ViewImpl19QueueViewController",
-                       @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer", @"SPTPlayerSubscriptionImplementation"]);
+                       @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer"]);
 }
