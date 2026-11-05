@@ -1,18 +1,23 @@
 // The AI DJ's queue on Spotify's own queue page. The DJ's session is one track playing, and the player's queue
 // (SPTPlayerQueue) holds nothing of the DJ's after it, though the player's state knows the tracks that follow
-// (SPTPlayerState.future: two in all, the person's hand-queued ones among them). Those, and the DJ's tracks that
-// the state has said before and now has no room for, are put in the queue before each of its readers takes it,
-// after the hand-queued tracks and in the DJ's order, so they draw the tracks as they draw any tracks to come:
-// its rows, Spotify's. The readers are the queue page's own two observers (the page does not go through the Up
-// next card's provider) and that provider.
+// (SPTPlayerState.future: the DJ's segment, five tracks and the voice between them). Those are put in the queue
+// before each of its readers takes it, after the hand-queued tracks and in the DJ's order, so they draw the tracks
+// as they draw any tracks to come: its rows, Spotify's. The readers are the queue page's own two observers (the page
+// does not go through the Up next card's provider) and that provider.
 //
-// The two is the request's, not the core's: the player's subscription asks the core for the state with a cap on the
-// tracks to come (ESPGetStateRequest.nextTracksCap), so the state's future is as long as that. It is raised here to what
-// the core keeps ahead of the DJ, and the copy of the session that follows the DJ's last page is cut off.
+// The player's subscription asks the core for the state with a cap on the tracks to come
+// (ESPGetStateRequest.nextTracksCap), two at first; it is raised here so the state's future is the whole segment.
+// The core gives no more than that: the next segment is made when the last track of this one is reached.
 //
-// The page takes a tap on one of them for a row of the core's queue, which it is not, and gives no command; it is
-// skipped to as the player's here. The queue is logged as each reader is told of it, and so are the commands the
-// page gives the player, for the phone's log.
+// Between two segments the core has no tracks to come for a moment; the rows the page had stay for it (up to
+// kGapSeconds) instead of going empty.
+//
+// The core keeps ten tracks behind the DJ's current one. The tracks the DJ has played are kept here whole (uri, uid,
+// metadata), and a step back with none left behind in the state asks the core to skip to the one before the current
+// by its uid, in the same session; if the core does not move, it is not asked again in that session.
+//
+// The page takes a tap on one of the tracks for a row of the core's queue, which it is not, and gives no command; it
+// is skipped to as the player's here.
 #import "Core/SGCore.h"
 #import "Core/SGLog.h"
 #import "PlayerState.h"
@@ -33,6 +38,10 @@ static id sAheadContext;
 
 // What the DJ's pages need: three segments of five and the narration between them, with room for the hand-queued.
 static const int64_t kFutureCap = 80;
+// How long the page keeps its rows while the core has no tracks to come.
+static const NSTimeInterval kGapSeconds = 3;
+// How long the core has to move to a track it was asked to skip back to.
+static const NSTimeInterval kJumpSeconds = 1.5;
 
 // A track of the DJ's to come: not the narration, a page marker or the delimiter that ends the pages.
 static BOOL isDJTrack(SPTPlayerTrack *track) {
@@ -58,45 +67,19 @@ static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
     return tracks;
 }
 
-// What the state's future is made of, for the phone's log, when it changes: each entry's place, URI, provider and
-// UID, the metadata keys that tell what it is (hidden, delimiter, page, segment), and every list in the state's own
-// dictionary with its length, to see where the core stops giving tracks.
-static void dumpFuture(SPTPlayerState *state) {
-    static NSString *last;
-    NSMutableString *signature = [NSMutableString string];
-    for (SPTPlayerTrack *track in state.future) [signature appendFormat:@"%@|", track.UID];
-    if ([signature isEqualToString:last]) return;
-    last = [signature copy];
-    NSArray<NSString *> *words = @[@"hidden", @"delimiter", @"page", @"segment", @"iteration", @"advancing", @"image", @"title", @"artist_name"];
-    NSUInteger place = 0;
-    for (SPTPlayerTrack *track in state.future) {
-        NSMutableArray<NSString *> *flags = [NSMutableArray array];
-        for (NSString *key in track.metadata) {
-            for (NSString *word in words) {
-                if ([key rangeOfString:word options:NSCaseInsensitiveSearch].location != NSNotFound) {
-                    [flags addObject:[NSString stringWithFormat:@"%@=%@", key, track.metadata[key]]];
-                    break;
-                }
-            }
-        }
-        SGLog(@"future[%lu] %@ [%@] uid %@ %@", (unsigned long)place++, SGURIString(track.URI), track.provider, track.UID,
-              [flags componentsJoinedByString:@" "]);
-    }
-    id dictionary = [state valueForKey:@"dictionary"];
-    if ([dictionary isKindOfClass:[NSDictionary class]]) {
-        NSMutableArray<NSString *> *lists = [NSMutableArray array];
-        for (NSString *key in dictionary) {
-            id value = dictionary[key];
-            if ([value isKindOfClass:[NSArray class]]) [lists addObject:[NSString stringWithFormat:@"%@:%lu", key, (unsigned long)[value count]]];
-        }
-        SGLog(@"state dictionary: %lu keys, lists %@", (unsigned long)[dictionary count], [lists componentsJoinedByString:@" "]);
-    }
+// Whether the track is the DJ's: its metadata names the session's page.
+static BOOL inDJ(SPTPlayerTrack *track) {
+    return track.metadata[@"page_instance_id"] != nil;
 }
 
-static void lineUpTheFuture(id queue, NSString *reader) {
+// When the core began to have no tracks to come, nil while it has some.
+static NSDate *sGapSince;
+
+// Puts the DJ's tracks to come in `queue`. YES when the readers are to be left as they are: the core has none to come
+// just now, and the rows the page had stay.
+static BOOL lineUpTheFuture(id queue) {
     SPTPlayerState *state = SGPlayerState();
     NSArray<SPTPlayerTrack *> *next = [queue valueForKey:@"nextTracks"];
-    dumpFuture(state);
     NSArray<SPTPlayerTrack *> *future = djFuture(state.future);
 
     // The state's own, then what was kept after its last one. When hand-queued tracks fill the state's two it names
@@ -129,50 +112,52 @@ static void lineUpTheFuture(id queue, NSString *reader) {
     NSMutableArray<SPTPlayerTrack *> *merged = [queued mutableCopy];
     [merged addObjectsFromArray:ahead];
     [merged addObjectsFromArray:rest];
+
+    if (merged.count) {
+        sGapSince = nil;
+    } else if (sQueue.count && inDJ(state.track)) {
+        if (!sGapSince) sGapSince = [NSDate date];
+        if (-sGapSince.timeIntervalSinceNow < kGapSeconds) return YES;
+    }
     sQueue = merged;
     sInjected = injected;
     if (injected.count) [queue setValue:merged forKey:@"nextTracks"];
-    SGLog(@"queue (%@): context %@, playing %@, %lu next before, %lu now, state's future %lu", reader, SGURIString(state.contextURI),
-          state.track.trackTitle, (unsigned long)next.count, (unsigned long)merged.count, (unsigned long)state.future.count);
-    SGLog(@"queue (%@): future %lu raw, %lu of the DJ's, ahead %lu, first uid %@, last uid %@, current %@ uid %@", reader,
-          (unsigned long)state.future.count, (unsigned long)future.count, (unsigned long)ahead.count, future.firstObject.UID,
-          future.lastObject.UID, SGURIString(state.track.URI), state.track.UID);
+    return NO;
 }
 
 %hook _TtC16Queue_UpNextImpl19UpNextTrackProvider
 - (void)player:(id)player queueDidChange:(id)queue {
-    lineUpTheFuture(queue, @"up next card");
+    if (lineUpTheFuture(queue)) return;
     %orig;
 }
 %end
 
 %hook _TtC14Queue_ViewImpl22PlayerStateEventSource
 - (void)player:(id)player queueDidChange:(id)queue {
-    lineUpTheFuture(queue, @"page state");
+    if (lineUpTheFuture(queue)) return;
     %orig;
 }
 %end
 
 %hook _TtC14Queue_ViewImpl20QueuedTracksObserver
 - (void)player:(id)player queueDidChange:(id)queue {
-    lineUpTheFuture(queue, @"page queued");
+    if (lineUpTheFuture(queue)) return;
     %orig;
 }
 %end
 
 %hook ESPContextPlayerClientImpl
 // The state request the player's subscription makes of the core carries caps on the tracks before and after the current
-// one. The future's cap is raised before the request goes; what it had is logged, for the phone's log.
+// one. The future's cap is raised before the request goes.
 - (void)getState:(id)request onResponse:(id)onResponse {
     Class requestClass = NSClassFromString(@"ESPGetStateRequest"), optional = NSClassFromString(@"ESPOptionalInt64");
     if (requestClass && optional && [request isKindOfClass:requestClass]) {
-        id prev = [request valueForKey:@"prevTracksCap"], next = [request valueForKey:@"nextTracksCap"];
-        SGLog(@"state request: caps %@ / %@ (previous / next)", [prev valueForKey:@"value"], [next valueForKey:@"value"]);
-        if ([[next valueForKey:@"value"] longLongValue] < kFutureCap) {
+        long long was = [[[request valueForKey:@"nextTracksCap"] valueForKey:@"value"] longLongValue];
+        if (was < kFutureCap) {
             id cap = [[optional alloc] init];
             [cap setValue:@(kFutureCap) forKey:@"value"];
             [request setValue:cap forKey:@"nextTracksCap"];
-            SGLog(@"state request: next cap raised to %lld", (long long)kFutureCap);
+            SGLog(@"queue: next tracks cap %lld raised to %lld", was, (long long)kFutureCap);
         }
     }
     %orig;
@@ -195,6 +180,62 @@ static void lineUpTheFuture(id queue, NSString *reader) {
 - (id)skipToNextTrackWithOptions:(id)options track:(SPTPlayerTrack *)track {
     SGLog(@"queue command: skip to %@ [%@]", track.trackTitle, track.provider);
     return %orig;
+}
+%end
+
+// The DJ's tracks as they have played, in the session's order, whole, for the steps back the core has no track for.
+static NSMutableArray<SPTPlayerTrack *> *sPlayed;
+static id sPlayedContext;
+// Set once the core did not move to a track it was asked to skip back to; no more asks in that session.
+static BOOL sJumpRefused;
+
+@interface SGDJHistory : NSObject <SGPlayerStateObserver>
+@end
+
+@implementation SGDJHistory
+- (void)playerStateDidChange:(SPTPlayerState *)state {
+    if (![state.contextURI isEqual:sPlayedContext]) {
+        sPlayedContext = state.contextURI;
+        sPlayed = [NSMutableArray array];
+        sJumpRefused = NO;
+    }
+    SPTPlayerTrack *track = state.track;
+    if (!isDJTrack(track) || !inDJ(track) || !track.UID.length) return;
+    for (SPTPlayerTrack *played in sPlayed) if ([played.UID isEqualToString:track.UID]) return;
+    [sPlayed addObject:track];
+}
+@end
+
+// The track the DJ played before the one the player is on (or is introducing: the voice has its song's uid), nil
+// when none was kept.
+static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
+    NSUInteger at = sPlayed.count;
+    for (NSUInteger i = 0; i < sPlayed.count; i++) {
+        if ([sPlayed[i].UID isEqualToString:state.track.UID]) { at = i; break; }
+    }
+    return at > 0 ? sPlayed[at - 1] : nil;
+}
+
+%hook SPTEsperantoPlayer
+// Every step back of Spotify's ends here, `track` nil for the plain one. With nothing behind the current track in
+// the state, the core has run out of the ten it keeps, and the one the DJ played before is asked for by its uid.
+- (id)skipToPreviousTrackWithOptions:(id)options track:(SPTPlayerTrack *)track loggingParams:(id)params {
+    SPTPlayerState *state = SGPlayerState();
+    SPTPlayerTrack *target = track || sJumpRefused || state.reverse.count || !inDJ(state.track) ? nil : playedBefore(state);
+    if (!target) return %orig;
+    NSString *was = state.track.UID;
+    SGLog(@"queue: step back past the core's ten, to %@ [%@]", target.trackTitle, target.UID);
+    id result = %orig(options, target, params);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kJumpSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (![SGPlayerState().track.UID isEqualToString:was]) {
+            SGLog(@"queue: the core went back to %@", SGPlayerState().track.trackTitle);
+            return;
+        }
+        sJumpRefused = YES;
+        SGLog(@"queue: the core did not go back to %@, the plain step back instead", target.trackTitle);
+        [(id<SPTPlayer>)SGPlayer() skipToPreviousTrackWithOptions:options];
+    });
+    return result;
 }
 %end
 
@@ -235,6 +276,9 @@ static void installExceptionLog(void) {
 %ctor {
     %init;
     installExceptionLog();
+    static SGDJHistory *history;
+    history = [[SGDJHistory alloc] init];
+    SGAddPlayerStateObserver(history);
     // Crash reporters set their handler at launch; the log goes in front of whichever is last.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ installExceptionLog(); });
     SGRequireClasses(@[@"_TtC16Queue_UpNextImpl19UpNextTrackProvider", @"_TtC14Queue_ViewImpl22PlayerStateEventSource",
