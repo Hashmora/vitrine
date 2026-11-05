@@ -285,7 +285,19 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
           (unsigned long)sQueue.count, track.trackTitle);
     if (track && indexIn(sInjected, track) != NSNotFound) {
         [tableView deselectRowAtIndexPath:indexPath animated:YES];
-        [(id<SPTPlayer>)SGPlayer() skipToNextTrackWithOptions:nil track:[sOriginals objectForKey:track] ?: track];
+        // The "Up next" card is the voice item (spotify:media:), which the core is never skipped to: the row after it
+        // is the track it introduces (the same uid), and that one is.
+        SPTPlayerTrack *target = track;
+        if ([SGURIString(track.URI) hasPrefix:@"spotify:media:"]) {
+            SPTPlayerTrack *introduced = place + 1 < (NSInteger)sQueue.count ? sQueue[place + 1] : nil;
+            target = introduced && [introduced.UID isEqualToString:track.UID] ? introduced : nil;
+        }
+        target = [sOriginals objectForKey:target] ?: target;
+        if (!target) {
+            SGLog(@"queue page: the card %@ has no track after it to skip to", track.UID);
+            return;
+        }
+        [(id<SPTPlayer>)SGPlayer() skipToNextTrackWithOptions:nil track:target];
         return;
     }
     %orig;
