@@ -9,6 +9,9 @@
 // (ESPGetStateRequest.nextTracksCap), two at first; it is raised here so the state's future is the whole segment.
 // The core gives no more than that: the next segment is made when the last track of this one is reached.
 //
+// The DJ's "Up next" card is its own row, before the track it introduces; the track's row has no title (the core
+// names it only when it plays) and no card cover.
+//
 // Between two segments the core has no tracks to come for a moment; the rows the page had stay for it (up to
 // kGapSeconds) instead of going empty.
 //
@@ -49,19 +52,51 @@ static BOOL isDJTrack(SPTPlayerTrack *track) {
     return [uri hasPrefix:@"spotify:track:"] || [uri hasPrefix:@"spotify:episode:"];
 }
 
-// The tracks the DJ has to come in the state's future: they end at the delimiter, after which the core puts the whole
-// session again as hidden stand-ins, and a track the list has already named is such a stand-in too.
+// The DJ's "Up next" card: a voice item (spotify:media:ID) with no segment of its own, followed by the track it
+// introduces (the same uid), which carries the card's title and cover until the core has the track's own.
+static BOOL isCard(NSArray<SPTPlayerTrack *> *future, NSUInteger i) {
+    SPTPlayerTrack *track = future[i];
+    return [SGURIString(track.URI) hasPrefix:@"spotify:media:"] && !track.metadata[@"segment"] && i + 1 < future.count &&
+           [future[i + 1].UID isEqualToString:track.UID];
+}
+
+// The track a card introduces, as its own row: the card's title, artist and cover taken off, so the row shows the
+// track and not the card (its own title is not known until it plays). The player is skipped to by the original.
+static NSMapTable<SPTPlayerTrack *, SPTPlayerTrack *> *sOriginals;
+
+static SPTPlayerTrack *withoutCard(SPTPlayerTrack *track) {
+    NSMutableDictionary *metadata = [track.metadata mutableCopy];
+    for (NSString *key in track.metadata) {
+        if ([key hasPrefix:@"title"] || [key hasPrefix:@"artist_name"] || [key hasPrefix:@"image"] || [key hasPrefix:@"thumbnail"]) [metadata removeObjectForKey:key];
+    }
+    SPTPlayerTrack *copy = [track copy];
+    [copy setValue:metadata forKey:@"metadata"];
+    if (!sOriginals) sOriginals = [NSMapTable weakToStrongObjectsMapTable];
+    [sOriginals setObject:track forKey:copy];
+    return copy;
+}
+
+// The tracks the DJ has to come in the state's future, each "Up next" card as its own row before its track: they end
+// at the delimiter, after which the core puts the whole session again as hidden stand-ins, and a track the list has
+// already named is such a stand-in too.
 static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
     NSMutableArray<SPTPlayerTrack *> *tracks = [NSMutableArray array];
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
-    for (SPTPlayerTrack *track in future) {
+    SPTPlayerTrack *card;
+    for (NSUInteger i = 0; i < future.count; i++) {
+        SPTPlayerTrack *track = future[i];
         if ([track.provider isEqualToString:@"queue"]) continue;
         if ([SGURIString(track.URI) isEqualToString:@"spotify:delimiter"]) break;
-        if (!isDJTrack(track)) continue;
+        BOOL isTheCard = isCard(future, i);
+        if (!isTheCard && !isDJTrack(track)) continue;
         if (track.UID.length) {
-            if ([seen containsObject:track.UID]) break;
-            [seen addObject:track.UID];
+            NSString *key = [SGURIString(track.URI) stringByAppendingString:track.UID];
+            if ([seen containsObject:key]) break;
+            [seen addObject:key];
         }
+        if (isTheCard) card = track;
+        else if (card && [card.UID isEqualToString:track.UID] && !track.metadata[@"segment"]) track = withoutCard(track);
+        if (!isTheCard) card = nil;
         [tracks addObject:track];
     }
     return tracks;
@@ -250,7 +285,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
           (unsigned long)sQueue.count, track.trackTitle);
     if (track && indexIn(sInjected, track) != NSNotFound) {
         [tableView deselectRowAtIndexPath:indexPath animated:YES];
-        [(id<SPTPlayer>)SGPlayer() skipToNextTrackWithOptions:nil track:track];
+        [(id<SPTPlayer>)SGPlayer() skipToNextTrackWithOptions:nil track:[sOriginals objectForKey:track] ?: track];
         return;
     }
     %orig;
