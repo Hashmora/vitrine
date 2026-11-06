@@ -554,11 +554,6 @@ static NSString *pitchText(float pitch) {
     [super viewDidAppear:animated];
     SGPlayerStylePanel(self.view);
 }
-
-- (UIModalPresentationStyle)adaptivePresentationStyleForPresentationController:(UIPresentationController *)controller
-                                                               traitCollection:(UITraitCollection *)traits {
-    return UIModalPresentationNone;
-}
 @end
 
 void SGPlayerShowSpeedPitchPanel(UIView *from) {

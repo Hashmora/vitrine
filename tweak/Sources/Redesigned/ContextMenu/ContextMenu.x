@@ -345,6 +345,8 @@ static void fadeButton(UIView *button, BOOL away) {
     }
     if (!was) return;
     objc_setAssociatedObject(button, &kFadedAlphaKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // The page set the ⋯'s alpha itself while the menu was up (the fade left it at 0): that is the one it keeps.
+    if (button.alpha > 0.01) return;
     [UIView animateWithDuration:kButtonFade delay:kButtonBackDelay options:UIViewAnimationOptionBeginFromCurrentState
                      animations:^{ button.alpha = was.doubleValue; } completion:nil];
 }
