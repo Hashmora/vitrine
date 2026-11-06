@@ -25,6 +25,8 @@ static CGFloat SGSmooth(CGFloat t) { return t * t * (3 - 2 * t); }
 
 @implementation SGGlassTouchRecognizer {
     UITouch *_touch;
+    // The scroll views the touch is in, whose pan ends the press when it takes the touch.
+    NSArray<UIScrollView *> *_scrolls;
     CGPoint _start;
     CGPoint _shift;
     CAGradientLayer *_light;
@@ -144,6 +146,7 @@ static CGFloat SGSmooth(CGFloat t) { return t * t * (3 - 2 * t); }
 - (void)finish {
     if (!_touch) return;
     _touch = nil;
+    _scrolls = nil;
     _shift = CGPointZero;
     [self applyTracking:NO springy:YES];
     [self showLight:NO at:CGPointZero animated:YES];
@@ -153,6 +156,9 @@ static CGFloat SGSmooth(CGFloat t) { return t * t * (3 - 2 * t); }
     UIView *host = [self subject];
     if (_touch || !host) return;
     _touch = touches.anyObject;
+    NSMutableArray<UIScrollView *> *scrolls = [NSMutableArray array];
+    for (UIView *v = host.superview; v; v = v.superview) if ([v isKindOfClass:UIScrollView.class]) [scrolls addObject:(UIScrollView *)v];
+    _scrolls = scrolls;
     _start = [_touch locationInView:host];
     _shift = CGPointZero;
     [self applyTracking:YES springy:YES];
@@ -162,6 +168,16 @@ static CGFloat SGSmooth(CGFloat t) { return t * t * (3 - 2 * t); }
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     UIView *host = [self subject];
     if (!_touch || !host || ![touches containsObject:_touch]) return;
+    // A scroll that starts on the control takes the touch: the press is over, as a button's is, and the glass does not
+    // follow the finger down the page.
+    for (UIScrollView *scroll in _scrolls) {
+        UIGestureRecognizerState pan = scroll.panGestureRecognizer.state;
+        if (pan == UIGestureRecognizerStateBegan || pan == UIGestureRecognizerStateChanged) {
+            [self finish];
+            self.state = UIGestureRecognizerStateFailed;
+            return;
+        }
+    }
     CGPoint point = [_touch locationInView:host];
     _shift = CGPointMake(point.x - _start.x, point.y - _start.y);
     [self applyTracking:YES springy:NO];
@@ -182,7 +198,22 @@ static CGFloat SGSmooth(CGFloat t) { return t * t * (3 - 2 * t); }
 
 #pragma mark - the one entry
 
+// On a host whose press comes through another view (SGGlassInteractiveVia): that view's recognizer, which is the one,
+// held weakly (it lives on that view).
+@interface SGGlassTouchVia : NSObject
+@property (nonatomic, weak) SGGlassTouchRecognizer *recognizer;
+@end
+@implementation SGGlassTouchVia
+@end
+
+static char kViaKey;
+
 void SGGlassInteractive(UIView *host, UIView *pane) {
+    SGGlassTouchRecognizer *via = ((SGGlassTouchVia *)objc_getAssociatedObject(host, &kViaKey)).recognizer;
+    if (via) {
+        via.pane = pane;
+        return;
+    }
     SGGlassInteractiveVia(host, host, pane);
 }
 
@@ -198,4 +229,15 @@ void SGGlassInteractiveVia(UIView *touched, UIView *host, UIView *pane) {
     }
     recognizer.pane = pane;
     recognizer.target = host == touched ? nil : host;
+    if (host == touched) return;
+    // One press for the host: the touches reach its own recognizer too (`touched` is a subview of it, the player's ⋯),
+    // which would add a second light and a second spring on the same transform.
+    SGGlassTouchRecognizer *own = objc_getAssociatedObject(host, &kRecognizerKey);
+    if (own) {
+        [own.view removeGestureRecognizer:own];
+        objc_setAssociatedObject(host, &kRecognizerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    SGGlassTouchVia *via = [SGGlassTouchVia new];
+    via.recognizer = recognizer;
+    objc_setAssociatedObject(host, &kViaKey, via, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }

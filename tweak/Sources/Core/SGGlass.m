@@ -19,7 +19,6 @@ BOOL SGUseLegacyGlass(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         if (@available(iOS 26.0, *)) return;
-        SGMigrateKey(SGKeyLegacyGlassWas, SGKeyLegacyGlass);
         on = SGRedesignedUI() && SGFlag(SGKeyLegacyGlass, NO) && SGLegacyGlassAvailable();
     });
     return on;
