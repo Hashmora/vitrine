@@ -26,6 +26,7 @@
 // (npbSnapshotView, tabBarSnapshotView); which of the two 9.1.78 runs is not known, so both are hooked
 // and the log says which fired.
 #import "Core/SGCore.h"
+#import "Redesigned/Kit/SGRGlass.h"
 
 @interface SPTBarOverlayPresentationTransition : NSObject
 - (UIView *)bottomBarView;
@@ -73,6 +74,8 @@ static UIVisualEffectView *copyPane(UIView *pane) {
 // legacy pane with all of the original's settings, its shape, blur, lens and clearness; it builds its mesh for the
 // copy's own size. With the corners alone it took the default blur and lens, so the tab bar's stand-in was another
 // bar from the one it stood in for, and the real one came back looking different.
+static void copyDim(UIView *pane, UIView *glass);
+
 static UIView *copyGlass(UIView *pane, CGRect frame) {
     UIView *glass;
     if ([pane isKindOfClass:SGLegacyGlassView.class]) {
@@ -96,7 +99,25 @@ static UIView *copyGlass(UIView *pane, CGRect frame) {
     }
     glass.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleWidth
         | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin | UIViewAutoresizingFlexibleHeight;
+    copyDim(pane, glass);
     return glass;
+}
+
+// The dim a pane carries inside it (SGRDarkenGlass, the first view of its content: black, translucent), copied onto the
+// copy, so the stand-in is as dark as the bar it stands in for.
+static UIView *contentOf(UIView *pane) {
+    if ([pane isKindOfClass:UIVisualEffectView.class]) return ((UIVisualEffectView *)pane).contentView;
+    if ([pane isKindOfClass:SGLegacyGlassView.class]) return ((SGLegacyGlassView *)pane).contentView;
+    return nil;
+}
+
+static void copyDim(UIView *pane, UIView *glass) {
+    UIView *dim = contentOf(pane).subviews.firstObject;
+    CGFloat white = 1, alpha = 0;
+    if (!dim || ![dim.backgroundColor getWhite:&white alpha:&alpha] || white > 0.01 || alpha <= 0) return;
+    static char kCopyDimKey;
+    UIView *copy = SGRDarkenGlass(glass, &kCopyDimKey, dim.layer.cornerRadius, alpha);
+    copy.layer.cornerCurve = dim.layer.cornerCurve;
 }
 
 static CGRect scaledFrame(UIView *pane, UIView *source, CGSize to) {
