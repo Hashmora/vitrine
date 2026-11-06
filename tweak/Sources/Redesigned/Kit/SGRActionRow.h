@@ -82,3 +82,6 @@ UIView *SGRPinnedMoreRecentPage(void);
 // The pinned ⋯ itself, tapped within that window, or nil: what the redesign's system menu opens from
 // (Redesigned/ContextMenu).
 SGRMirrorButton *SGRPinnedMoreRecentButton(void);
+// Notes `button` as tapped when it is a pinned ⋯, as its touch down does: for a tap run from code, which sends the
+// button no touch down so that its other touch down targets (the press highlight) stay still.
+void SGRPinnedMoreNoteTap(UIView *button);
