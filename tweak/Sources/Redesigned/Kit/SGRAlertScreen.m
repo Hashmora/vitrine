@@ -324,6 +324,12 @@ static UILabel *textLabel(NSString *text, UIFont *font) {
         box.layer.cornerRadius = kFieldHeight / 2;
         box.layer.cornerCurve = kCACornerCurveContinuous;
         [field removeFromSuperview];
+        // Laid out by frame in the pill (viewDidLayoutSubviews). The alert placed it with Auto Layout, and the size it
+        // was given there stays on it: left on, it put the field at the pill's top left corner at its old size.
+        field.translatesAutoresizingMaskIntoConstraints = YES;
+        for (NSLayoutConstraint *constraint in field.constraints) {
+            if (constraint.firstItem == field && !constraint.secondItem) constraint.active = NO;
+        }
         field.borderStyle = UITextBorderStyleNone;
         field.backgroundColor = UIColor.clearColor;
         field.font = [UIFont systemFontOfSize:17];
@@ -531,8 +537,13 @@ static UILabel *textLabel(NSString *text, UIFont *font) {
     }
 }
 
-// A tap outside is the Cancel button where there is one; a lone OK has nothing to stand for, so it stays.
+// A tap outside an action sheet is its Cancel button, as the system's sheet takes it. An alert ignores it, as the
+// system's does: its Cancel can be a button of Spotify's that loses something (Discard on Discard changes?).
 - (void)dimTapped {
+    if (![self isAlertStyle]) [self runCancel];
+}
+
+- (void)runCancel {
     if (_cancelButton && _cancelButton.actionEnabled) [self performButton:_cancelButton];
 }
 
@@ -541,7 +552,7 @@ static UILabel *textLabel(NSString *text, UIFont *font) {
 }
 
 - (NSArray<UIKeyCommand *> *)keyCommands {
-    return @[[UIKeyCommand keyCommandWithInput:UIKeyInputEscape modifierFlags:0 action:@selector(dimTapped)]];
+    return @[[UIKeyCommand keyCommandWithInput:UIKeyInputEscape modifierFlags:0 action:@selector(runCancel)]];
 }
 
 #pragma mark showing and going
