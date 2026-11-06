@@ -49,6 +49,13 @@ static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
 static BOOL sg_minimized;
 static CGRect sg_leadFrame, sg_trailFrame;
+// The expanded row the bar draws, the capsule and the apart tab's button beside it, in the bar's host, and how many
+// tabs it shows: the now playing card takes its edges from 4 tabs on (SGRLegacyTabBarGlassRow).
+static CGRect sg_row = {{INFINITY, INFINITY}, {0, 0}};
+static NSUInteger sg_rowTabs;
+// From this many tabs the capsule runs about the screen's width, and the card above it lines up with its edges; with
+// fewer it is a short capsule in the middle and the card keeps Spotify's edges.
+static const NSUInteger kCardFollowsFrom = 4;
 
 // Telegram's TabSelectionRecognizer: Began the instant a finger lands (no distance or duration threshold), Changed on
 // every move after, so the bubble follows the finger from the first frame.
@@ -1261,6 +1268,14 @@ void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated) {
     setMinimized(minimized, animated);
 }
 
+CGRect SGRLegacyTabBarGlassRow(UIView *host) {
+    UIView *stockBar = sg_stockBar;
+    UIView *barHost = stockBar ? objc_getAssociatedObject(stockBar, &kHostKey) : nil;
+    if (!host || !barHost.window || sg_rowTabs < kCardFollowsFrom || CGRectIsInfinite(sg_row) || sg_row.origin.x == INFINITY) return CGRectNull;
+    if (stockBar.traitCollection.horizontalSizeClass != UIUserInterfaceSizeClassCompact) return CGRectNull;
+    return [barHost convertRect:sg_row toView:host];
+}
+
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height) {
     UIView *stockBar = sg_stockBar;
     UIView *barHost = stockBar ? objc_getAssociatedObject(stockBar, &kHostKey) : nil;
@@ -1487,6 +1502,15 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     CGRect apartFrame = separate ? CGRectMake(groupX + contentWidth + SGRGrid, platterY, platterHeight, platterHeight) : CGRectZero;
     BOOL frameChanged = !CGRectEqualToRect(bar.frame, platterFrame);
     if (frameChanged) bar.frame = platterFrame;
+    // The card above follows the row's sides once it has kCardFollowsFrom tabs; it is told when they move.
+    CGRect row = separate ? CGRectUnion(platterFrame, apartFrame) : platterFrame;
+    NSUInteger rowTabs = sources.count + (separate ? 1 : 0);
+    BOOL follows = rowTabs >= kCardFollowsFrom, followed = sg_rowTabs >= kCardFollowsFrom;
+    BOOL moved = follows != followed
+        || (follows && (fabs(CGRectGetMinX(row) - CGRectGetMinX(sg_row)) >= 0.5 || fabs(CGRectGetMaxX(row) - CGRectGetMaxX(sg_row)) >= 0.5));
+    sg_row = row;
+    sg_rowTabs = rowTabs;
+    if (moved) dispatch_async(dispatch_get_main_queue(), ^{ SGRNowPlayingBarFollowTabBar(); });
     // UIKit lays the item buttons out lazily; a resize or a reorder is laid out now, or the pill reads stale positions.
     if (frameChanged || itemsRebuilt) [bar layoutIfNeeded];
 
