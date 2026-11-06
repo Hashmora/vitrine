@@ -427,7 +427,7 @@ static void layoutHeader(UIViewController *page);
 // line. The Music app's page runs under its header to the top of the screen. So, below iOS 26, the container's top is
 // tied to the page's own, the header's black goes, and the feed is pushed down inside by what the container rose
 // (insetFeed), so nothing moves at rest.
-static char kLiftedKey, kExtraKey;
+static char kLiftedKey, kExtraKey, kWrittenKey;
 // Where the feed's first content stood, from the top of the page, before the container rose: the container's old top
 // and the feed's safe area then.
 static CGFloat sg_firstTop;
@@ -438,17 +438,22 @@ static const CGFloat kFeedGap = 12;
 // The feed's top inset is Spotify's own plus what keeps its first content at sg_firstTop under the safe area it has
 // now. The safe area changes after the container rises (8pt became 56pt, and a lift worked out once left Home 48pt
 // low), so it is worked out again on every pass and every scroll; Spotify's own part is what the inset holds less what
-// was added last.
+// was added last, unless Spotify has set the inset again since (it is no longer the value written here): then all of
+// it is Spotify's, as LibraryHeader.x's raiseList reads it.
 static void insetFeed(UIScrollView *feed) {
     if (sg_firstTop <= 0 || !feed) return;
     CGFloat extra = MAX(0, sg_firstTop - feed.safeAreaInsets.top) + kFeedGap;
     CGFloat added = [objc_getAssociatedObject(feed, &kExtraKey) doubleValue];
-    if (fabs(extra - added) < 0.5) return;
-    BOOL atRest = feed.contentOffset.y <= -feed.adjustedContentInset.top + 1;
+    NSNumber *written = objc_getAssociatedObject(feed, &kWrittenKey);
     UIEdgeInsets inset = feed.contentInset;
+    BOOL ours = written && fabs(inset.top - written.doubleValue) < 0.5;
+    if (!ours) added = 0;
+    if (ours && fabs(extra - added) < 0.5) return;
+    BOOL atRest = feed.contentOffset.y <= -feed.adjustedContentInset.top + 1;
     inset.top += extra - added;
     feed.contentInset = inset;
     objc_setAssociatedObject(feed, &kExtraKey, @(extra), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(feed, &kWrittenKey, @(inset.top), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (atRest) feed.contentOffset = CGPointMake(feed.contentOffset.x, -feed.adjustedContentInset.top);
 }
 
@@ -486,16 +491,29 @@ static void liftFeed(UIView *element) {
     }
     UIView *container = below.firstItem;
     if (!container || container.bounds.size.height < 1) return;
-    CGFloat before = CGRectGetMinY(container.frame);
+    // Not before the feed is known: worked out without its safe area, the first content stood 8pt high.
     UIScrollView *feed = sg_feed;
-    sg_firstTop = before + ([feed isDescendantOfView:container] ? feed.safeAreaInsets.top : 0);
+    if (!feed) return;
+    // A header element Spotify makes again ties the same container to it: that tie goes, and the container keeps the one
+    // tie of ours to the page's top, never a second.
+    static __weak NSLayoutConstraint *sg_lift;
+    NSLayoutConstraint *lift = sg_lift;
+    BOOL lifted = lift.active && lift.firstItem == container && lift.secondItem == page;
+    if (!lifted) {
+        CGFloat before = CGRectGetMinY(container.frame);
+        sg_firstTop = before + ([feed isDescendantOfView:container] ? feed.safeAreaInsets.top : 0);
+    }
     below.active = NO;
-    [container.topAnchor constraintEqualToAnchor:page.topAnchor].active = YES;
+    if (!lifted) {
+        lift = [container.topAnchor constraintEqualToAnchor:page.topAnchor];
+        lift.active = YES;
+        sg_lift = lift;
+    }
     objc_setAssociatedObject(element, &kLiftedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [page layoutIfNeeded];
     if (container.clipsToBounds) container.clipsToBounds = NO;
     insetFeed(feed);
-    SGLog(@"redesign home: the feed runs under the header, its container up %.0fpt, its first content kept %.0fpt down", before, sg_firstTop);
+    SGLog(@"redesign home: the feed runs under the header, its first content kept %.0fpt down%@", sg_firstTop, lifted ? @", the header made again" : @"");
 }
 
 // The page's own pass can run before Spotify has sized its header at all (the header's view 0 by 0, its stack still

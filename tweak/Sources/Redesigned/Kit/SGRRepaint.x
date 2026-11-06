@@ -136,7 +136,7 @@ enum { kInNowPlaying = 1, kInLyrics = 2, kInPage = 4 };
     if (legacyLook && color && (isNeutralTint(color) || CGColorGetAlpha(color) > 0.5)) {
         UIView *fill = (UIView *)self.delegate;
         if ([fill isKindOfClass:UIView.class] && fill.layer == self) {
-            if (isChipFill(fill)) {
+            if (isChipFill(fill) && SGRIsGlassChip(fill.superview)) {
                 paintedChip = fill.superview;
             } else if (SGRIsDressedChipPill(fill)) {
                 // The pill of a chip dressed by the Kit (SGRChips.h): the genres over Liked Songs, Recents' chips.
