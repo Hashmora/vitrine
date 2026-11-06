@@ -1,6 +1,8 @@
 #import "Core/SGCore.h"
 #import "SGRGlass.h"
 #import "SGRTokens.h"
+#import "SGRRestyle.h"
+#import "SGRRepaint.h"
 
 // iOS 26 gets the system's glass. Below it a shape is the legacy approximation when that is on and a thin
 // material blur when it is not; Reduce Transparency gives a solid fill everywhere.
