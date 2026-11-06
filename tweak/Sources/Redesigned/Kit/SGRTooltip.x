@@ -110,6 +110,10 @@ static void followNowPlayingBar(UIView *container) {
     UIView *card = nil, *arrow = nil;
     partsOf(container, &card, &arrow);
     if (!card) return;
+    // Spotify's own move of the tooltip runs to its end: a transform written under it would cut it short.
+    for (NSString *key in container.layer.animationKeys) {
+        if ([key containsString:@"transform"]) return;
+    }
     CGAffineTransform move = CGAffineTransformMakeTranslation(0, SGRNowPlayingBarShiftOver(untransformedCard(container, card), container.window));
     if (!CGAffineTransformEqualToTransform(container.transform, move)) container.transform = move;
 }
