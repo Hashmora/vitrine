@@ -763,6 +763,7 @@ CGRect SGRTabBarInlineSlot(UIView *host, CGFloat height) {
 
 // Only the x edges are meant; a bar Spotify has slid away for a page keeps them.
 CGRect SGRTabBarGlassRow(UIView *host) {
+    if (SGRLegacyTabBarOn()) return SGRLegacyTabBarGlassRow(host);
     UIView *stockBar = sg_stockBar;
     UIView *bar = stockBar ? objc_getAssociatedObject(stockBar, &kBarKey) : nil;
     if (!host || !bar.window || stockBar.traitCollection.horizontalSizeClass != UIUserInterfaceSizeClassCompact) return CGRectNull;
