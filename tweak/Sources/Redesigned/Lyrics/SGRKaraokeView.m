@@ -1617,7 +1617,6 @@ typedef struct {
     _extrasHidden = hidden;
     if (_extrasBox) {
         UIView *extrasGlass = SGRGlassInside(_extrasBox, &kExtrasGlassKey, kExtrasSide);
-        SGGlassInteractive(_extrasBox, extrasGlass);
         SGRShowGlass(extrasGlass, !hidden);
         _extras.alpha = hidden ? 0 : 1;
         _extrasBox.userInteractionEnabled = !hidden;

@@ -7,8 +7,6 @@
 #import "SGGlassTouch.h"
 
 #define SGKeyLegacyGlass @"spotifyglass.redesign.legacyglass"
-// What the switch was stored under before it became the redesign's.
-#define SGKeyLegacyGlassWas @"spotifyglass.legacyglass"
 
 // Whether panes are SGLegacyGlassViews right now. The one place this is decided: callers ask it instead of
 // re-deriving the answer from the switch, @available and SGLegacyGlassAvailable().
