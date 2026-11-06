@@ -118,6 +118,7 @@ static void askName(NSString *uri) {
         [[@"https://open.spotify.com/track/" stringByAppendingString:[uri componentsSeparatedByString:@":"].lastObject]
          stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet]];
     NSURL *url = [NSURL URLWithString:address];
+    SGLog(@"[DEBUG-dj] name asked for %@ (%@)", uri, url ? @"sent" : @"bad url");
     if (!url) return;
     [[[NSURLSession sharedSession] dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         NSDictionary *json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
@@ -295,10 +296,17 @@ static void hideTrack(SPTPlayerTrack *track, NSString *why) {
 - (void)player:(id)player queueDidChange:(id)queue;
 @end
 
+// The queue the core gave last and what the readers were given for it: every reader of one queue gets the very same
+// object, as each gets the core's own, so the page's table and its cells are made from one list.
+static __weak id sForwardFor;
+static id sForward;
+
 static void refreshReaders(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         id player = sLastPlayer, queue = sLastQueue;
         if (!player || !queue) { SGLog(@"queue: no queue to refresh the rows with"); return; }
+        sForwardFor = nil;
+        SGLog(@"[DEBUG-dj] refresh: %lu readers told again", (unsigned long)sReaders.allObjects.count);
         for (id<SGQueueReader> reader in sReaders.allObjects) [reader player:player queueDidChange:queue];
     });
 }
@@ -332,7 +340,29 @@ static id queueWith(id queue, NSArray<SPTPlayerTrack *> *rows) {
     return copy;
 }
 
+static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward);
+
 static BOOL lineUpTheFuture(id reader, id player, id queue, id *forward) {
+    if (queue && queue == sForwardFor && sForward) {
+        if (!sReaders) sReaders = [NSHashTable weakObjectsHashTable];
+        [sReaders addObject:reader];
+        *forward = sForward;
+        SGLog(@"[DEBUG-dj] %@ given the same queue (%lu rows)", NSStringFromClass([reader class]),
+              (unsigned long)[[sForward valueForKey:@"nextTracks"] count]);
+        return NO;
+    }
+    BOOL keep = lineUpTheFutureFor(reader, player, queue, forward);
+    SGLog(@"[DEBUG-dj] %@ given %lu rows%@ (core %lu)", NSStringFromClass([reader class]),
+          (unsigned long)[[*forward valueForKey:@"nextTracks"] count], keep ? @", kept the old ones" : @"",
+          (unsigned long)[[queue valueForKey:@"nextTracks"] count]);
+    if (!keep) {
+        sForwardFor = queue;
+        sForward = *forward;
+    }
+    return keep;
+}
+
+static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     if (!sReaders) sReaders = [NSHashTable weakObjectsHashTable];
     [sReaders addObject:reader];
     sLastPlayer = player;
@@ -437,25 +467,25 @@ static NSString *describeEsp(id track) {
 }
 %end
 
-// The table's diffable data source asks to reconfigure a row by its place before the update, and when the list has just
-// become shorter (the card's row goes as its track starts) that place is one the page's cell provider no longer has:
-// it returns a bare UITableViewCell, and UIKit aborts on the cell not being the one it has. Such places are left out
-// of the reconfigure, and the table is loaded again after the update for the rows that changed.
+// The queue table's diffable data source reconfigures a row by asking the page's cell provider for it again, and the
+// provider reads the page's own list, which can already be the next one: the snapshot had five rows and the provider four
+// (the skip to a later DJ track took the first away), so for the fifth it gave a bare UITableViewCell and UIKit aborted
+// ("returned a different cell ... than the cell being reconfigured", path 1-4, on the phone). The queue table is never
+// reconfigured: it is loaded again once the update is in, which takes whatever cell the provider gives.
 static BOOL sReloadQueued;
 %hook UITableView
 - (void)reconfigureRowsAtIndexPaths:(NSArray<NSIndexPath *> *)paths {
     static Class queueSource;
     if (!queueSource) queueSource = NSClassFromString(@"_TtC14Queue_ViewImpl38QueueTableViewDataSourceImplementation");
     id<UITableViewDataSource> source = self.dataSource;
-    if (!queueSource || ![(id)source isKindOfClass:queueSource]) { %orig; return; }
-    NSMutableArray<NSIndexPath *> *valid = [NSMutableArray array];
-    for (NSIndexPath *path in paths) {
-        if (path.row < [source tableView:self numberOfRowsInSection:path.section]) [valid addObject:path];
+    if (!queueSource || ![(id)source isKindOfClass:queueSource]) {
+        %orig;
+        return;
     }
-    if (valid.count == paths.count) { %orig; return; }
-    SGLog(@"queue page: reconfigure of %lu rows, %lu are past the end of the list (%lu rows), left out", (unsigned long)paths.count,
-          (unsigned long)(paths.count - valid.count), (unsigned long)sQueue.count);
-    if (valid.count) %orig(valid);
+    NSMutableArray<NSString *> *places = [NSMutableArray array];
+    for (NSIndexPath *path in paths) [places addObject:[NSString stringWithFormat:@"%ld-%ld/%ld", (long)path.section, (long)path.row,
+        (long)[source tableView:self numberOfRowsInSection:path.section]]];
+    SGLog(@"[DEBUG-dj] reconfigure of %@ left to a reload (our list %lu rows)", [places componentsJoinedByString:@" "], (unsigned long)sQueue.count);
     if (sReloadQueued) return;
     sReloadQueued = YES;
     __weak UITableView *weakSelf = self;
