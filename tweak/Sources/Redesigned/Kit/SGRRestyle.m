@@ -245,8 +245,9 @@ BOOL SGRObserveLayout(UIView *view, void (^laidOut)(UIView *view)) {
         });
     });
     // One of Spotify's Swift classes (a library filter chip) cannot be subclassed, so the class carries the
-    // override, which only ever reports the instances that asked, as SGRObserveImage does.
-    BOOL onClass = !kept && overrideOnClass(object_getClass(view), @selector(layoutSubviews), ^id(IMP replaced) {
+    // override, which only ever reports the instances that asked, as SGRObserveImage does. Below iOS 26 only: on 26 the
+    // watchers that asked for such a view stay unreported, as they were.
+    BOOL onClass = !kept && SGBelowiOS26() && overrideOnClass(object_getClass(view), @selector(layoutSubviews), ^id(IMP replaced) {
         return ^(UIView *self) {
             ((void (*)(id, SEL))replaced)(self, @selector(layoutSubviews));
             reportLayout(self);

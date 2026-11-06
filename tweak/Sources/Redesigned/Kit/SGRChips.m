@@ -68,9 +68,13 @@ void SGRGlassChipsIn(UIView *root) {
 }
 
 BOOL SGRIsDressedChipPill(UIView *view) {
+    // Asked on every opaque paint in the app: the cheap test first, and the class by pointer, never by its name.
     UIView *chip = view.superview;
-    if (![NSStringFromClass(view.class) isEqualToString:kPillClass] || !isChip(chip)) return NO;
-    return objc_getAssociatedObject(chip, &kChipWatchedKey) != nil;
+    if (!chip || !objc_getAssociatedObject(chip, &kChipWatchedKey)) return NO;
+    static Class pill;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ pill = NSClassFromString(kPillClass); });
+    return pill && [view isMemberOfClass:pill] && isChip(chip);
 }
 
 void SGRDressedChipPainted(UIView *chip) {
