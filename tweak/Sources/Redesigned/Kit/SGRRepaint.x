@@ -106,20 +106,28 @@ static BOOL isSheetPaint(UIView *view, CGColorRef color) {
     return SGRIsSheetChromeArea(view, root) || view.bounds.size.width >= root.bounds.size.width * SGRSheetBandShare;
 }
 
-static char kSheetWatchedKey;
+static char kSheetWatchedKey, kCellSweptKey;
 static void watchSheetView(UIView *view, void (^pass)(UIView *view));
 
 // The grey of every view under `view` that is the sheet's, and of the rows of every list in it, cleared; a list met
-// for the first time is watched from then on, so a row scrolled or reused into it is cleared as it lays out.
+// for the first time is watched from then on, so a row scrolled or reused into it is cleared as it lays out. A list lays
+// out on every frame of a scroll, so a row is walked once, and again only when it holds another set of views: paint on a
+// row already in the sheet goes through the layer hook above. A scroll costs one lookup per visible row.
 static void sweepSheet(UIView *view, int depth) {
     UIView *root = sgr_sheetChromeRoot;
     if (!root || !view || depth > 16) return;
-    CGColorRef paint = view.layer.backgroundColor;
-    if (paint && isSheetPaint(view, paint)) view.backgroundColor = UIColor.clearColor;
     if ([view isKindOfClass:UITableViewCell.class] || [view isKindOfClass:UICollectionViewCell.class]) {
+        UIView *content = [view respondsToSelector:@selector(contentView)] ? [(id)view contentView] : view;
+        NSNumber *held = @(view.subviews.count * 1000 + content.subviews.count);
+        if ([objc_getAssociatedObject(view, &kCellSweptKey) isEqual:held]) return;
+        objc_setAssociatedObject(view, &kCellSweptKey, held, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        CGColorRef paint = view.layer.backgroundColor;
+        if (paint && isSheetPaint(view, paint)) view.backgroundColor = UIColor.clearColor;
         SGRClearSheetCellPaint(view, root);
         return;
     }
+    CGColorRef paint = view.layer.backgroundColor;
+    if (paint && isSheetPaint(view, paint)) view.backgroundColor = UIColor.clearColor;
     if ([view isKindOfClass:UIScrollView.class]) watchSheetView(view, ^(UIView *list) { sweepSheet(list, 0); });
     for (UIView *sub in view.subviews) sweepSheet(sub, depth + 1);
 }
@@ -129,7 +137,8 @@ static void sweepSheet(UIView *view, int depth) {
 static void watchSheetView(UIView *view, void (^pass)(UIView *view)) {
     if (objc_getAssociatedObject(view, &kSheetWatchedKey)) return;
     objc_setAssociatedObject(view, &kSheetWatchedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if (SGRObserveLayout(view, pass)) return;
+    // A view another feature watches keeps its observer (SGRObserveLayout holds one block a view): this one goes on the class.
+    if (!SGRObservesLayout(view) && SGRObserveLayout(view, pass)) return;
     Class cls = object_getClass(view);
     NSString *name = NSStringFromClass(cls);
     if ([name hasPrefix:@"UI"] || [name hasPrefix:@"_UI"]) return;

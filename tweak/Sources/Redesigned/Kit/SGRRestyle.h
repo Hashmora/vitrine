@@ -42,6 +42,8 @@ BOOL SGRObserveImage(UIImageView *view, void (^changed)(UIImageView *view));
 // For a screen that arranges Spotify's controls its own way: a parent lays its children out after the
 // hook that placed them has returned, so frames set from an ancestor's pass are the ones overwritten.
 BOOL SGRObserveLayout(UIView *view, void (^laidOut)(UIView *view));
+// Whether `view` has a block from SGRObserveLayout: a caller that must not replace another's asks first.
+BOOL SGRObservesLayout(UIView *view);
 
 // The first view under `root` (itself included) with the accessibility identifier, depth first. The
 // answer is kept weakly on `root` under `cacheKey` and searched for again only when it is gone, has
