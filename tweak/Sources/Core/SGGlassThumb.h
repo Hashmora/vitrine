@@ -20,3 +20,6 @@ void SGGlassThumbAttach(UISlider *slider, CGSize size);
 void SGGlassSwitchAttach(UISwitch *toggle);
 // Brings the drawing of an attached switch up to date with it (its value set from code, a layout, enabled changed).
 void SGGlassSwitchSync(UISwitch *toggle, BOOL animated);
+// Whether `point` (in the switch) is on the drawing of an attached switch: its track is wider than UIKit's and reaches
+// past the switch's leading edge, and that strip takes the touch too. NO for a switch with no drawing.
+BOOL SGGlassSwitchContains(UISwitch *toggle, CGPoint point);
