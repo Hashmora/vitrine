@@ -127,6 +127,57 @@ static NSString *describeMeta(NSDictionary *metadata) {
     return [parts componentsJoinedByString:@" "];
 }
 
+#pragma mark - the card's avatar
+
+// The page leaves the DJ's avatar off the "Up next" card's row (a placeholder where its image is), so it is drawn here:
+// the card's image_url is fetched once and put in the row's image view when the cell lays out.
+static UIImage *sCardAvatar;
+static NSString *sCardAvatarURL, *sCardTitle;
+static NSHashTable<UITableViewCell *> *sQueueCells;
+
+static void loadCardAvatar(NSString *url) {
+    if (!url.length || [url isEqualToString:sCardAvatarURL]) return;
+    sCardAvatarURL = url;
+    NSURL *address = [NSURL URLWithString:url];
+    if (!address) return;
+    [[[NSURLSession sharedSession] dataTaskWithURL:address completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        UIImage *image = data.length ? [UIImage imageWithData:data] : nil;
+        SGLog(@"queue: card avatar %@: %@", url, image ? @"loaded" : (error.localizedDescription ?: @"no image"));
+        if (!image) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            sCardAvatar = image;
+            for (UITableViewCell *cell in sQueueCells.allObjects) [cell setNeedsLayout];
+        });
+    }] resume];
+}
+
+static UIView *descendant(UIView *root, BOOL (^match)(UIView *)) {
+    for (UIView *view in root.subviews) {
+        if (match(view)) return view;
+        UIView *found = descendant(view, match);
+        if (found) return found;
+    }
+    return nil;
+}
+
+// The avatar in the cell of the card's row (the row whose accessibility label has the card's title), over the
+// placeholder.
+static void drawCardAvatar(UITableViewCell *cell) {
+    if (!sCardAvatar || !sCardTitle.length) return;
+    UIView *row = descendant(cell.contentView, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Cell"]; });
+    if (!row || ![row.accessibilityLabel containsString:sCardTitle]) return;
+    UIView *art = descendant(row, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"Encore.ImageView"]; });
+    UIImageView *image = art ? (UIImageView *)descendant(art, ^BOOL(UIView *view) { return [view isMemberOfClass:UIImageView.class]; }) : nil;
+    if (!image) return;
+    if (image.image != sCardAvatar) {
+        image.image = sCardAvatar;
+        image.contentMode = UIViewContentModeScaleAspectFill;
+        image.clipsToBounds = YES;
+    }
+    UIView *placeholder = descendant(art, ^BOOL(UIView *view) { return [NSStringFromClass(view.class) containsString:@"PlaceholderView"]; });
+    placeholder.hidden = YES;
+}
+
 // The tracks the DJ has to come in the state's future, each "Up next" card as its own row before its track: they end
 // at the delimiter, after which the core puts the whole session again as hidden stand-ins, and a track the list has
 // already named is such a stand-in too.
@@ -155,6 +206,8 @@ static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
                 SGLog(@"queue: its track %@ [%@] metadata: %@", SGURIString(future[i + 1].URI), future[i + 1].UID, describeMeta(future[i + 1].metadata));
             }
             card = track;
+            sCardTitle = track.metadata[@"title"];
+            loadCardAvatar(track.metadata[@"image_url"]);
             track = cardRow(track);
         } else if (!track.metadata[@"segment"] && ((card && [card.UID isEqualToString:track.UID]) || [sCarded containsObject:track.UID])) {
             // The card's track: with the card before it, and after the card has gone, the same row.
@@ -207,15 +260,46 @@ static void refreshReaders(void) {
 // When the core began to have no tracks to come, nil while it has some.
 static NSDate *sGapSince;
 
+// What the last list was made from, and the list: the same input gives the readers the same rows (the same objects),
+// whichever of them is asked first.
+static NSString *sSignature;
+static NSArray<SPTPlayerTrack *> *sCachedMerged;
+
+// A line that tells whether the state, the core's queue or what was hidden has changed since the last list.
+static NSString *signatureOf(SPTPlayerState *state, NSArray<SPTPlayerTrack *> *next) {
+    NSMutableString *sig = [NSMutableString stringWithFormat:@"%@|%@|%@|", state.contextURI, SGURIString(state.track.URI), state.track.UID];
+    for (SPTPlayerTrack *t in state.future) [sig appendFormat:@"%@/%@/%@;", SGURIString(t.URI), t.UID, t.provider];
+    [sig appendString:@"|"];
+    for (SPTPlayerTrack *t in next) [sig appendFormat:@"%@/%@/%@;", SGURIString(t.URI), t.UID, t.provider];
+    [sig appendString:@"|"];
+    for (NSString *uid in [sHidden.allObjects sortedArrayUsingSelector:@selector(compare:)]) [sig appendFormat:@"%@,", uid];
+    return sig;
+}
+
 // Puts the DJ's tracks to come in `queue`. YES when the readers are to be left as they are: the core has none to come
 // just now, and the rows the page had stay.
-static BOOL lineUpTheFuture(id reader, id player, id queue) {
+// The queue the readers are given is a copy of the core's with the DJ's rows in it, in `forward`: the core's own queue
+// object is not changed, the page may keep it and read it again later.
+static id queueWith(id queue, NSArray<SPTPlayerTrack *> *rows) {
+    id copy = [queue copy];
+    if (!copy) { SGLog(@"queue: the queue cannot be copied, the page gets the core's"); return queue; }
+    [copy setValue:rows forKey:@"nextTracks"];
+    return copy;
+}
+
+static BOOL lineUpTheFuture(id reader, id player, id queue, id *forward) {
     if (!sReaders) sReaders = [NSHashTable weakObjectsHashTable];
     [sReaders addObject:reader];
     sLastPlayer = player;
     sLastQueue = queue;
+    *forward = queue;
     SPTPlayerState *state = SGPlayerState();
     NSArray<SPTPlayerTrack *> *next = [queue valueForKey:@"nextTracks"];
+    NSString *signature = signatureOf(state, next);
+    if (sCachedMerged.count && [signature isEqualToString:sSignature]) {
+        *forward = queueWith(queue, sCachedMerged);
+        return NO;
+    }
     NSArray<SPTPlayerTrack *> *future = djFuture(state.future);
 
     // The state's own, then what was kept after its last one. When hand-queued tracks fill the state's two it names
@@ -273,7 +357,9 @@ static BOOL lineUpTheFuture(id reader, id player, id queue) {
         static NSString *sLastRows;
         if (![line isEqualToString:sLastRows]) { sLastRows = line; SGLog(@"queue: rows (%lu, %lu the DJ's): %@", (unsigned long)merged.count, (unsigned long)injected.count, line); }
     }
-    if (ahead.count) [queue setValue:merged forKey:@"nextTracks"];
+    sSignature = signature;
+    sCachedMerged = merged;
+    if (ahead.count) *forward = queueWith(queue, merged);
     return NO;
 }
 
@@ -284,22 +370,40 @@ static NSString *describeEsp(id track) {
 
 %hook _TtC16Queue_UpNextImpl19UpNextTrackProvider
 - (void)player:(id)player queueDidChange:(id)queue {
-    if (lineUpTheFuture(self, player, queue)) return;
-    %orig;
+    id forward = queue;
+    if (lineUpTheFuture(self, player, queue, &forward)) return;
+    %orig(player, forward);
 }
 %end
 
 %hook _TtC14Queue_ViewImpl22PlayerStateEventSource
 - (void)player:(id)player queueDidChange:(id)queue {
-    if (lineUpTheFuture(self, player, queue)) return;
-    %orig;
+    id forward = queue;
+    if (lineUpTheFuture(self, player, queue, &forward)) return;
+    %orig(player, forward);
 }
 %end
 
 %hook _TtC14Queue_ViewImpl20QueuedTracksObserver
 - (void)player:(id)player queueDidChange:(id)queue {
-    if (lineUpTheFuture(self, player, queue)) return;
+    id forward = queue;
+    if (lineUpTheFuture(self, player, queue, &forward)) return;
+    %orig(player, forward);
+}
+%end
+
+%hook _TtC14Queue_ViewImpl9QueueCell
+- (void)layoutSubviews {
     %orig;
+    if (!sQueueCells) sQueueCells = [NSHashTable weakObjectsHashTable];
+    [sQueueCells addObject:self];
+    drawCardAvatar(self);
+    // The row's own image view may be set again a moment after the layout.
+    __weak UITableViewCell *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UITableViewCell *cell = weakSelf;
+        if (cell) drawCardAvatar(cell);
+    });
 }
 %end
 
@@ -530,6 +634,6 @@ static void installExceptionLog(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ installExceptionLog(); });
     SGRequireClasses(@[@"_TtC16Queue_UpNextImpl19UpNextTrackProvider", @"_TtC14Queue_ViewImpl22PlayerStateEventSource",
                        @"_TtC14Queue_ViewImpl20QueuedTracksObserver", @"_TtC14Queue_ViewImpl19QueueViewController",
-                       @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer", @"SPTPlayerQueueWrapperImpl",
+                       @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer", @"SPTPlayerQueueWrapperImpl", @"_TtC14Queue_ViewImpl9QueueCell",
                        @"_TtC14Queue_ViewImpl38QueueTableViewDataSourceImplementation"]);
 }
