@@ -16,6 +16,16 @@ static char kRingGlassKey, kOutlinedKey;
 
 static void dressOutlined(UIView *button) {
     if (!button.window || button.bounds.size.height < 1) return;
+    // A button Spotify fills (a reused cell's, given a solid call to action) is no outlined one any more: its paint stays
+    // and the glass goes. The fill this file takes off is never a visible one, so this is Spotify's.
+    if (SGIsVisibleColor(button.layer.backgroundColor)) {
+        if (objc_getAssociatedObject(button, &kOutlinedKey)) {
+            objc_setAssociatedObject(button, &kOutlinedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            UIView *glass = objc_getAssociatedObject(button, &kRingGlassKey);
+            if (glass && !glass.hidden) glass.hidden = YES;
+        }
+        return;
+    }
     BOOL ringed = button.layer.borderWidth > 0 && !SGIsVisibleColor(button.layer.backgroundColor);
     if (!ringed && !objc_getAssociatedObject(button, &kOutlinedKey)) return;
     objc_setAssociatedObject(button, &kOutlinedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);

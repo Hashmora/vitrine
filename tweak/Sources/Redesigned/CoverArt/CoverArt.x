@@ -160,6 +160,8 @@ static void dressCoverArt(UIView *page) {
 
 %ctor {
     if (!SGRedesignedUI()) return;
+    // Below iOS 26 only: on iOS 26 these screens keep the look they have on main.
+    if (!SGBelowiOS26()) return;
     // Again as Spotify builds the screen: the Try again button only exists once the game is lost, and the bar's
     // buttons are laid out after the controller's own pass.
     SGRPassSwiftController(@"PlaylistCuration_CoverArtSnakeImpl", @"SnakeViewController", ^(UIViewController *c) { dressSnake(c); });
