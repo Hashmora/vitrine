@@ -1,8 +1,6 @@
 #import "Core/SGCore.h"
 #import "SGRGlass.h"
 #import "SGRTokens.h"
-#import "SGRRestyle.h"
-#import "SGRRepaint.h"
 
 // iOS 26 gets the system's glass. Below it a shape is the legacy approximation when that is on and a thin
 // material blur when it is not; Reduce Transparency gives a solid fill everywhere.
@@ -67,8 +65,8 @@ static void keepFilm(UIView *shape, BOOL prominent, SGRGlassMode mode) {
     UIView *content = glassContent(shape);
     if (!film) {
         film = [UIView new];
-        // iOS 26's prominent film is the system glass's own step (0.14); below it, the one film of the Kit's.
-        film.backgroundColor = SGBelowiOS26() ? SGRGlassFilmColor() : [UIColor colorWithWhite:1 alpha:0.14];
+        // The prominent film is the system glass's step (0.14), as on main; with the legacy glass, the one film of the Kit's.
+        film.backgroundColor = SGUseLegacyGlass() ? SGRGlassFilmColor() : [UIColor colorWithWhite:1 alpha:0.14];
         film.userInteractionEnabled = NO;
         film.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         objc_setAssociatedObject(shape, &kFilmKey, film, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
