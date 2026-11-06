@@ -129,10 +129,21 @@ UIView *SGRGlassCapsuleInside(UIView *control, const void *key, CGSize size, BOO
     return glassInside(control, key, size, YES, prominent);
 }
 
+// The dimming SGRDarkenGlass puts inside a pane's content.
+@interface SGRGlassDim : UIView
+@end
+@implementation SGRGlassDim
+@end
+
 void SGRShowGlass(UIView *shape, BOOL shown) {
     if ([shape isKindOfClass:UIVisualEffectView.class]) {
         UIVisualEffectView *glass = (UIVisualEffectView *)shape;
         if ((glass.effect != nil) != shown) glass.effect = shown ? SGGlassEffect() : nil;
+        // A blur comes and goes by its effect, which leaves its content on screen: its dimming goes with it, or a dark
+        // shape stays where the glass was.
+        for (UIView *view in glass.contentView.subviews) {
+            if ([view isKindOfClass:SGRGlassDim.class]) view.alpha = shown ? 1 : 0;
+        }
     } else {
         shape.alpha = shown ? 1 : 0;
     }
@@ -148,8 +159,10 @@ UIView *SGRDarkenGlass(UIView *pane, const void *key, CGFloat radius, CGFloat al
                     : [pane isKindOfClass:SGLegacyGlassView.class] ? ((SGLegacyGlassView *)pane).contentView : nil;
     if (!content) return nil;
     UIView *dim = SGLazyChild(content, key, ^UIView *{
-        UIView *view = [UIView new];
+        UIView *view = [SGRGlassDim new];
         view.userInteractionEnabled = NO;
+        // Shown as the blur is (SGRShowGlass).
+        if ([pane isKindOfClass:UIVisualEffectView.class] && !((UIVisualEffectView *)pane).effect) view.alpha = 0;
         view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         return view;
     });
