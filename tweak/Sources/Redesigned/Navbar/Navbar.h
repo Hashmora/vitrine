@@ -20,6 +20,8 @@ void SGRSetNavbarLayout(NSArray<NSDictionary *> *layout);
 // SGRNavbarLayout's. A tab of the mod's own here is independent of the bar's; one of Spotify's can stand in one
 // place only, so it leaves the bar's list while it is here.
 NSArray<NSDictionary *> *SGRNavbarSplit(void);
+// The split tabs the bar shows: the list, or below iOS 26 its last one alone (the capsule bar's one round button).
+NSArray<NSDictionary *> *SGRNavbarSplitShown(void);
 void SGRSetNavbarSplit(NSArray<NSDictionary *> *split);
 // The split tabs as they were stored before they had a list of their own (.split, the identities of entries of the
 // bar's list) moved over to that list, once: when .split is there and the list is not. Run at launch, so a settings

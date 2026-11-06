@@ -80,7 +80,6 @@ static char kButtonGlassKey, kPanelGlassKey;
     CGRect bounds = self.bounds;
     _button.frame = bounds;
     UIView *buttonGlass = SGRGlassInside(self, &kButtonGlassKey, MIN(bounds.size.width, bounds.size.height));
-    SGGlassInteractive(self, buttonGlass);
     SGRShowGlass(buttonGlass, !_tucked);
     _ring.frame = bounds;
     // Starting at the top and running clockwise, as a download ring does.
