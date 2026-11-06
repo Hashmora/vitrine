@@ -256,6 +256,26 @@ static BOOL isFriday(void) {
     return [NSCalendar.currentCalendar component:NSCalendarUnitWeekday fromDate:NSDate.date] == 6;
 }
 
+// The ring's turn, on only while it can be seen: a ring faded out with the material keeps no endless animation going
+// under a page scrolled down, nor under Reduce Motion.
+static void turnRing(CALayer *ring, BOOL on) {
+    CALayer *colors = ring.sublayers.firstObject;
+    if (!colors) return;
+    if (!on || SGRReduceMotion()) {
+        [colors removeAnimationForKey:@"turn"];
+        return;
+    }
+    if ([colors animationForKey:@"turn"]) return;
+    CABasicAnimation *turn = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+    turn.fromValue = @0;
+    turn.toValue = @(2 * M_PI);
+    turn.duration = kFridayTurn;
+    turn.repeatCount = HUGE_VALF;
+    turn.removedOnCompletion = NO;
+    turn.preferredFrameRateRange = CAFrameRateRangeMake(10, 30, 30);
+    [colors addAnimation:turn forKey:@"turn"];
+}
+
 static void layoutFriday(UIView *holder, CGSize size) {
     CALayer *ring = objc_getAssociatedObject(holder, &kFridayKey);
     BOOL friday = isFriday() && size.width > 1;
@@ -302,18 +322,7 @@ static void layoutFriday(UIView *holder, CGSize size) {
         outline.path = [UIBezierPath bezierPathWithRoundedRect:line cornerRadius:line.size.height / 2].CGPath;
         [CATransaction commit];
     }
-    if (SGRReduceMotion()) {
-        [colors removeAnimationForKey:@"turn"];
-    } else if (![colors animationForKey:@"turn"]) {
-        CABasicAnimation *turn = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
-        turn.fromValue = @0;
-        turn.toValue = @(2 * M_PI);
-        turn.duration = kFridayTurn;
-        turn.repeatCount = HUGE_VALF;
-        turn.removedOnCompletion = NO;
-        turn.preferredFrameRateRange = CAFrameRateRangeMake(10, 30, 30);
-        [colors addAnimation:turn forKey:@"turn"];
-    }
+    turnRing(ring, sg_glassShown);
 }
 
 static CGFloat layoutPill(UIView *header, UIStackView *stack, UIView *face) {
@@ -425,8 +434,11 @@ static void riseGlass(UIView *glass, CGAffineTransform transform, CGFloat alpha)
     // The Friday ring goes and comes back with the material, over the same time.
     CALayer *ring = objc_getAssociatedObject(glass, &kFridayKey);
     if (ring) {
+        if (shown) turnRing(ring, YES);
         [CATransaction begin];
         [CATransaction setAnimationDuration:kGlassFade];
+        // Faded out, it stops turning (turnRing), unless it has come back meanwhile.
+        if (!shown) [CATransaction setCompletionBlock:^{ if (!sg_glassShown) turnRing(ring, NO); }];
         ring.opacity = shown ? 1 : 0;
         [CATransaction commit];
     }
