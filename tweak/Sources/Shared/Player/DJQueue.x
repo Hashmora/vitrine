@@ -395,11 +395,13 @@ static NSString *describeEsp(id track) {
 %hook _TtC14Queue_ViewImpl9QueueCell
 - (void)layoutSubviews {
     %orig;
+    // The hooked class is declared here without its superclass, so it is taken as the table cell it is.
+    UITableViewCell *cellSelf = (UITableViewCell *)(id)self;
     if (!sQueueCells) sQueueCells = [NSHashTable weakObjectsHashTable];
-    [sQueueCells addObject:self];
-    drawCardAvatar(self);
+    [sQueueCells addObject:cellSelf];
+    drawCardAvatar(cellSelf);
     // The row's own image view may be set again a moment after the layout.
-    __weak UITableViewCell *weakSelf = self;
+    __weak UITableViewCell *weakSelf = cellSelf;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UITableViewCell *cell = weakSelf;
         if (cell) drawCardAvatar(cell);
