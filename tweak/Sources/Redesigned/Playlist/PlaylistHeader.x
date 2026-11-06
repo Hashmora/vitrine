@@ -477,8 +477,10 @@ static void applyToolbar(UIView *headerRoot) {
         glassUp(field, &kFieldGlassKey);
         glassUp(sort, &kSortGlassKey);
     }
+    // Logged only when the field got glass: on iOS 26 a field with no toolbar around it (Your Episodes) gets none.
     static BOOL logged;
-    if (!logged && field.window) {
+    BOOL glassed = SGBelowiOS26() || toolbar;
+    if (!logged && glassed && field.window) {
         logged = YES;
         SGLog(@"redesign playlist: find field %@ in glass, %.0fx%.0f", field.accessibilityLabel,
               field.bounds.size.width, field.bounds.size.height);

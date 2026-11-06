@@ -150,7 +150,8 @@ static void dressButton(UIView *button) {
 }
 
 // The plate a dragged row is lifted on, cleared at its source (UIPreviewParameters is where UIDragPreviewParameters has
-// its backgroundColor) and on the plate itself. Only Spotify's grey, and only while the Edit playlist sheet is up.
+// its backgroundColor) and on the plate itself, found in the windows as the drag sets its parameters. Only Spotify's
+// grey, and only while the Edit playlist sheet is up.
 static char kLiftPlateKey;
 
 // The plate in the main window: a plain UIView that clips, r=8, inside a plain UIView that is a child of the window
@@ -163,38 +164,43 @@ static BOOL isLiftPlate(UIView *view) {
     return view.layer.masksToBounds && view.layer.cornerRadius > 0 && view.layer.cornerRadius <= 12;
 }
 
+// The plate cleared and held clear from then on: a paint of it later is dropped by the layer hook (SGRHoldClear).
 static void clearLiftPlate(UIView *view) {
-    if (!isLiftPlate(view)) return;
-    if (!SGRIsSheetSurface(view.layer.backgroundColor) && ![objc_getAssociatedObject(view, &kLiftPlateKey) boolValue]) return;
+    if (!isLiftPlate(view) || objc_getAssociatedObject(view, &kLiftPlateKey)) return;
     objc_setAssociatedObject(view, &kLiftPlateKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    SGRHoldClear(view);
     if (view.layer.backgroundColor) view.backgroundColor = UIColor.clearColor;
+}
+
+// The plates in the windows now: the children of each window's plain holders.
+static void findLiftPlates(void) {
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            for (UIView *holder in window.subviews) {
+                if (object_getClass(holder) != UIView.class) continue;
+                for (UIView *plate in holder.subviews) clearLiftPlate(plate);
+            }
+        }
+    }
+}
+
+// A drag in the sheet sets its preview's parameters as a row is lifted or dropped, and UIKit puts the plate in the window
+// in the frames that follow: the windows are looked at then, a few times, instead of every view of the app being watched.
+static void lookForLiftPlates(void) {
+    for (NSNumber *delay in @[@0, @0.05, @0.15, @0.3, @0.6]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (sg_editNavigation.viewIfLoaded.window) findLiftPlates();
+        });
+    }
 }
 
 %group SGREditDrag
 %hook UIPreviewParameters
 - (void)setBackgroundColor:(UIColor *)color {
-    if (color && sg_editNavigation.viewIfLoaded.window && SGRIsSheetSurface(color.CGColor)) color = UIColor.clearColor;
-    %orig(color);
-}
-%end
-
-%hook UIView
-- (void)didMoveToWindow {
-    %orig;
-    if (sg_editNavigation && ((UIView *)self).window) clearLiftPlate((UIView *)self);
-}
-
-// The plate is painted before it is in the window or after, depending on the pass; once it is the plate, it stays clear.
-- (void)setBackgroundColor:(UIColor *)color {
-    // Every view of the app comes through here: nothing is looked at unless the Edit playlist sheet is up.
-    if (color && sg_editNavigation) {
-        UIView *view = (UIView *)self;
-        if ([objc_getAssociatedObject(view, &kLiftPlateKey) boolValue]) {
-            if (CGColorGetAlpha(color.CGColor) > 0.05) color = UIColor.clearColor;
-        } else if (SGRIsSheetSurface(color.CGColor) && isLiftPlate(view)) {
-            objc_setAssociatedObject(view, &kLiftPlateKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            color = UIColor.clearColor;
-        }
+    if (color && sg_editNavigation.viewIfLoaded.window && SGRIsSheetSurface(color.CGColor)) {
+        color = UIColor.clearColor;
+        lookForLiftPlates();
     }
     %orig(color);
 }

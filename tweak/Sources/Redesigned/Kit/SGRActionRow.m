@@ -377,17 +377,6 @@ static BOOL indicatorOn(UIView *button, BOOL *found) {
 
     NSString *word = source.accessibilityLabel ?: wordIn(source);
     if (word && ![self.accessibilityLabel isEqualToString:word]) self.accessibilityLabel = word;
-    if (self.ownGlyph && self.fallbackGlyph) {
-        UIViewContentMode mode = UIViewContentModeCenter;
-        if (_glyph.contentMode != mode) _glyph.contentMode = mode;
-        if (_glyph.image != self.fallbackGlyph) {
-            _takenGlyph = nil;
-            _glyph.image = self.fallbackGlyph;
-        }
-        UIColor *own = self.glyphColor ?: SGRPrimary();
-        if (![_glyph.tintColor isEqual:own]) _glyph.tintColor = own;
-        return;
-    }
 
     UIImageView *glyph = glyphIn(source, 0);
     // A button that says "on" with its dot is drawn in our colors, on and off. One expected to have a dot
@@ -617,6 +606,10 @@ void SGRPlacePinnedBack(UIView *page) {
     if (!button) return;
     keepOnTop(page, button);
     placeInCorner(page, button, YES, 0);
+}
+
+SGRMirrorButton *SGRPinnedBackIn(UIView *page) {
+    return page ? objc_getAssociatedObject(page, &kBackButtonKey) : nil;
 }
 
 SGRMirrorButton *SGRPinnedBackOf(UIView *page, UIView *source) {

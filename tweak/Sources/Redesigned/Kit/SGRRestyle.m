@@ -306,30 +306,32 @@ Class SGRSwiftClass(NSString *module, NSString *name) {
 }
 
 Class SGRPrivateSwiftClass(NSString *module, NSString *suffix) {
-    NSString *prefix = [NSString stringWithFormat:@"_TtC%lu%@", (unsigned long)module.length, module];
-    // The names of the app's own classes, read once and without realizing any (objc_copyClassList realizes every class
-    // of the process, which a launch pays for).
-    static NSArray<NSString *> *names;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSMutableArray<NSString *> *all = [NSMutableArray array];
-        const char *bundle = NSBundle.mainBundle.bundlePath.fileSystemRepresentation;
-        unsigned int imageCount = 0;
-        const char **images = objc_copyImageNames(&imageCount);
-        for (unsigned int i = 0; i < imageCount; i++) {
-            if (!bundle || strncmp(images[i], bundle, strlen(bundle)) != 0) continue;
-            unsigned int count = 0;
-            const char **classes = objc_copyClassNamesForImage(images[i], &count);
-            for (unsigned int j = 0; j < count; j++) [all addObject:@(classes[j])];
-            free(classes);
+    // The app's own images walked by name, without realizing any class (objc_copyClassList realizes every class of the
+    // process, which a launch pays for), each name compared as it is read and none kept.
+    const char *prefix = [NSString stringWithFormat:@"_TtC%lu%@", (unsigned long)module.length, module].UTF8String;
+    const char *end = suffix.UTF8String;
+    const char *bundle = NSBundle.mainBundle.bundlePath.fileSystemRepresentation;
+    if (!prefix || !end || !bundle) return nil;
+    size_t prefixLength = strlen(prefix), endLength = strlen(end), bundleLength = strlen(bundle);
+    Class found = nil;
+    unsigned int imageCount = 0;
+    const char **images = objc_copyImageNames(&imageCount);
+    for (unsigned int i = 0; i < imageCount && !found; i++) {
+        if (strncmp(images[i], bundle, bundleLength) != 0) continue;
+        unsigned int count = 0;
+        const char **classes = objc_copyClassNamesForImage(images[i], &count);
+        for (unsigned int j = 0; j < count; j++) {
+            const char *name = classes[j];
+            size_t length = strlen(name);
+            if (length < prefixLength + endLength || strncmp(name, prefix, prefixLength) != 0) continue;
+            if (strcmp(name + length - endLength, end) != 0) continue;
+            found = objc_getClass(name);
+            break;
         }
-        free(images);
-        names = all;
-    });
-    for (NSString *name in names) {
-        if ([name hasPrefix:prefix] && [name hasSuffix:suffix]) return NSClassFromString(name);
+        free(classes);
     }
-    return nil;
+    free(images);
+    return found;
 }
 
 void SGRConceal(UIView *view) {
