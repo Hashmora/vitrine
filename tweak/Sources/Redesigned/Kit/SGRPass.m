@@ -13,16 +13,3 @@ void SGRRepeatPass(UIViewController *controller, NSArray<NSNumber *> *delays, SG
     }
 }
 
-#pragma mark - following a scroll
-
-@interface SGROffsetFollower : NSObject
-@property (nonatomic, weak) UIScrollView *scroll;
-@property (nonatomic, copy) void (^follow)(UIScrollView *scroll);
-@end
-
-@implementation SGROffsetFollower
-- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
-    UIScrollView *scroll = self.scroll;
-    if (scroll) self.follow(scroll);
-}
-@end
