@@ -97,6 +97,8 @@ SGRMirrorButton *SGRPinnedBack(UIView *page, UIView *searchRoot);
 // UINavigationBar (Recents, Your Updates): `source` is what the button reads its glyph from and fires, concealed
 // here like the one above. Kept on `page` and cheap to call on every pass. Nil on iOS 26.
 SGRMirrorButton *SGRPinnedBackOf(UIView *page, UIView *source);
+// The Back pinned to `page` put back in its corner and on top, nothing else: for a page that scrolls under it (a table).
+void SGRPlacePinnedBack(UIView *page);
 
 // A glass circle of the same size and inset as SGRPinnedMore's, `slot` places further in from the trailing edge
 // (0 is the corner itself, 1 the one left of it): for a page whose bar has more than one control there, SongDNA's

@@ -758,9 +758,9 @@ static void showWaiting(UITableViewCell *cell, BOOL waiting, NSString *switchTit
 }
 
 // The page is its own table, so the glass Back pinned to it is a subview of what scrolls: it is put back at the
-// top of the screen as the table moves.
+// top of the screen as the table moves. Only placed: the bar was dressed by the page's passes.
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
-    SGDressPageBar(self);
+    SGPlacePageBar(self);
 }
 
 - (void)viewWillAppear:(BOOL)animated {
