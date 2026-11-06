@@ -166,6 +166,8 @@ static NSArray<SGModSection *> *sections(SGVibrationsPreview *preview, void (^ex
     everywhere.visible = ^BOOL { return SGHapticEverywhereOffered(); };
     // Everywhere's second switch: with it, Music Haptics plays in Spotify only, everywhere but the lock screen, or everywhere.
     SGModRow *lockScreen = SGSwitchRow(@"On the lock screen", @"Off: only while the phone is unlocked", SGKeyMusicHapticsLockScreen);
+    // Off until asked for: a locked phone in a pocket does not vibrate.
+    lockScreen.defaultOn = NO;
     lockScreen.changed = ^(BOOL on) { SGHapticRelaySendLockScreen(); };
     lockScreen.waitsOn = SGKeyMusicHapticsEverywhere;
     lockScreen.visible = ^BOOL { return SGHapticEverywhereOffered(); };

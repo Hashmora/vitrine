@@ -645,7 +645,7 @@ static BOOL everywhere(void) {
 
 static void updateListening(void) {
     BOOL active = atomic_load(&sg_active);
-    BOOL relay = !active && everywhere();
+    BOOL relay = !active && everywhere() && !SGHapticRelayQuiet();
     BOOL listening = SGMusicHapticsOn() && (active || relay) && !atomic_load(&sg_systemCovers);
     BOOL relayChanged = atomic_exchange(&sg_relay, relay) != relay;
     if (atomic_exchange(&sg_listening, listening) == listening) {
@@ -677,6 +677,10 @@ void SGMusicHapticsSetSystemCovers(BOOL covers) {
 static void readSettings(void) {
     storeDouble(&sg_strengthBits, SGHapticsStrength(SGKeyMusicStrength));
     atomic_store(&sg_follows, (int)SGMusicHapticsFollows());
+}
+
+void SGMusicHapticsRelayQuietChanged(void) {
+    updateListening();
 }
 
 void SGMusicHapticsSettingsChanged(void) {

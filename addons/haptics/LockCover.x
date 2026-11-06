@@ -14,6 +14,7 @@
 // Threading: the notifications and MediaRemote's answers come on the main queue.
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
+#import <stdatomic.h>
 #import <sys/stat.h>
 #import <fcntl.h>
 #import <unistd.h>
@@ -114,8 +115,13 @@ static BOOL copyRegularFile(NSURL *source, NSURL *target) {
 // so a reader of the last one keeps its own file. Any process can post the notification that starts it, so it is taken
 // from Spotify alone (MediaRemoteUI's still cover is Spotify's alone too), off SpringBoard's main thread, as the copy
 // crosses volumes, and only a regular file of a sane size.
+// Each new song's none: a copy that ends after it was posted is dropped, so a fast skip never shows the last song's
+// clip on the new one.
+static atomic_uint sg_shareRun;
+
 static void shareClip(void) {
     if (!sg_getApp) return;
+    unsigned run = atomic_load(&sg_shareRun);
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ queue = dispatch_queue_create("com.vitrine.addon.share", DISPATCH_QUEUE_SERIAL); });
@@ -135,13 +141,17 @@ static void shareClip(void) {
             NSLog(@"[vitrine-addon] no clip to take from Spotify");
             return;
         }
+        if (atomic_load(&sg_shareRun) != run) {
+            [files removeItemAtURL:staging error:nil];
+            return;
+        }
         NSError *error = nil;
         [files removeItemAtURL:shared error:nil];
         if (![files moveItemAtURL:staging toURL:shared error:&error]) {
             NSLog(@"[vitrine-addon] the clip not shared: %@", error.localizedDescription);
             return;
         }
-        notify_post(kSGRelayLockClipShared);
+        if (atomic_load(&sg_shareRun) == run) notify_post(kSGRelayLockClipShared);
     });
 }
 
@@ -161,6 +171,7 @@ static void shareClip(void) {
     int clipToken, noneToken, showingToken, hiddenToken;
     notify_register_dispatch(kSGRelayLockClip, &clipToken, dispatch_get_main_queue(), ^(int t) { shareClip(); });
     notify_register_dispatch(kSGRelayLockClipNone, &noneToken, dispatch_get_main_queue(), ^(int t) {
+        atomic_fetch_add(&sg_shareRun, 1);
         [NSFileManager.defaultManager removeItemAtPath:SGLockSharedClipPath() error:nil];
     });
     notify_register_dispatch(kSGRelayLockShowing, &showingToken, dispatch_get_main_queue(), ^(int t) { hideWidgets(YES); });

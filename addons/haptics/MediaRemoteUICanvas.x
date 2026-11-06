@@ -213,18 +213,41 @@ static void hold(void) {
     changed();
 }
 
+// A clip shared while it could not be shown (the screen dark, no large cover, the Canvas off): read once it can be.
+static BOOL sg_clipStale;
+// Each read and each new song's none: a copy that ends after a newer one began is dropped.
+static NSUInteger sg_clipRun;
+
 // The shared clip copied into this process's own temporary folder under a new name, so the clip view takes a new file.
+// Only while it can be shown, and off the main thread.
 static void readShared(void) {
-    NSFileManager *files = NSFileManager.defaultManager;
     NSURL *old = sg_clip;
     sg_clip = nil;
     forget(old);
-    NSString *shared = SGLockSharedClipPath();
+    NSUInteger run = ++sg_clipRun;
+    sg_clipStale = sg_blank || !sg_field || !sg_on;
+    if (sg_clipStale) {
+        changed();
+        return;
+    }
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("com.vitrine.addon.clipcopy", DISPATCH_QUEUE_SERIAL); });
+    NSURL *shared = [NSURL fileURLWithPath:SGLockSharedClipPath()];
     NSURL *copy = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"vitrine-lockclip-%u.mp4", arc4random()]]];
-    NSError *error = nil;
-    if ([files copyItemAtURL:[NSURL fileURLWithPath:shared] toURL:copy error:&error]) sg_clip = copy;
-    else NSLog(@"[vitrine-addon] MediaRemoteUI cannot read the shared clip: %@", error.localizedDescription);
-    changed();
+    dispatch_async(queue, ^{
+        NSError *error = nil;
+        BOOL copied = [NSFileManager.defaultManager copyItemAtURL:shared toURL:copy error:&error];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (run != sg_clipRun) {
+                if (copied) [NSFileManager.defaultManager removeItemAtURL:copy error:nil];
+                return;
+            }
+            if (copied) sg_clip = copy;
+            else NSLog(@"[vitrine-addon] MediaRemoteUI cannot read the shared clip: %@", error.localizedDescription);
+            changed();
+        });
+    });
 }
 
 // Whether `cover` is a song's own rather than a placeholder. Spotify's placeholder is a gray field with a gray picture
@@ -324,6 +347,7 @@ static void readPlaying(void) {
     if (field.window) {
         sg_field = field;
         objc_setAssociatedObject(field, &kClosedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (sg_clipStale) readShared();
     }
     apply();
 }
@@ -391,6 +415,7 @@ static void listen(const char *name, void (^handler)(void)) {
             readCover();
             if (sg_waiting) armWait();
         }
+        if (!sg_blank && sg_clipStale) readShared();
     });
     // As it is now: nothing is posted until it changes.
     uint64_t blankState = 0;
@@ -398,12 +423,15 @@ static void listen(const char *name, void (^handler)(void)) {
     listen(kSGRelayLockArtOn, ^{
         sg_on = YES;
         if (sg_coverStale) readCover();
+        if (sg_clipStale) readShared();
         apply();
     });
     listen(kSGRelayLockArtOff, ^{ sg_on = NO; apply(); });
     listen(kSGRelayLockClipShared, ^{ readShared(); });
     // Spotify says so as each song begins, before its clip is looked up, so what is drawn waits for the song's cover.
     listen(kSGRelayLockClipNone, ^{
+        sg_clipRun++;
+        sg_clipStale = NO;
         NSURL *old = sg_clip;
         sg_clip = nil;
         forget(old);

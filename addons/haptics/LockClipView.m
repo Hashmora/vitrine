@@ -67,6 +67,8 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     AVAssetReader *_reader;
     AVAssetReaderTrackOutput *_output;
     CMTime _offset;
+    // Samples the reader gave since it last started: a pass that gives none is not started again.
+    NSUInteger _passSamples;
     atomic_bool _cancelled;
 }
 
@@ -100,6 +102,7 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
     if (![reader startReading]) return NO;
     _reader = reader;
     _output = output;
+    _passSamples = 0;
     return YES;
 }
 
@@ -118,7 +121,8 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
         }
         CMSampleBufferRef sample = [_output copyNextSampleBuffer];
         if (!sample) {
-            if (_reader.status != AVAssetReaderStatusCompleted) {
+            // A pass that read to its end with no sample (an empty or unreadable track) would start again for ever.
+            if (_reader.status != AVAssetReaderStatusCompleted || _passSamples == 0) {
                 [video stopRequestingMediaData];
                 return;
             }
@@ -129,6 +133,7 @@ static void edgeColors(CGImageRef image, UIColor **top, UIColor **bottom) {
             }
             continue;
         }
+        _passSamples++;
         CMItemCount count = 0;
         CMSampleBufferGetSampleTimingInfoArray(sample, 0, NULL, &count);
         CMSampleTimingInfo stack[8];

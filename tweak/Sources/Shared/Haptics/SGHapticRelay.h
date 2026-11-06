@@ -28,7 +28,7 @@
 enum { kSGRelayLevels = 10, kSGRelaySharpnesses = 3 };
 // The add-on's build, set on its pong; raise it with every change to addons/haptics, so an older add-on is offered the copy
 // inside Spotify.
-enum { kSGRelayAddonBuild = 18 };
+enum { kSGRelayAddonBuild = 19 };
 // Below iOS 26, the add-on also fills the lock screen with the now playing cover while Spotify's switch for it is on
 // (AnimatedArtwork.h, SGKeyLockCoverAddon): told "lockart.1" and "lockart.0" as the switch is set and each time the
 // add-on answers. It reads the cover from MediaRemote, as the lock screen's own player does.
@@ -66,6 +66,8 @@ static inline NSString *SGLockSharedClipPath(void) {
 #define SGKeyMusicHapticsLockScreen @"spotifyglass.haptics.music.lockscreen"
 // Tells the add-on the lock screen switch as it is now. Main thread.
 void SGHapticRelaySendLockScreen(void);
+// Locked with the lock screen switch off: nothing goes to SpringBoard, and Spotify does not analyse its output for it.
+BOOL SGHapticRelayQuiet(void);
 // Tells the add-on whether to fill the lock screen with the cover, as the switch for it is now. Main thread.
 void SGHapticRelaySendLockArt(void);
 // The notice for a feature that needs the add-on, switched on without it: what it needs and, from Vitrine's IPA, the
