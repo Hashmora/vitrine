@@ -23,6 +23,7 @@
 // Threading: the notifications and MediaRemote's answers come on the main queue.
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
+#import <stdatomic.h>
 #import <sys/stat.h>
 #import <fcntl.h>
 #import <unistd.h>
@@ -120,12 +121,17 @@ static BOOL copyRegularFile(NSURL *source, NSURL *target, off_t most) {
     return done && copied > 0;
 }
 
+// Each new song's none: a copy that ends after it was posted is dropped, so a fast skip never shows the last song's
+// clip or lyrics on the new one.
+static atomic_uint sg_shareRun;
+
 // A file of Spotify's caches into the jailbreak's shared caches, for MediaRemoteUI: copied beside it and moved over the
 // last one, so a reader of the last one keeps its own file; `shared` posted once it is there. Any process can post the
 // notification that starts it, so it is taken from Spotify alone (MediaRemoteUI's still cover is Spotify's alone too),
 // off SpringBoard's main thread, as the copy crosses volumes, and only a regular file of at most `most` bytes.
 static void share(NSString *name, NSString *sharedPath, const char *shared, off_t most) {
     if (!sg_getApp) return;
+    unsigned run = atomic_load(&sg_shareRun);
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ queue = dispatch_queue_create("com.vitrine.addon.share", DISPATCH_QUEUE_SERIAL); });
@@ -145,13 +151,17 @@ static void share(NSString *name, NSString *sharedPath, const char *shared, off_
             NSLog(@"[vitrine-addon] no %@ to take from Spotify", name);
             return;
         }
+        if (atomic_load(&sg_shareRun) != run) {
+            [files removeItemAtURL:staging error:nil];
+            return;
+        }
         NSError *error = nil;
         [files removeItemAtURL:target error:nil];
         if (![files moveItemAtURL:staging toURL:target error:&error]) {
             NSLog(@"[vitrine-addon] %@ not shared: %@", name, error.localizedDescription);
             return;
         }
-        notify_post(shared);
+        if (atomic_load(&sg_shareRun) == run) notify_post(shared);
     });
 }
 
@@ -283,6 +293,7 @@ static void tellPicked(void) {
     notify_register_dispatch(kSGRelayLockModeAsk, &askToken, dispatch_get_main_queue(), ^(int t) { tellPicked(); });
     tellPicked();
     notify_register_dispatch(kSGRelayLockClipNone, &noneToken, dispatch_get_main_queue(), ^(int t) {
+        atomic_fetch_add(&sg_shareRun, 1);
         [NSFileManager.defaultManager removeItemAtPath:SGLockSharedClipPath() error:nil];
     });
     notify_register_dispatch(kSGRelayLockShowing, &showingToken, dispatch_get_main_queue(), ^(int t) {

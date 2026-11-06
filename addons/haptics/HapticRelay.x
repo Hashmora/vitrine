@@ -23,7 +23,7 @@ static id<CHHapticAdvancedPatternPlayer> sg_rumble;
 static BOOL sg_rumbling;
 // When the rumble was last asked for, and whether it may play while the phone is locked (Spotify's switch) and is.
 static CFTimeInterval sg_rumbleHeardAt;
-static BOOL sg_lockScreen = YES, sg_locked;
+static BOOL sg_lockScreen = NO, sg_locked;
 // Stops a rumble Spotify has stopped speaking for: armed for kSGRelayRumbleLapse on every rumble post, idle otherwise, so
 // SpringBoard is woken only while a rumble plays.
 static dispatch_source_t sg_lapse;

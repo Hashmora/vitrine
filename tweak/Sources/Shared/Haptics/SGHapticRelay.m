@@ -1,4 +1,5 @@
 #import "SGHapticRelay.h"
+#import "Haptics.h"
 #import "Core/SGCore.h"
 #import <notify.h>
 #import "Core/SGRebind.h"
@@ -128,15 +129,21 @@ void SGHapticAddonExplain(NSString *feature) {
 }
 
 static void updateQuiet(void) {
-    BOOL quiet = sg_locked && !SGFlag(SGKeyMusicHapticsLockScreen, YES);
+    BOOL quiet = sg_locked && !SGFlag(SGKeyMusicHapticsLockScreen, NO);
     // Quiet first, so a rumble the audio thread sends meanwhile is dropped; then a rumble going on is stopped, as a level
     // of 0 still goes.
     BOOL was = atomic_exchange(&sg_quiet, quiet);
     if (quiet && !was) SGHapticRelayRumble(0);
+    // Quiet, nothing is relayed, so the output is not analysed for it either (MusicHaptics.x's listening).
+    if (quiet != was) SGMusicHapticsRelayQuietChanged();
+}
+
+BOOL SGHapticRelayQuiet(void) {
+    return atomic_load(&sg_quiet);
 }
 
 void SGHapticRelaySendLockScreen(void) {
-    notify_post(SGFlag(SGKeyMusicHapticsLockScreen, YES) ? kSGRelayLockOn : kSGRelayLockOff);
+    notify_post(SGFlag(SGKeyMusicHapticsLockScreen, NO) ? kSGRelayLockOn : kSGRelayLockOff);
     updateQuiet();
 }
 
