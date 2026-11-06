@@ -11,8 +11,8 @@
 // being found by a hook on Spotify's controllers. The bar's own passes are watched too: UIKit makes its Back and
 // title again after the page's pass, as for the hosted pages (Kit/SGRPlainBar.x).
 //
-// The page is a table, so the glass Back is a subview of what scrolls; SGModPage calls this again as the table
-// moves, which puts the circle back at the top of the screen (SGRPinnedBackOf places it from the window).
+// The page is a table, so the glass Back is a subview of what scrolls; SGModPage calls SGPlacePageBar as the table
+// moves, which only puts the circle back at the top of the screen (SGRPlacePinnedBack places it from the window).
 //
 // A page presented in a stack of its own (SGShowPage's fallback, the pickers, the lyrics style sheet) has no
 // SPNavigationBar and is left as it is.
@@ -36,6 +36,11 @@ static BOOL redesignBars(void) {
 void SGDressPageBar(UIViewController *page) {
     if (!redesignBars() || !onSpotifyStack(page)) return;
     SGRDressBarPageBackOnly(page);
+}
+
+void SGPlacePageBar(UIViewController *page) {
+    if (!redesignBars() || !onSpotifyStack(page)) return;
+    SGRPlacePinnedBack(page.viewIfLoaded);
 }
 
 void SGUndressPageBar(UIViewController *page) {

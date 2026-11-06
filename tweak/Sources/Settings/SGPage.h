@@ -17,3 +17,6 @@ void SGOpenModSettings(UIView *source);
 // A page calls the first as it appears and lays out, and the second as it goes. Cheap to call again.
 void SGDressPageBar(UIViewController *page);
 void SGUndressPageBar(UIViewController *page);
+// For a page that is its own table, as it scrolls: the pinned Back put back at the top of the screen, and nothing else of
+// the bar made again.
+void SGPlacePageBar(UIViewController *page);
