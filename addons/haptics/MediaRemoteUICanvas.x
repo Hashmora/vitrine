@@ -87,6 +87,8 @@ static BOOL sg_settingAlpha;   // the alpha set here, not MediaRemoteUI's to rem
 // The lyrics: the switch, the choice the button makes (SpringBoard's), and the one view of them, moved into the field
 // that is open. A song's lines wait kSGRelayLockLyricsWait as it begins, the last song's held meanwhile.
 static BOOL sg_lyricsOn, sg_lyricsPicked;
+// The lyrics over the clip right now: the clip holds one frame under their blur instead of decoding on unseen.
+static BOOL sg_linesOver;
 // Spotify said the song playing has no timed lines (kSGRelayLockLyricsNone), rather than that they are on their way.
 static BOOL sg_lyricsNone;
 static SGVLockLyrics *sg_lyrics;
@@ -349,11 +351,12 @@ static void apply(void) {
     } completion:^(BOOL finished) {
         if (!(sg_on && sg_shownClip && artworkIn(field)) || objc_getAssociatedObject(field, &kClosedKey)) [clip playClip:nil];
     }];
+    sg_linesOver = on && lines && lyrics != nil;
     if (on) {
         [clip setSuspended:sg_blank];
         [clip showCover:sg_shownCover];
         [clip playClip:sg_shownClip];
-        [clip setPlaying:sg_playing];
+        [clip setPlaying:sg_playing && !sg_linesOver];
     }
     // The field fills the screen, so its window's points are the screen's.
     SGLockGestureAreaState area = {NO, 0, 0};
@@ -558,7 +561,7 @@ static void readPlaying(void) {
     sg_isPlaying(dispatch_get_main_queue(), ^(Boolean playing) {
         sg_playing = playing;
         SGVLockClip *clip = sg_field ? objc_getAssociatedObject(sg_field, &kClipKey) : nil;
-        [clip setPlaying:playing];
+        [clip setPlaying:playing && !sg_linesOver];
     });
 }
 

@@ -189,6 +189,8 @@ static void follow(SPTPlayerState *state) {
 // A report comes before the change it carries is heard: the first report of the next song would send its position
 // under the last song's tag, so a report of another track leaves the clock to follow().
 - (void)playerStateDidReport:(SPTPlayerState *)state {
+    // The cheap test first: this comes on every report, also when nobody picked the lyrics.
+    if (!wanted()) return;
     NSString *uri = SGURIString(state.track.URI);
     BOOL sameTrack = !uri || [uri isEqualToString:sg_reportedURI];
     sg_reportedURI = uri;

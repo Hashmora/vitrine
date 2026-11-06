@@ -171,7 +171,7 @@ static BOOL sg_coverShowing;
 static SGLockGestureAreaState sg_area;
 
 // The catcher over the lyrics. Its window's points are the screen's, as the area's are.
-@interface SGVLockTouchCatcher : UIView
+@interface SGVLockTouchCatcher : UIView <UIGestureRecognizerDelegate>
 @end
 
 @implementation SGVLockTouchCatcher
@@ -179,9 +179,19 @@ static SGLockGestureAreaState sg_area;
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.backgroundColor = UIColor.clearColor;
-    [self addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragged:)]];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragged:)];
+    pan.delegate = self;
+    [self addGestureRecognizer:pan];
     [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapped:)]];
     return self;
+}
+
+// Only an up or down drag is the lyrics': a sideways one that starts in their band (to the camera, to the Today view)
+// is left to the cover sheet.
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)recognizer {
+    if (![recognizer isKindOfClass:UIPanGestureRecognizer.class]) return YES;
+    CGPoint velocity = [(UIPanGestureRecognizer *)recognizer velocityInView:self];
+    return fabs(velocity.y) > fabs(velocity.x);
 }
 
 // Whether the cover sheet's own views under the catcher have a player or a notification at `point`: the list scrolls
