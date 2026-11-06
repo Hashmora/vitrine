@@ -53,6 +53,9 @@ BOOL SGRLegacyTabBarOn(void);
 BOOL SGRLegacyTabBarMinimized(void);
 void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated);
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height);
+// The capsule bar's expanded row for the now playing card's edges (SGRTabBarGlassRow), from 4 tabs on; CGRectNull with
+// fewer, so the card keeps Spotify's edges over a short capsule.
+CGRect SGRLegacyTabBarGlassRow(UIView *host);
 
 // TabBarRoom.m, the same for both bars. The hold on Spotify's Home that opens Mod Settings, added once.
 void SGRHoldHomeForModSettings(UIView *stockBar);
