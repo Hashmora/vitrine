@@ -317,6 +317,18 @@ static BOOL inLibraryChips(UIView *view) {
     return NO;
 }
 
+// Asked on every paint of a chip's fill, so the answer is kept on the chip (a reused cell's chip stays in its row).
+BOOL SGRIsGlassChip(UIView *chip) {
+    static char kGlassChipKey;
+    if (!chip) return NO;
+    NSNumber *known = objc_getAssociatedObject(chip, &kGlassChipKey);
+    if (known) return known.boolValue;
+    if (!chip.window) return NO;
+    BOOL glass = inLibraryChips(chip);
+    objc_setAssociatedObject(chip, &kGlassChipKey, @(glass), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return glass;
+}
+
 // A chip's fill was painted (SGRRepaint.x): selecting a chip or letting it go repaints the fill and lays
 // nothing out, so the glass stayed as the last layout left it. Deselected, the Playlists chip kept its glass
 // hidden from the selected state and at the width of a chip that had been another one in the reused cell,
@@ -412,8 +424,17 @@ static void layoutRoot(UIView *page) {
         UIView *host = trailing.firstObject.superview;
         BOOL shared = YES;
         for (UIView *control in trailing) shared = shared && control.superview == host;
-        if (shared && trailing.count > 1) SGRGlassGroupPill(host, trailing, &kGroupGlassKey, 44, kGroupPad);
-        else for (UIView *control in trailing) SGRGlassInside(control, &kRoundGlassKey, 44);
+        // The two looks are exclusive: switching from one to the other hides the glass the earlier passes made.
+        if (shared && trailing.count > 1) {
+            SGRGlassGroupPill(host, trailing, &kGroupGlassKey, 44, kGroupPad);
+            for (UIView *control in trailing) {
+                UIView *round = objc_getAssociatedObject(control, &kRoundGlassKey);
+                if (round && !round.hidden) round.hidden = YES;
+            }
+        } else {
+            if (host) SGRGlassGroupPill(host, @[], &kGroupGlassKey, 44, kGroupPad);
+            for (UIView *control in trailing) SGRGlassInside(control, &kRoundGlassKey, 44);
+        }
     }
 
     // The first pass that laid the header out, not the first pass at all: a page appearing lays out before

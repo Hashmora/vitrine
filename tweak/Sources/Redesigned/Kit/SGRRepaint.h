@@ -53,3 +53,6 @@ void SGRHoldClearClass(Class cls);
 // part: a library filter chip's fill was just painted (selected, deselected, pressed), so its glass is brought
 // in line with the paint -- shown over a clear fill, hidden under a selected colour -- without a layout pass.
 void SGRLibraryChipPainted(UIView *chip);
+// Whether `chip` is in one of the rows of chips that are glass (the library's, the search results', Add songs'): only
+// those lose their fill. Defined there too.
+BOOL SGRIsGlassChip(UIView *chip);
