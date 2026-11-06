@@ -706,6 +706,11 @@ void SGGlassSwitchAttach(UISwitch *toggle) {
     [toggle addGestureRecognizer:watch];
 }
 
+BOOL SGGlassSwitchContains(UISwitch *toggle, CGPoint point) {
+    SGGlassSwitchView *face = toggle ? objc_getAssociatedObject(toggle, &kSwitchFaceKey) : nil;
+    return face && !face.hidden && CGRectContainsPoint(face.frame, point);
+}
+
 void SGGlassSwitchSync(UISwitch *toggle, BOOL animated) {
     SGGlassSwitchView *face = toggle ? objc_getAssociatedObject(toggle, &kSwitchFaceKey) : nil;
     if (!face) return;

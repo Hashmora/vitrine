@@ -1,13 +1,14 @@
 // The switches on the mod's own pages (Mod Settings and every page under it) take iOS 26's switch below iOS 26 with the
-// legacy glass: a wider track, and a white thumb that turns into glass under a finger (Core/SGGlassThumb.h). A switch counts when a
-// controller of the mod's (SGPage, or any class of the SG prefix) holds it, and under the redesign also when it is one of Spotify's
-// settings: a row's (id=PreferenceRowSwitch.Switch, in Settings_PlatformImpl's StandardSwitchElement, trees/continuous/5.txt) or the
-// Equalizer's (in SPTEqualizerSwitchTableViewCell, 4.txt). Spotify's other switches are left as Spotify draws them. With the legacy
-// glass off none of this runs, and every switch is UIKit's.
-// The sliders there take iOS 26's thumb the same way, the one Speed, Pitch & Reverb's have (SpeedPitchMenu.x): a white
-// capsule that swells into glass under a finger.
+// legacy glass: a wider track, and a white thumb that turns into glass under a finger (Core/SGGlassThumb.h). A switch counts
+// when a controller of the mod's (SGPage, or any class of the SG prefix, the redesign's SGR ones too) holds it, and when the
+// look in use says it is one of Spotify's it draws the same way (SGGlassSwitchTakesSpotify). Spotify's other switches are left
+// as Spotify draws them. With the legacy glass off none of this runs, and every switch is UIKit's.
+// Every slider under such a controller takes iOS 26's thumb the same way, the one Speed, Pitch & Reverb's have
+// (SpeedPitchMenu.x): a white capsule that swells into glass under a finger. One look for every slider of the mod's, Sing's
+// and the lyrics' included.
 #import "Core/SGCore.h"
 #import "SGPage.h"
+#import "SGGlassSwitch.h"
 #import <objc/runtime.h>
 
 static BOOL onModPage(UIView *view) {
@@ -18,28 +19,20 @@ static BOOL onModPage(UIView *view) {
     return NO;
 }
 
-// One of Spotify's settings switches, which the redesign draws as the mod's own pages do.
-static BOOL spotifySetting(UISwitch *toggle) {
-    if (!SGRedesignedUI()) return NO;
-    if ([toggle.accessibilityIdentifier isEqualToString:@"PreferenceRowSwitch.Switch"]) return YES;
-    static Class equalizerCell;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ equalizerCell = NSClassFromString(@"SPTEqualizerSwitchTableViewCell"); });
-    for (UIView *v = toggle.superview; v && equalizerCell; v = v.superview) {
-        if ([v isKindOfClass:equalizerCell]) return YES;
-        if ([v isKindOfClass:UITableView.class]) break;
-    }
-    return NO;
-}
+BOOL (*SGGlassSwitchTakesSpotify)(UISwitch *toggle);
 
-// Asked from every layout of every switch in the app: one that has its face already is not looked at again.
+// Asked from every layout of every switch in the app, so the answer is kept on the switch: @YES, it has its face; @NO, it
+// was looked at and is not ours. Only a `fresh` ask (the switch came into a window or was named, which can make it ours)
+// looks again at a switch found not ours; the layouts and value changes in between cost one associated object read.
 static char kAttachedKey;
 
-static void attachIfOurs(UISwitch *toggle) {
-    if (!toggle.window || objc_getAssociatedObject(toggle, &kAttachedKey)) return;
-    if (!onModPage(toggle) && !spotifySetting(toggle)) return;
-    SGGlassSwitchAttach(toggle);
-    objc_setAssociatedObject(toggle, &kAttachedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+static void attachIfOurs(UISwitch *toggle, BOOL fresh) {
+    if (!toggle.window) return;
+    NSNumber *known = objc_getAssociatedObject(toggle, &kAttachedKey);
+    if (known.boolValue || (known && !fresh)) return;
+    BOOL ours = onModPage(toggle) || (SGGlassSwitchTakesSpotify && SGGlassSwitchTakesSpotify(toggle));
+    if (ours) SGGlassSwitchAttach(toggle);
+    objc_setAssociatedObject(toggle, &kAttachedKey, @(ours), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 // Speed, Pitch & Reverb's thumb (SpeedPitchMenu.x).
@@ -71,26 +64,31 @@ static char kModSliderKey;
 - (void)didMoveToWindow {
     %orig;
     UISwitch *toggle = (UISwitch *)self;
-    attachIfOurs(toggle);
+    attachIfOurs(toggle, YES);
     __weak UISwitch *weakToggle = toggle;
-    dispatch_async(dispatch_get_main_queue(), ^{ attachIfOurs(weakToggle); });
+    dispatch_async(dispatch_get_main_queue(), ^{ attachIfOurs(weakToggle, YES); });
 }
 
 - (void)setAccessibilityIdentifier:(NSString *)identifier {
     %orig;
-    attachIfOurs((UISwitch *)self);
+    attachIfOurs((UISwitch *)self, YES);
 }
 
 - (void)layoutSubviews {
     %orig;
-    attachIfOurs((UISwitch *)self);
+    attachIfOurs((UISwitch *)self, NO);
     SGGlassSwitchSync((UISwitch *)self, NO);
 }
 
 - (void)setOn:(BOOL)on animated:(BOOL)animated {
     %orig;
-    attachIfOurs((UISwitch *)self);
+    attachIfOurs((UISwitch *)self, NO);
     SGGlassSwitchSync((UISwitch *)self, animated);
+}
+
+// The drawing's track reaches past the switch's leading edge: that strip turns it too.
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    return %orig || SGGlassSwitchContains((UISwitch *)self, point);
 }
 
 - (void)setEnabled:(BOOL)enabled {
