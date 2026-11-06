@@ -534,7 +534,7 @@ static void placeInCorner(UIView *page, UIView *button, BOOL leading, NSUInteger
         // came after the page was home, so Back and ⋯ stuck to the top of the screen. While the page is moved down
         // and scaled the inset is the window's own, which is where the page is about to be.
         CGRect inWindow = [page convertRect:page.bounds toView:nil];
-        BOOL displaced = CGRectGetMinY(inWindow) > 1 && fabs(inWindow.size.width - page.bounds.size.width) > 0.5;
+        BOOL displaced = SGBelowiOS26() && CGRectGetMinY(inWindow) > 1 && fabs(inWindow.size.width - page.bounds.size.width) > 0.5;
         if (!displaced) y = [page convertPoint:CGPointMake(0, y) fromView:nil].y;
     }
     // A page in a sheet (the Add songs sheet's Find) has no status bar over it: its bar is the sheet's own row,
@@ -609,6 +609,14 @@ SGRMirrorButton *SGRPinnedBack(UIView *page, UIView *searchRoot) {
     if (@available(iOS 26.0, *)) return nil;
     if (!page) return nil;
     return pinBack(page, SGRFindByIdentifier(searchRoot, @"Components.Header.UI.BackButton", &kSourceKey));
+}
+
+void SGRPlacePinnedBack(UIView *page) {
+    if (@available(iOS 26.0, *)) return;
+    UIView *button = page ? objc_getAssociatedObject(page, &kBackButtonKey) : nil;
+    if (!button) return;
+    keepOnTop(page, button);
+    placeInCorner(page, button, YES, 0);
 }
 
 SGRMirrorButton *SGRPinnedBackOf(UIView *page, UIView *source) {

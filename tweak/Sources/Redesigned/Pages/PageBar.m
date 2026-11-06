@@ -23,7 +23,8 @@
 //
 // A page dressed with SGRDressBarPageBackOnly gets Back and the title and nothing at the trailing edge: Settings and its
 // sections and the mod's own pages have no ⋯, and what sits in their trailing stack is not one (a 22pt button the tree
-// gives no name, and on the Settings root a hidden pair), so those controls are left as Spotify has them.
+// gives no name, and on the Settings root a hidden pair), so those controls are kept out of sight: the bar takes no touches,
+// and one shown in it could not be tapped.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Pages.h"
@@ -114,12 +115,6 @@ static void reveal(UIView *view) {
     view.accessibilityElementsHidden = NO;
 }
 
-// Gives back a control this file concealed, and only one of those: a control Spotify hides itself (the hidden, masked
-// pair at the trailing edge of the Settings root's bar) stays hidden.
-static void restore(UIView *view) {
-    if (view && objc_getAssociatedObject(view, &kConcealedKey)) reveal(view);
-}
-
 // Spotify's blur: the plain view of the navigation controller's that holds a visual effect view.
 UIView *SGRBarBlurOf(UINavigationController *navigation) {
     for (UIView *sub in navigation.view.subviews) {
@@ -143,6 +138,15 @@ void SGRRegisterBarPages(SGRBarPageTest wants) {
 static BOOL isOnScreen(UIViewController *page, UINavigationController *navigation) {
     for (UIViewController *vc = page; vc; vc = vc.parentViewController) {
         if (vc == navigation.topViewController) return YES;
+    }
+    return NO;
+}
+
+// Whether a page dressed now (alive, and still in a stack) is in `navigation`: the bar of one navigation controller is
+// given back when none of its own pages is dressed, whatever other stacks (a sheet's) hold.
+static BOOL dressedIn(UINavigationController *navigation) {
+    for (UIViewController *page in sg_dressed.allObjects) {
+        if (navigation && page.navigationController == navigation) return YES;
     }
     return NO;
 }
@@ -179,7 +183,7 @@ static void holdControls(UINavigationController *navigation, BOOL wanted) {
         conceal(title);
     } else if (held) {
         reveal(title);
-        if (!sg_dressed.count) {
+        if (!dressedIn(navigation)) {
             reveal(SGRChildNamed(content, @"_UIButtonBarButton"));
             reveal(leadingItemOf(content));
             reveal(moreOf(content));
@@ -201,7 +205,7 @@ void SGRSyncBarBlur(UINavigationController *navigation) {
             if (!blur.layer.mask) blur.layer.mask = [CALayer layer];
             if (blur.userInteractionEnabled) blur.userInteractionEnabled = NO;
             if (!objc_getAssociatedObject(blur, &kBlurOffKey)) objc_setAssociatedObject(blur, &kBlurOffKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        } else if (objc_getAssociatedObject(blur, &kBlurOffKey) && !sg_dressed.count) {
+        } else if (objc_getAssociatedObject(blur, &kBlurOffKey) && !dressedIn(navigation)) {
             blur.layer.mask = nil;
             blur.userInteractionEnabled = YES;
             objc_setAssociatedObject(blur, &kBlurOffKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -394,9 +398,10 @@ void SGRDressBarPage(UIViewController *page) {
     UIView *more = moreOf(content);
     UIView *extra = extraOf(content);
     if ([sg_backOnly containsObject:page]) {
-        // What holdControls concealed before this page's own controller existed is given back.
-        restore(more);
-        restore(extra);
+        // Not given back: the bar takes no touches (it is over the pinned Back), so a control shown in it would do
+        // nothing when tapped. What sits there is no ⋯ (see the top of the file), so nothing is pinned for it.
+        conceal(more);
+        conceal(extra);
     } else {
         pinTrailing(view, more, extra);
     }
@@ -427,7 +432,7 @@ static void undressBar(UIViewController *page, UINavigationController *navigatio
     [sg_backOnly removeObject:page];
     if (!navigation) return;
     // A page pushed over this one dressed the bar before this one went: it is that page's now.
-    if (sg_dressed.count) return;
+    if (dressedIn(navigation)) return;
     UINavigationBar *bar = navigation.navigationBar;
     NSNumber *style = objc_getAssociatedObject(bar, &kBarStyleKey);
     if (style) {

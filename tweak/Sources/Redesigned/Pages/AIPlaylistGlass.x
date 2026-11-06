@@ -40,9 +40,9 @@ static const CGFloat kMoreShiftY = 2;
 // Cancel's button is 72 x 52 (a 40pt label with 16pt on each side); its capsule is as wide and as high as the cross's circle.
 static const CGFloat kCancelGlassHeight = 44;
 
-static NSArray<NSString *> *crossIdentifiers(void) {
-    return @[@"Components.UI.PlaylistCreationHeaderRow.DismissButton",
-             @"Components.UI.PlaylistCreationHeaderRow.CloseChatButton"];
+static BOOL isCross(NSString *identifier) {
+    return [identifier isEqualToString:@"Components.UI.PlaylistCreationHeaderRow.DismissButton"]
+        || [identifier isEqualToString:@"Components.UI.PlaylistCreationHeaderRow.CloseChatButton"];
 }
 
 // The views from the button up to the page that are Spotify's plain containers: a scroll view's clip is its own to keep.
@@ -67,7 +67,7 @@ static void dressCrossButton(UIView *button) {
     BOOL onboarding = [identifier isEqualToString:kOnboardingCross];
     BOOL cancel = [identifier isEqualToString:kCancelButton];
     BOOL more = [identifier isEqualToString:kMoreButton];
-    if (!onboarding && !cancel && !more && ![crossIdentifiers() containsObject:identifier]) return;
+    if (!onboarding && !cancel && !more && !isCross(identifier)) return;
     if (!button.window || button.bounds.size.width < 1 || button.bounds.size.height < 1) return;
     UIView *glass = cancel
         ? SGRGlassCapsuleInside(button, &kCancelGlassKey, CGSizeMake(button.bounds.size.width, kCancelGlassHeight), NO)
@@ -85,7 +85,7 @@ static void dressCross(UIView *page) {
     if (!page.window) return;
     SGForEachView(page, ^(UIView *view) {
         NSString *identifier = view.accessibilityIdentifier ?: @"";
-        if (![crossIdentifiers() containsObject:identifier] && ![identifier isEqualToString:kCancelButton] && ![identifier isEqualToString:kMoreButton]) return;
+        if (!isCross(identifier) && ![identifier isEqualToString:kCancelButton] && ![identifier isEqualToString:kMoreButton]) return;
         if (view.bounds.size.width < 1 || view.bounds.size.height < 1) return;
         dressCrossButton(view);
         unclipPath(view, page);
@@ -117,6 +117,7 @@ static void dressCross(UIView *page) {
 
 %ctor {
     if (!SGRedesignedUI()) return;
+    if (!SGBelowiOS26()) return;
     Class page = SGRSwiftClass(@"AIPlaylist_PlaylistCreationPageImpl", @"PlaylistCreationView");
     if (page) {
         SGRPassView(page, ^(UIView *v) { dressCross(v); });

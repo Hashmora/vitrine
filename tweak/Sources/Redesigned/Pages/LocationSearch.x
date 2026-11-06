@@ -31,6 +31,7 @@ static char kHeaderKey, kFieldKey, kFieldGlassKey, kTitleGlassKey, kClearGlassKe
 // The page on screen and the label its title is on, for the text watch below.
 static __weak UIViewController *sg_locationPage;
 static __weak UILabel *sg_titleLabel;
+static void watchTitleText(UILabel *label);
 
 // The room the two corner buttons leave the title: the same as every other page's (Pages/PageBar.m).
 static const CGFloat kCorner = 16, kGap = 8;
@@ -55,13 +56,25 @@ static void clearPlate(UIView *root, UIView *header) {
 }
 
 // The cross of each recent search: an Encore Tertiary "Clear" button of a row, on a glass circle.
+// The rows on screen only, and each row's cross found once: the table lays out on every frame of a scroll.
+static char kCellClearKey;
+
 static void dressClearButtons(UIView *table) {
-    SGForEachView(table, ^(UIView *v) {
-        if (![v.accessibilityLabel isEqualToString:@"Clear"]) return;
-        if (![NSStringFromClass(v.class) containsString:@"Tertiary"]) return;
-        if (v.bounds.size.width < 1 || v.bounds.size.width > 48) return;
-        SGRGlassInside(v, &kClearGlassKey, MIN(v.bounds.size.width, v.bounds.size.height));
-    });
+    if (![table isKindOfClass:UITableView.class]) return;
+    for (UITableViewCell *cell in ((UITableView *)table).visibleCells) {
+        UIView *known = objc_getAssociatedObject(cell, &kCellClearKey);
+        if (known && [known isDescendantOfView:cell]) continue;
+        __block UIView *cross = nil;
+        SGForEachView(cell, ^(UIView *v) {
+            if (cross || ![v.accessibilityLabel isEqualToString:@"Clear"]) return;
+            if (![NSStringFromClass(v.class) containsString:@"Tertiary"]) return;
+            if (v.bounds.size.width < 1 || v.bounds.size.width > 48) return;
+            cross = v;
+        });
+        if (!cross) continue;
+        objc_setAssociatedObject(cell, &kCellClearKey, cross, OBJC_ASSOCIATION_ASSIGN);
+        SGRGlassInside(cross, &kClearGlassKey, MIN(cross.bounds.size.width, cross.bounds.size.height));
+    }
 }
 
 static UIView *backIn(UIView *header) {
@@ -89,6 +102,7 @@ static void glassTitle(UIView *root, UIView *title) {
     }
     if (!label.text.length) return;
     if (sg_titleLabel != label) sg_titleLabel = label;
+    watchTitleText(label);
     UIColor *white = SGRPrimary();
     if (![label.textColor isEqual:white]) label.textColor = white;
     CGFloat room = root.bounds.size.width - 2 * (kCorner + SGRGlassCircleSize + kGap);
@@ -145,19 +159,25 @@ static void titleTextChanged(UILabel *label) {
     });
 }
 
-%group SGRLocationTitle
-%hook UILabel
-- (void)setText:(NSString *)text {
-    %orig;
-    titleTextChanged((UILabel *)self);
+// The title label's text, watched on that one label (key-value observing), not by a hook on every label of the app.
+@interface SGRLocationTitleWatch : NSObject
+@end
+@implementation SGRLocationTitleWatch
+- (void)observeValueForKeyPath:(NSString *)path ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    titleTextChanged(object);
 }
+@end
 
-- (void)setAttributedText:(NSAttributedString *)text {
-    %orig;
-    titleTextChanged((UILabel *)self);
+static char kTitleWatchKey;
+
+static void watchTitleText(UILabel *label) {
+    if (!label || objc_getAssociatedObject(label, &kTitleWatchKey)) return;
+    SGRLocationTitleWatch *watch = [SGRLocationTitleWatch new];
+    // Held by the label, so it goes with it; observing ends as the label is freed.
+    objc_setAssociatedObject(label, &kTitleWatchKey, watch, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [label addObserver:watch forKeyPath:@"text" options:0 context:NULL];
+    [label addObserver:watch forKeyPath:@"attributedText" options:0 context:NULL];
 }
-%end
-%end
 
 %ctor {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
@@ -168,5 +188,4 @@ static void titleTextChanged(UILabel *label) {
     }
     // The header's elements are made after the first layout, and the field's grey comes back as it is focused.
     SGRPassController(page, ^(UIViewController *c) { dress(c); });
-    %init(SGRLocationTitle);
 }
