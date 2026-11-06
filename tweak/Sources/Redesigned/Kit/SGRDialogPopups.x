@@ -262,15 +262,34 @@ static void showWindow(UIWindow *window) {
     objc_setAssociatedObject(window, &kTakeKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-// Makes the window visible again after a delay, unless another dialog has taken it since.
-static void restoreLater(SGRDialogTake *take) {
-    if (take.done) return;
-    take.done = YES;
+static UIView *dialogIn(UIWindow *window);
+
+// How many times, kRestoreDelay apart, a window whose dialog is still in it is looked at again before it is let go.
+static const NSUInteger kRestoreTries = 10;
+
+// Makes the window visible again once Spotify has taken its dialog out, unless another dialog has taken it since. While
+// the dialog is in, the window stays unseen (and, at alpha 0, takes no touches): shown again, Spotify's white dialog or
+// its dim came back over the app when the button fired and Spotify left the dialog up.
+static void restoreAfter(SGRDialogTake *take, NSUInteger tries) {
     __weak UIWindow *weak = take.window;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kRestoreDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UIWindow *window = weak;
-        if (window && objc_getAssociatedObject(window, &kTakeKey) == take) showWindow(window);
+        if (!window || objc_getAssociatedObject(window, &kTakeKey) != take) return;
+        if (window.hidden || !dialogIn(window)) {
+            showWindow(window);
+        } else if (tries + 1 < kRestoreTries) {
+            restoreAfter(take, tries + 1);
+        } else {
+            SGLog(@"redesign dialogs: Spotify left its dialog up, its window kept unseen");
+            objc_setAssociatedObject(window, &kTakeKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
     });
+}
+
+static void restoreLater(SGRDialogTake *take) {
+    if (take.done) return;
+    take.done = YES;
+    restoreAfter(take, 0);
 }
 
 static BOOL presentNotification(SGRDialogTake *take, NSDictionary *read) {
