@@ -24,6 +24,14 @@
 #import <objc/message.h>
 
 static char kBubbleKey;
+
+// A scrim taken out of sight by an empty mask, never `hidden` (which crashes in Encore's stacks) nor alpha (which Spotify
+// writes as the page scrolls).
+static void maskAway(UIView *view) {
+    if (view.layer.mask && CGRectIsEmpty(view.layer.mask.bounds)) return;
+    view.layer.mask = [CALayer layer];
+}
+
 static BOOL isDressedPage(UIView *bar);
 
 static BOOL isLikedSongs(UIViewController *headerVC) {
@@ -70,10 +78,7 @@ static UIView *titleIn(UIView *bar, UILabel **text) {
 // subview of the page's root, which only the pages dressed in AlbumHeader.x and ArtistHeader.x get.
 static BOOL isDressedPage(UIView *bar) {
     UIView *page = SGRAlbumPageOf(bar) ?: SGRArtistPageOf(bar);
-    for (UIView *sub in page.subviews) {
-        if ([sub isKindOfClass:SGRMirrorButton.class]) return YES;
-    }
-    return NO;
+    return SGRPinnedBackIn(page) != nil;
 }
 
 // Whether this bar is one the redesign dresses: a playlist's (Liked Songs apart), a dressed album's or artist's.
@@ -86,7 +91,7 @@ static void apply(UIView *bar) {
     if (!handles(bar)) return;
 
     for (UIView *sub in bar.subviews) {
-        if ([NSStringFromClass(sub.class) containsString:@"GradientView"]) SGRConceal(sub);
+        if ([NSStringFromClass(sub.class) containsString:@"GradientView"]) maskAway(sub);
     }
     if (SGIsVisibleColor(bar.layer.backgroundColor)) bar.backgroundColor = UIColor.clearColor;
 
@@ -130,22 +135,32 @@ static void apply(UIView *bar) {
 %end
 
 // Spotify's GradientView (LegacyUI_ECMCoreKit.GradientView in the trees), found by name at launch.
-%group SGRPageScrim
-%hook SGRScrimView
-- (void)setHidden:(BOOL)hidden {
-    %orig(hidden || isPageScrim((UIView *)self));
+// Whether a view is a page's scrim is worked out once each time it comes into a window, not on every pass: the walk goes
+// up to the root.
+static char kScrimKey;
+
+static void maskIfScrim(UIView *view) {
+    NSNumber *known = objc_getAssociatedObject(view, &kScrimKey);
+    if (!known) {
+        if (!view.window) return;
+        known = @(isPageScrim(view));
+        objc_setAssociatedObject(view, &kScrimKey, known, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (known.boolValue) maskAway(view);
 }
 
-- (void)didMoveToSuperview {
+%group SGRPageScrim
+%hook SGRScrimView
+- (void)didMoveToWindow {
     %orig;
     UIView *view = (UIView *)self;
-    if (view.superview && isPageScrim(view)) SGRConceal(view);
+    objc_setAssociatedObject(view, &kScrimKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    maskIfScrim(view);
 }
 
 - (void)layoutSubviews {
     %orig;
-    UIView *view = (UIView *)self;
-    if (isPageScrim(view)) SGRConceal(view);
+    maskIfScrim((UIView *)self);
 }
 %end
 %end
