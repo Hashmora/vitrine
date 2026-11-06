@@ -42,6 +42,8 @@ static NSUInteger indexIn(NSArray<SPTPlayerTrack *> *tracks, SPTPlayerTrack *tra
     return NSNotFound;
 }
 
+static NSString *sSignature;
+
 // The DJ's tracks to come as last made up (what the player said, then what was kept after it), what the queue is
 // as it is put to the readers, and which of its tracks are the ones put in.
 static NSArray<SPTPlayerTrack *> *sAhead = @[], *sQueue = @[], *sInjected = @[];
@@ -101,12 +103,52 @@ static SPTPlayerTrack *cardRow(SPTPlayerTrack *card) {
     return copyOf(card, nil, [card.UID stringByAppendingString:kCardSuffix]);
 }
 
+// The core names the track a card introduces only when it plays, so its name and cover are asked of Spotify's public
+// oEmbed once (title and thumbnail, no artist) and put on its row when they come.
+static NSMutableDictionary<NSString *, NSDictionary *> *sNamed;
+static NSMutableSet<NSString *> *sNameAsked;
+static void refreshReaders(void);
+
+static void askName(NSString *uri) {
+    if (!uri.length) return;
+    if (!sNameAsked) sNameAsked = [NSMutableSet set];
+    if ([sNameAsked containsObject:uri]) return;
+    [sNameAsked addObject:uri];
+    NSString *address = [@"https://open.spotify.com/oembed?url=" stringByAppendingString:
+        [[@"https://open.spotify.com/track/" stringByAppendingString:[uri componentsSeparatedByString:@":"].lastObject]
+         stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLQueryAllowedCharacterSet]];
+    NSURL *url = [NSURL URLWithString:address];
+    if (!url) return;
+    [[[NSURLSession sharedSession] dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSDictionary *json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        NSString *title = [json[@"title"] isKindOfClass:NSString.class] ? json[@"title"] : nil;
+        SGLog(@"queue: name of %@: %@", uri, title ?: (error.localizedDescription ?: @"none"));
+        if (!title.length) { dispatch_async(dispatch_get_main_queue(), ^{ [sNameAsked removeObject:uri]; }); return; }
+        NSString *thumb = [json[@"thumbnail_url"] isKindOfClass:NSString.class] ? json[@"thumbnail_url"] : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!sNamed) sNamed = [NSMutableDictionary dictionary];
+            sNamed[uri] = thumb ? @{@"title": title, @"image": thumb} : @{@"title": title};
+            sSignature = nil;
+            refreshReaders();
+        });
+    }] resume];
+}
+
 // The track a card introduces, as its own row: the card's title, artist and cover taken off, so the row shows the
 // track and not the card (its own title is not known until it plays).
 static SPTPlayerTrack *withoutCard(SPTPlayerTrack *track) {
     NSMutableDictionary *metadata = [track.metadata mutableCopy];
     for (NSString *key in track.metadata) {
         if ([key hasPrefix:@"title"] || [key hasPrefix:@"artist_name"] || [key hasPrefix:@"image"] || [key hasPrefix:@"thumbnail"]) [metadata removeObjectForKey:key];
+    }
+    NSString *uri = SGURIString(track.URI);
+    NSDictionary *named = sNamed[uri];
+    if (named) {
+        metadata[@"title"] = named[@"title"];
+        NSString *image = named[@"image"];
+        if (image) for (NSString *key in @[@"image_url", @"image_small_url", @"image_large_url", @"image_xlarge_url", @"thumbnail_image_url"]) metadata[key] = image;
+    } else {
+        askName(uri);
     }
     return copyOf(track, metadata, nil);
 }
@@ -173,7 +215,11 @@ static void drawCardAvatar(UITableViewCell *cell) {
         image.image = sCardAvatar;
         image.contentMode = UIViewContentModeScaleAspectFill;
         image.clipsToBounds = YES;
+        SGLog(@"queue: card avatar drawn in the row (alpha was %.2f, hidden %d)", image.alpha, image.hidden);
     }
+    // The row's image view waits at alpha 0 for a picture Spotify never loads for the card; it is shown with the picture.
+    image.alpha = 1;
+    image.hidden = NO;
     UIView *placeholder = descendant(art, ^BOOL(UIView *view) { return [NSStringFromClass(view.class) containsString:@"PlaceholderView"]; });
     placeholder.hidden = YES;
 }
@@ -262,7 +308,6 @@ static NSDate *sGapSince;
 
 // What the last list was made from, and the list: the same input gives the readers the same rows (the same objects),
 // whichever of them is asked first.
-static NSString *sSignature;
 static NSArray<SPTPlayerTrack *> *sCachedMerged;
 
 // A line that tells whether the state, the core's queue or what was hidden has changed since the last list.
@@ -389,6 +434,35 @@ static NSString *describeEsp(id track) {
     id forward = queue;
     if (lineUpTheFuture(self, player, queue, &forward)) return;
     %orig(player, forward);
+}
+%end
+
+// The table's diffable data source asks to reconfigure a row by its place before the update, and when the list has just
+// become shorter (the card's row goes as its track starts) that place is one the page's cell provider no longer has:
+// it returns a bare UITableViewCell, and UIKit aborts on the cell not being the one it has. Such places are left out
+// of the reconfigure, and the table is loaded again after the update for the rows that changed.
+static BOOL sReloadQueued;
+%hook UITableView
+- (void)reconfigureRowsAtIndexPaths:(NSArray<NSIndexPath *> *)paths {
+    static Class queueSource;
+    if (!queueSource) queueSource = NSClassFromString(@"_TtC14Queue_ViewImpl38QueueTableViewDataSourceImplementation");
+    id<UITableViewDataSource> source = self.dataSource;
+    if (!queueSource || ![(id)source isKindOfClass:queueSource]) { %orig; return; }
+    NSMutableArray<NSIndexPath *> *valid = [NSMutableArray array];
+    for (NSIndexPath *path in paths) {
+        if (path.row < [source tableView:self numberOfRowsInSection:path.section]) [valid addObject:path];
+    }
+    if (valid.count == paths.count) { %orig; return; }
+    SGLog(@"queue page: reconfigure of %lu rows, %lu are past the end of the list (%lu rows), left out", (unsigned long)paths.count,
+          (unsigned long)(paths.count - valid.count), (unsigned long)sQueue.count);
+    if (valid.count) %orig(valid);
+    if (sReloadQueued) return;
+    sReloadQueued = YES;
+    __weak UITableView *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        sReloadQueued = NO;
+        [weakSelf reloadData];
+    });
 }
 %end
 
