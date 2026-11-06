@@ -230,6 +230,10 @@ static void reportLayout(UIView *view) {
     sg_reportingLayout = NO;
 }
 
+BOOL SGRObservesLayout(UIView *view) {
+    return view && objc_getAssociatedObject(view, &kLayoutObserverKey) != nil;
+}
+
 BOOL SGRObserveLayout(UIView *view, void (^laidOut)(UIView *view)) {
     if (![view isKindOfClass:UIView.class]) return NO;
     objc_setAssociatedObject(view, &kLayoutObserverKey, laidOut, OBJC_ASSOCIATION_COPY_NONATOMIC);
