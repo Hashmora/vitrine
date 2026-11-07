@@ -121,6 +121,7 @@ static SPTPlayerTrack *cardRow(SPTPlayerTrack *card) {
 // The core names the track a card introduces only when it plays, so its name and cover are asked of Spotify's public
 // oEmbed once (title and thumbnail, no artist) and put on its row when they come.
 static NSMutableDictionary<NSString *, NSDictionary *> *sNamed;
+static NSMutableDictionary<NSString *, NSString *> *sArtists;
 static NSMutableSet<NSString *> *sNameAsked;
 static void refreshReaders(void);
 
@@ -154,10 +155,8 @@ static void askArtist(NSString *uri) {
               (long)status, (unsigned long)data.length, pageTitle ?: @"-"]);
         if (!artist.length) return;
         dispatch_async(dispatch_get_main_queue(), ^{
-            NSMutableDictionary *named = [sNamed[uri] mutableCopy];
-            if (!named) return;
-            named[@"artist"] = artist;
-            sNamed[uri] = named;
+            if (!sArtists) sArtists = [NSMutableDictionary dictionary];
+            sArtists[uri] = artist;
             sSignature = nil;
             refreshReaders();
         });
@@ -175,6 +174,7 @@ static void askName(NSString *uri) {
     NSURL *url = [NSURL URLWithString:address];
     SGLog(@"[DEBUG-dj] name asked for %@ (%@)", uri, url ? @"sent" : @"bad url");
     if (!url) return;
+    askArtist(uri);
     [[[NSURLSession sharedSession] dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         NSDictionary *json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
         NSString *title = [json[@"title"] isKindOfClass:NSString.class] ? json[@"title"] : nil;
@@ -188,7 +188,6 @@ static void askName(NSString *uri) {
             sNamed[uri] = thumb ? @{@"title": title, @"image": thumb} : @{@"title": title};
             sSignature = nil;
             refreshReaders();
-            askArtist(uri);
         });
     }] resume];
 }
@@ -204,7 +203,7 @@ static SPTPlayerTrack *withoutCard(SPTPlayerTrack *track) {
     NSDictionary *named = sNamed[uri];
     if (named) {
         metadata[@"title"] = named[@"title"];
-        NSString *artist = named[@"artist"];
+        NSString *artist = sArtists[uri];
         if (artist.length) metadata[@"artist_name"] = artist;
         NSString *image = named[@"image"];
         if (image) for (NSString *key in @[@"image_url", @"image_small_url", @"image_large_url", @"image_xlarge_url", @"thumbnail_image_url"]) metadata[key] = image;
@@ -238,15 +237,27 @@ static UIImage *sCardAvatar;
 static NSString *sCardAvatarURL, *sCardTitle;
 static NSHashTable<UITableViewCell *> *sQueueCells;
 
+static NSString *avatarFile(NSString *url) {
+    NSString *dir = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+    return [dir stringByAppendingPathComponent:[@"sg-dj-" stringByAppendingString:url.lastPathComponent]];
+}
+
 static void loadCardAvatar(NSString *url) {
     if (!url.length || [url isEqualToString:sCardAvatarURL]) return;
     sCardAvatarURL = url;
+    UIImage *kept = [UIImage imageWithContentsOfFile:avatarFile(url)];
+    if (kept) {
+        sCardAvatar = kept;
+        SGLog(@"queue: card avatar %@: from the disk", url);
+        return;
+    }
     NSURL *address = [NSURL URLWithString:url];
     if (!address) return;
     [[[NSURLSession sharedSession] dataTaskWithURL:address completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         UIImage *image = data.length ? [UIImage imageWithData:data] : nil;
         SGLog(@"queue: card avatar %@: %@", url, image ? @"loaded" : (error.localizedDescription ?: @"no image"));
         if (!image) return;
+        [data writeToFile:avatarFile(url) atomically:YES];
         dispatch_async(dispatch_get_main_queue(), ^{
             sCardAvatar = image;
             for (UITableViewCell *cell in sQueueCells.allObjects) [cell setNeedsLayout];
@@ -268,6 +279,27 @@ static UIView *descendant(UIView *root, BOOL (^match)(UIView *)) {
 // selected or reloaded (the avatar went away on a tap on the card); a view of ours it does not touch stays. In any
 // other row the view is taken off, as cells are reused.
 static const NSInteger kAvatarTag = 0x5367;
+// Spotify rounds the art of its rows; the avatar takes the corners of a row that is not the card's. Nothing else says
+// what they are (the row's art has no radius on it until its image is set, which the card's never is).
+static const CGFloat kFallbackRadius = 4;
+
+static CGFloat otherRowsRadius(void) {
+    for (UITableViewCell *cell in sQueueCells.allObjects) {
+        UIView *row = descendant(cell.contentView, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Cell"]; });
+        if (!row || (sCardTitle.length && [row.accessibilityLabel containsString:sCardTitle])) continue;
+        UIView *art = descendant(row, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"Encore.ImageView"]; });
+        UIView *image = art ? descendant(art, ^BOOL(UIView *view) { return [view isMemberOfClass:UIImageView.class] && view.tag != kAvatarTag; }) : nil;
+        static BOOL logged;
+        if (!logged && image && image.alpha > 0) {
+            logged = YES;
+            SGLog(@"queue: other row's art: radius %.1f, image radius %.1f, mask %@, clips %d/%d", art.layer.cornerRadius,
+                  image.layer.cornerRadius, art.layer.mask ? NSStringFromClass([art.layer.mask class]) : @"none", art.clipsToBounds, image.clipsToBounds);
+        }
+        CGFloat radius = MAX(art.layer.cornerRadius, image.layer.cornerRadius);
+        if (radius > 0) return radius;
+    }
+    return 0;
+}
 
 static void drawCardAvatar(UITableViewCell *cell) {
     UIView *row = descendant(cell.contentView, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Cell"]; });
@@ -291,7 +323,9 @@ static void drawCardAvatar(UITableViewCell *cell) {
         SGLog(@"queue: card avatar put in the row (art alpha %.2f, hidden %d, image alpha %.2f)", art.alpha, art.hidden, inner.alpha);
     }
     mine.frame = art.bounds;
-    mine.layer.cornerRadius = art.layer.cornerRadius > 0 ? art.layer.cornerRadius : inner.layer.cornerRadius;
+    CGFloat radius = MAX(art.layer.cornerRadius, inner.layer.cornerRadius);
+    if (radius <= 0) radius = otherRowsRadius();
+    mine.layer.cornerRadius = radius > 0 ? radius : kFallbackRadius;
     mine.image = sCardAvatar;
     mine.alpha = 1;
     mine.hidden = NO;
@@ -736,6 +770,24 @@ static void logPage(NSString *where, id page) {
 }
 %end
 
+// What the page may do to the queue is asked of the player's restrictions; each answer is logged when it first comes or
+// changes, to tell whether the DJ's session forbids the removing and the reordering the page does not do.
+static void logRestriction(NSString *what, BOOL answer) {
+    static NSMutableDictionary<NSString *, NSNumber *> *last;
+    if (!last) last = [NSMutableDictionary dictionary];
+    if (last[what] && last[what].boolValue == answer) return;
+    last[what] = @(answer);
+    SGLog(@"queue: restriction %@: %@", what, answer ? @"forbidden" : @"allowed");
+}
+
+%hook SPTPlayerRestrictions
+- (BOOL)disallowRemovingFromNextTracks { BOOL answer = %orig; logRestriction(@"removing from next tracks", answer); return answer; }
+- (BOOL)disallowRemovingFromContextTracks { BOOL answer = %orig; logRestriction(@"removing from context tracks", answer); return answer; }
+- (BOOL)disallowReorderingInNextTracks { BOOL answer = %orig; logRestriction(@"reordering in next tracks", answer); return answer; }
+- (BOOL)disallowReorderingInContextTracks { BOOL answer = %orig; logRestriction(@"reordering in context tracks", answer); return answer; }
+- (BOOL)disallowSetQueue { BOOL answer = %orig; logRestriction(@"set queue", answer); return answer; }
+%end
+
 // The page's own queue commands before they reach the client: what its swipe actions and its drag call.
 %hook SPTPlayerQueueWrapperImpl
 - (id)queueTrackInternal:(SPTPlayerTrack *)track options:(id)options loggingParams:(id)params {
@@ -763,6 +815,10 @@ static void logPage(NSString *where, id page) {
 %hook SPTEsperantoPlayer
 - (id)skipToNextTrackWithOptions:(id)options track:(SPTPlayerTrack *)track {
     SGLog(@"queue command: skip to %@ [%@]", track.trackTitle, track.provider);
+    return %orig;
+}
+- (id)setQueue:(id)queue options:(id)options loggingParams:(id)params {
+    SGLog(@"queue command: player setQueue, %lu next tracks", (unsigned long)([queue respondsToSelector:@selector(nextTracks)] ? [[queue valueForKey:@"nextTracks"] count] : 0));
     return %orig;
 }
 - (id)skipToNextTrackWithOptions:(id)options track:(SPTPlayerTrack *)track loggingParams:(id)params {
@@ -854,6 +910,10 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
 // The table's rows are the queue's tracks in order, over its sections (the hand-queued ones, the DJ's, an empty
 // one), so a row's place in the table is its track's in the queue.
 %hook _TtC14Queue_ViewImpl19QueueViewController
+- (void)tableView:(UITableView *)tableView didEndReorderingRowAtIndexPath:(NSIndexPath *)indexPath {
+    SGLog(@"queue page: reordering ended on section %ld row %ld", (long)indexPath.section, (long)indexPath.row);
+    %orig;
+}
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger place = indexPath.row;
     for (NSInteger section = 0; section < indexPath.section; section++) place += [tableView numberOfRowsInSection:section];
