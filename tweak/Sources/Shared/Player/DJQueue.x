@@ -794,14 +794,41 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     if (sOrdered) shown = arrangedRows(shown, state);
     // The hand-queued tracks, the DJ's, then whatever else the queue had.
     NSMutableArray<SPTPlayerTrack *> *queued = [NSMutableArray array], *rest = [NSMutableArray array], *injected = [NSMutableArray array];
+    // The core's queue names the session again after the delimiter (stand-ins, some with another provider than the
+    // ones the state named) and, after a track is queued by hand, the DJ's tracks once more: a track of the DJ's that
+    // `ahead` already holds, by uri, or one already taken, is not a row of its own.
+    NSMutableSet<NSString *> *aheadURIs = [NSMutableSet set], *restKeys = [NSMutableSet set];
+    for (SPTPlayerTrack *track in ahead) [aheadURIs addObject:SGURIString(track.URI)];
     for (SPTPlayerTrack *track in next) {
-        if ([track.provider isEqualToString:@"queue"]) [queued addObject:track];
-        else if (indexIn(ahead, track) == NSNotFound) [rest addObject:track];
+        if ([track.provider isEqualToString:@"queue"]) { [queued addObject:track]; continue; }
+        if (indexIn(ahead, track) != NSNotFound) continue;
+        NSString *uri = SGURIString(track.URI);
+        if ([uri isEqualToString:@"spotify:delimiter"]) continue;
+        if (isDJTrack(track) && [aheadURIs containsObject:uri]) continue;
+        NSString *key = [NSString stringWithFormat:@"%@|%@", uri, track.UID ?: @""];
+        if (track.UID.length && [restKeys containsObject:key]) continue;
+        [restKeys addObject:key];
+        [rest addObject:track];
     }
     for (SPTPlayerTrack *track in shown) if (indexIn(next, track) == NSNotFound) [injected addObject:track];
-    NSMutableArray<SPTPlayerTrack *> *merged = [queued mutableCopy];
-    [merged addObjectsFromArray:shown];
-    [merged addObjectsFromArray:rest];
+    NSMutableArray<SPTPlayerTrack *> *merged = [NSMutableArray array];
+    // One row per track (uri, uid, provider): the same track twice in a row of lists is a repeat, not a second row.
+    NSMutableSet<NSString *> *taken = [NSMutableSet set];
+    NSUInteger repeats = 0;
+    for (NSArray<SPTPlayerTrack *> *group in @[queued, shown, rest]) {
+        for (SPTPlayerTrack *track in group) {
+            if (track.UID.length) {
+                NSString *key = [NSString stringWithFormat:@"%@|%@|%@", SGURIString(track.URI), track.UID, track.provider];
+                if ([taken containsObject:key]) { repeats++; continue; }
+                [taken addObject:key];
+            }
+            [merged addObject:track];
+        }
+    }
+    if (repeats) SGLog(@"[DEBUG-dj] queue: %lu repeated rows left out (queued %lu, shown %lu, rest %lu, ahead %lu, core %lu)",
+                       (unsigned long)repeats, (unsigned long)queued.count, (unsigned long)shown.count,
+                       (unsigned long)rest.count, (unsigned long)ahead.count, (unsigned long)next.count);
+    [injected filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(SPTPlayerTrack *t, id _) { return [merged containsObject:t]; }]];
 
     if (merged.count) {
         sGapSince = nil;
@@ -940,7 +967,90 @@ static void logPage(NSString *where, id page) {
           next.length ? next : @"none");
 }
 
+// The app-side context (SPTPlayerContext): its uri, pages, and on each page the tracks and where the next one is.
+static void logPlayerContext(NSString *where, id context) {
+    if (!context) { SGLog(@"[DEBUG-dj] context via %@: nil", where); return; }
+    if (![context respondsToSelector:@selector(pages)]) {
+        SGLog(@"[DEBUG-dj] context via %@: %@ (not a context)", where, NSStringFromClass([context class]));
+        return;
+    }
+    NSArray *pages = [context valueForKey:@"pages"];
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (id page in pages) {
+        NSArray *tracks = [page respondsToSelector:@selector(tracks)] ? [page valueForKey:@"tracks"] : nil;
+        id next = [page respondsToSelector:@selector(nextPageURL)] ? [page valueForKey:@"nextPageURL"] : nil;
+        id url = [page respondsToSelector:@selector(pageURL)] ? [page valueForKey:@"pageURL"] : nil;
+        [parts addObject:[NSString stringWithFormat:@"%lu tracks, page %@, next %@", (unsigned long)tracks.count, url ?: @"none", next ?: @"none"]];
+    }
+    SGLog(@"[DEBUG-dj] context via %@: %@ url %@ (%lu pages) %@", where, [context valueForKey:@"URI"], [context valueForKey:@"URL"],
+          (unsigned long)pages.count, [parts componentsJoinedByString:@" | "]);
+}
+
+// The ways the app starts a context in the player. One of them is how the DJ starts; each says so in the log.
+%hook SPTEsperantoPlayer
+- (id)playContext:(id)context options:(id)options {
+    logPlayerContext(@"SPTPlayer playContext:options:", context);
+    return %orig;
+}
+- (id)playContext:(id)context options:(id)options loggingParams:(id)params {
+    logPlayerContext(@"SPTPlayer playContext:options:loggingParams:", context);
+    return %orig;
+}
+- (id)playContext:(id)context options:(id)options viewURI:(id)viewURI {
+    logPlayerContext(@"SPTPlayer playContext:options:viewURI:", context);
+    return %orig;
+}
+- (id)playContext:(id)context options:(id)options loggingParams:(id)params viewURI:(id)viewURI {
+    logPlayerContext(@"SPTPlayer playContext:options:loggingParams:viewURI:", context);
+    return %orig;
+}
+- (id)playContext:(id)context options:(id)options externalReferrer:(id)referrer {
+    logPlayerContext(@"SPTPlayer playContext:options:externalReferrer:", context);
+    return %orig;
+}
+- (id)playContext:(id)context options:(id)options origin:(id)origin {
+    logPlayerContext(@"SPTPlayer playContext:options:origin:", context);
+    return %orig;
+}
+- (id)playContext:(id)context options:(id)options loggingParams:(id)params origin:(id)origin {
+    logPlayerContext(@"SPTPlayer playContext:options:loggingParams:origin:", context);
+    return %orig;
+}
+- (id)preparePlaybackOfContext:(id)context options:(id)options viewURI:(id)viewURI {
+    logPlayerContext(@"SPTPlayer preparePlaybackOfContext:", context);
+    return %orig;
+}
+- (id)preparePlaybackOfContext:(id)context options:(id)options viewURI:(id)viewURI playOrigin:(id)origin {
+    logPlayerContext(@"SPTPlayer preparePlaybackOfContext:playOrigin:", context);
+    return %orig;
+}
+%end
+
+// A context made from one page url (the core then fetches the pages itself) or from tracks, wherever it is made.
+%hook SPTPlayerContext
++ (id)contextWithPageURL:(id)url {
+    id context = %orig;
+    SGLog(@"[DEBUG-dj] context made with a page url: %@", url);
+    return context;
+}
++ (id)contextWithTracks:(id)tracks {
+    id context = %orig;
+    SGLog(@"[DEBUG-dj] context made with %lu tracks", (unsigned long)[tracks count]);
+    return context;
+}
++ (id)contextWithDictionary:(id)dictionary {
+    id context = %orig;
+    if ([[dictionary description] containsString:@"page_instance_id"] || [[dictionary description] containsString:@"dj"])
+        logPlayerContext(@"contextWithDictionary", context);
+    return context;
+}
+%end
+
 %hook ESPContextPlayerClientImpl
+- (void)playPrepared:(id)request onResponse:(id)onResponse {
+    SGLog(@"[DEBUG-dj] playPrepared: session %@", [request valueForKey:@"sessionId"]);
+    %orig;
+}
 - (void)preparePlay:(id)request onResponse:(id)onResponse {
     logContext(@"preparePlay", [request valueForKey:@"context"]);
     %orig;
