@@ -29,6 +29,7 @@
 //
 // The page takes a tap on one of the tracks for a row of the core's queue, which it is not, and gives no command; it
 // is skipped to as the player's here.
+#import <objc/runtime.h>
 #import "Core/SGCore.h"
 #import "Core/SGLog.h"
 #import "PlayerState.h"
@@ -123,7 +124,9 @@ static void askName(NSString *uri) {
     [[[NSURLSession sharedSession] dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         NSDictionary *json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
         NSString *title = [json[@"title"] isKindOfClass:NSString.class] ? json[@"title"] : nil;
-        SGLog(@"queue: name of %@: %@", uri, title ?: (error.localizedDescription ?: @"none"));
+        NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
+        SGLog(@"queue: name of %@: %@", uri, title ?: [NSString stringWithFormat:@"none (http %ld, %lu bytes, %@)", (long)status,
+              (unsigned long)data.length, error.localizedDescription ?: @"no error"]);
         if (!title.length) { dispatch_async(dispatch_get_main_queue(), ^{ [sNameAsked removeObject:uri]; }); return; }
         NSString *thumb = [json[@"thumbnail_url"] isKindOfClass:NSString.class] ? json[@"thumbnail_url"] : nil;
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -266,6 +269,29 @@ static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
     return tracks;
 }
 
+// A one-time look at what the player's state and its tracks offer about the DJ's pages (names with "page" in them):
+// the core hands the player one page of five, and the others may be somewhere the state can be asked for.
+static void probePages(SPTPlayerState *state) {
+    static BOOL probed;
+    if (probed || !state.future.count) return;
+    probed = YES;
+    NSMutableArray<id> *samples = [NSMutableArray arrayWithObject:state];
+    if (state.future.firstObject) [samples addObject:state.future.firstObject];
+    for (id sample in samples) {
+        NSMutableArray<NSString *> *names = [NSMutableArray array];
+        unsigned int count = 0;
+        Method *methods = class_copyMethodList([sample class], &count);
+        for (unsigned int i = 0; i < count; i++) {
+            NSString *name = NSStringFromSelector(method_getName(methods[i]));
+            if ([name.lowercaseString containsString:@"page"] || [name.lowercaseString containsString:@"context"]) [names addObject:name];
+        }
+        free(methods);
+        SGLog(@"[DEBUG-dj] pages: %@ offers %@", NSStringFromClass([sample class]), names.count ? [names componentsJoinedByString:@" "] : @"nothing about pages");
+    }
+    SGLog(@"[DEBUG-dj] pages: the state's future is %lu items, %lu of them the DJ's", (unsigned long)state.future.count,
+          (unsigned long)djFuture(state.future).count);
+}
+
 // Whether the track is the DJ's: its metadata names the session's page.
 static BOOL inDJ(SPTPlayerTrack *track) {
     return track.metadata[@"page_instance_id"] != nil;
@@ -375,6 +401,7 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
         *forward = queueWith(queue, sCachedMerged);
         return NO;
     }
+    probePages(state);
     NSArray<SPTPlayerTrack *> *future = djFuture(state.future);
 
     // The state's own, then what was kept after its last one. When hand-queued tracks fill the state's two it names
