@@ -292,7 +292,7 @@ static CGFloat otherRowsRadius(void) {
 }
 
 static void drawCardAvatar(UITableViewCell *cell) {
-    UIView *row = descendant(cell.contentView, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Cell"]; });
+    UIView *row = descendant(cell.contentView, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Cell"] || [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Header"]; });
     UIView *art = row ? descendant(row, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"Encore.ImageView"]; }) : nil;
     if (!art) return;
     UIImageView *mine = (UIImageView *)[art viewWithTag:kAvatarTag];
@@ -543,13 +543,6 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     // What the page shows of them: not the ones it removed, nor the ones queued by hand.
     NSMutableArray<SPTPlayerTrack *> *shown = [NSMutableArray array];
     for (SPTPlayerTrack *track in ahead) if (!isHidden(track)) [shown addObject:track];
-    // While the card's voice plays the core has taken the card out of its list: the card's row stays in ours until the
-    // voice is over, so it (and its avatar) does not go away on a tap on it.
-    SPTPlayerTrack *voiceCard = [SGURIString(state.track.URI) hasPrefix:@"spotify:media:"] ? sCardTracks[state.track.UID] : nil;
-    if (voiceCard && shown.count && [shown.firstObject.UID isEqualToString:voiceCard.UID] && isDJTrack(shown.firstObject)) {
-        [shown insertObject:cardRow(voiceCard) atIndex:0];
-    }
-
     // The hand-queued tracks, the DJ's, then whatever else the queue had.
     NSMutableArray<SPTPlayerTrack *> *queued = [NSMutableArray array], *rest = [NSMutableArray array], *injected = [NSMutableArray array];
     for (SPTPlayerTrack *track in next) {
