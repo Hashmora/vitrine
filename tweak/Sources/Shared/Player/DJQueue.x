@@ -52,6 +52,10 @@ static id sAheadContext;
 // The uids of the DJ's tracks the page removed or that were queued by hand (hidden from its rows), and the tracks
 // (uri and uid) the player was already skipped past, once each.
 static NSMutableSet<NSString *> *sHidden, *sSkipped;
+// The uid of a track the page was tapped on whose "Up next" card is ahead of it, and when: the core plays the card's
+// voice first (the voice and the track have one uid), and the voice is skipped when the player comes to it.
+static NSString *sSkipVoiceUID;
+static NSDate *sSkipVoiceAsked;
 // The page's readers of the queue, and the last queue they were given, to tell them again when a row is hidden.
 static NSHashTable *sReaders;
 // Held, not weak: the core lets go of its queue object before a name comes back from the network, and a weak one
@@ -70,6 +74,8 @@ static const int64_t kFutureCap = 80;
 static const NSTimeInterval kGapSeconds = 3;
 // How long the core has to move to a track it was asked to skip back to.
 static const NSTimeInterval kJumpSeconds = 1.5;
+// How long a tap on a track behind a card is waited for to reach the card's voice.
+static const NSTimeInterval kSkipVoiceSeconds = 10;
 
 // A track of the DJ's to come: not the narration, a page marker or the delimiter that ends the pages.
 static BOOL isDJTrack(SPTPlayerTrack *track) {
@@ -118,6 +124,46 @@ static NSMutableDictionary<NSString *, NSDictionary *> *sNamed;
 static NSMutableSet<NSString *> *sNameAsked;
 static void refreshReaders(void);
 
+// oEmbed gives the title and the cover but no artist. The artist is read from the track's public page, whose title
+// is "<song> - song and lyrics by <artist> | Spotify"; it is put on the row when it comes, and the row has none until.
+static void askArtist(NSString *uri) {
+    NSURL *url = [NSURL URLWithString:[@"https://open.spotify.com/track/" stringByAppendingString:[uri componentsSeparatedByString:@":"].lastObject]];
+    if (!url) return;
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    [request setValue:@"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+   forHTTPHeaderField:@"User-Agent"];
+    [request setValue:@"en-US,en;q=0.9" forHTTPHeaderField:@"Accept-Language"];
+    [[[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSString *html = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+        NSString *artist = nil, *pageTitle = nil;
+        NSRange open = html ? [html rangeOfString:@"<title>"] : NSMakeRange(NSNotFound, 0);
+        NSRange close = html ? [html rangeOfString:@"</title>"] : NSMakeRange(NSNotFound, 0);
+        if (open.location != NSNotFound && close.location != NSNotFound && close.location > NSMaxRange(open)) {
+            pageTitle = [html substringWithRange:NSMakeRange(NSMaxRange(open), close.location - NSMaxRange(open))];
+            NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^.* by (.+?) \\| Spotify$"
+                options:NSRegularExpressionDotMatchesLineSeparators error:nil];
+            NSTextCheckingResult *match = [pattern firstMatchInString:pageTitle options:0 range:NSMakeRange(0, pageTitle.length)];
+            if (match) artist = [pageTitle substringWithRange:[match rangeAtIndex:1]];
+        }
+        artist = [[[[artist stringByReplacingOccurrencesOfString:@"&amp;" withString:@"&"]
+                    stringByReplacingOccurrencesOfString:@"&#x27;" withString:@"'"]
+                   stringByReplacingOccurrencesOfString:@"&quot;" withString:@"\""]
+                  stringByReplacingOccurrencesOfString:@"&#39;" withString:@"'"];
+        NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
+        SGLog(@"queue: artist of %@: %@", uri, artist.length ? artist : [NSString stringWithFormat:@"none (http %ld, %lu bytes, page title %@)",
+              (long)status, (unsigned long)data.length, pageTitle ?: @"-"]);
+        if (!artist.length) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSMutableDictionary *named = [sNamed[uri] mutableCopy];
+            if (!named) return;
+            named[@"artist"] = artist;
+            sNamed[uri] = named;
+            sSignature = nil;
+            refreshReaders();
+        });
+    }] resume];
+}
+
 static void askName(NSString *uri) {
     if (!uri.length) return;
     if (!sNameAsked) sNameAsked = [NSMutableSet set];
@@ -142,6 +188,7 @@ static void askName(NSString *uri) {
             sNamed[uri] = thumb ? @{@"title": title, @"image": thumb} : @{@"title": title};
             sSignature = nil;
             refreshReaders();
+            askArtist(uri);
         });
     }] resume];
 }
@@ -157,6 +204,8 @@ static SPTPlayerTrack *withoutCard(SPTPlayerTrack *track) {
     NSDictionary *named = sNamed[uri];
     if (named) {
         metadata[@"title"] = named[@"title"];
+        NSString *artist = named[@"artist"];
+        if (artist.length) metadata[@"artist_name"] = artist;
         NSString *image = named[@"image"];
         if (image) for (NSString *key in @[@"image_url", @"image_small_url", @"image_large_url", @"image_xlarge_url", @"thumbnail_image_url"]) metadata[key] = image;
     } else {
@@ -739,6 +788,18 @@ static BOOL sJumpRefused;
         sJumpRefused = NO;
     }
     SPTPlayerTrack *track = state.track;
+    // A track tapped on the page that has the DJ's card ahead of it: the core plays the voice first (it has the track's
+    // uid), and the voice is skipped, so the tap lands on the track.
+    if (sSkipVoiceUID && track.UID.length) {
+        BOOL stale = !sSkipVoiceAsked || -sSkipVoiceAsked.timeIntervalSinceNow > kSkipVoiceSeconds;
+        if (!stale && [track.UID isEqualToString:sSkipVoiceUID] && [SGURIString(track.URI) hasPrefix:@"spotify:media:"]) {
+            sSkipVoiceUID = nil;
+            SGLog(@"queue: the DJ's voice before the tapped track %@ is skipped", track.UID);
+            [(id<SPTPlayer>)queuePlayer() skipToNextTrackWithOptions:nil];
+            return;
+        }
+        if (stale || ([track.UID isEqualToString:sSkipVoiceUID] && isDJTrack(track))) sSkipVoiceUID = nil;
+    }
     // A DJ track the page removed (or queued by hand) that the player has come to: its voice, then the track itself,
     // are skipped, once each.
     if (isHidden(track)) {
@@ -819,6 +880,12 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
             SPTPlayerTrack *now = SGPlayerState().track;
             SGLog(@"queue page: 4 s after the skip to %@ the player is on %@ [%@]", SGURIString(target.URI), SGURIString(now.URI), now.UID);
         });
+        if ([SGURIString(track.URI) hasPrefix:@"spotify:media:"] || ![sCarded containsObject:target.UID]) {
+            sSkipVoiceUID = nil;
+        } else {
+            sSkipVoiceUID = target.UID;
+            sSkipVoiceAsked = [NSDate date];
+        }
         // The skip changes the queue, and the page reloads its table for it: it is made once this tap has returned,
         // not inside the table's own selection.
         dispatch_async(dispatch_get_main_queue(), ^{
