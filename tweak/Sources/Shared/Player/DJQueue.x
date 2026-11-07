@@ -34,6 +34,7 @@
 // The page takes a tap on one of the tracks for a row of the core's queue, which it is not, and gives no command; it
 // is skipped to as the player's here.
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import "Core/SGCore.h"
 #import "Core/SGLog.h"
 #import "PlayerState.h"
@@ -82,6 +83,7 @@ static const NSTimeInterval kJumpSeconds = 1.5;
 static const NSTimeInterval kSkipVoiceSeconds = 10;
 
 // A track of the DJ's to come: not the narration, a page marker or the delimiter that ends the pages.
+static void logSelectors(NSString *name);
 static BOOL isDJTrack(SPTPlayerTrack *track) {
     NSString *uri = SGURIString(track.URI);
     return [uri hasPrefix:@"spotify:track:"] || [uri hasPrefix:@"spotify:episode:"];
@@ -542,6 +544,26 @@ static SPTPlayerTrack *wantedNext(void) {
     return nil;
 }
 
+// A DJ track the core has already passed (its own order had it before the one it is on, the skips here went over it)
+// is not skipped to as a next track: the core refuses, and the player is left waiting. It is a step back with that
+// track, which the core keeps ten of behind the current one.
+static BOOL behindCore(SPTPlayerTrack *target) {
+    for (SPTPlayerTrack *t in SGPlayerState().reverse) {
+        if ([t.UID isEqualToString:target.UID] && [t.URI isEqual:target.URI]) return YES;
+    }
+    return NO;
+}
+
+static id skipToDJTrack(SPTPlayerTrack *target) {
+    id player = queuePlayer();
+    SEL back = NSSelectorFromString(@"skipToPreviousTrackWithOptions:track:loggingParams:");
+    if (behindCore(target) && [player respondsToSelector:back]) {
+        SGLog(@"queue: %@ [%@] is behind the core's current track, a step back to it", target.trackTitle, target.UID);
+        return ((id (*)(id, SEL, id, id, id))objc_msgSend)(player, back, nil, target, nil);
+    }
+    return [(id<SPTPlayer>)player skipToNextTrackWithOptions:nil track:target];
+}
+
 // The core has come to a DJ track of its own order. If the user's order has another first, the player is skipped to it
 // (its card's voice is skipped on arrival, as for a tap). YES when that was asked, the track is not taken as played.
 static BOOL enforceOrder(SPTPlayerState *state) {
@@ -567,7 +589,7 @@ static BOOL enforceOrder(SPTPlayerState *state) {
     SGLog(@"queue: the player came to %@ [%@], the user's order has %@ [%@] first, skipping to it", current.trackTitle, current.UID,
           want.trackTitle, want.UID);
     dispatch_async(dispatch_get_main_queue(), ^{
-        id result = [(id<SPTPlayer>)queuePlayer() skipToNextTrackWithOptions:nil track:want];
+        id result = skipToDJTrack(want);
         SGLog(@"queue: skip to the user's first %@ asked, it answered %@", SGURIString(want.URI), result);
     });
     return YES;
@@ -731,6 +753,17 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     }
     sQueue = merged;
     sInjected = injected;
+    if (injected.count) {
+        static BOOL dumped;
+        if (!dumped) {
+            dumped = YES;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                logSelectors(@"_TtC14Queue_ViewImpl19QueueViewController");
+                logSelectors(@"_TtC14Queue_ViewImpl38QueueTableViewDataSourceImplementation");
+                logSelectors(@"SPTPlayerQueueWrapperImpl");
+            });
+        }
+    }
     if (injected.count) {
         NSMutableArray<NSString *> *rows = [NSMutableArray array];
         for (SPTPlayerTrack *row in merged) [rows addObject:[NSString stringWithFormat:@"%@/%@", [SGURIString(row.URI) componentsSeparatedByString:@":"].lastObject, row.UID]];
@@ -995,7 +1028,19 @@ static void logRestriction(NSString *what, BOOL answer) {
     SGLog(@"queue command: skip to (with logging params) %@ [%@] %@", track.trackTitle, track.provider, SGURIString(track.URI));
     if (!track) {
         SPTPlayerTrack *want = redirectedNext();
-        if (want) return %orig(options, want, params);
+        if (want) {
+            NSString *was = SGPlayerState().track.UID;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                SPTPlayerTrack *now = SGPlayerState().track;
+                SGLog(@"queue: 2 s after the next to %@ the player is on %@ [%@]%@", want.trackTitle, now.trackTitle, now.UID,
+                      [now.UID isEqualToString:was] ? @", it did not move" : @"");
+            });
+            if (behindCore(want)) {
+                SGLog(@"queue: %@ is behind the core's current track, a step back to it", want.trackTitle);
+                return ((id (*)(id, SEL, id, id, id))objc_msgSend)(self, @selector(skipToPreviousTrackWithOptions:track:loggingParams:), options, want, params);
+            }
+            return %orig(options, want, params);
+        }
     }
     return %orig;
 }
@@ -1100,6 +1145,8 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
             SPTPlayerTrack *row = place < (NSInteger)sQueue.count ? sQueue[place] : nil;
             blocked = row && isCardRow(row) && indexIn(sInjected, row) != NSNotFound;
         }
+        if (path) SGLog(@"queue page: swipe begins on section %ld row %ld, place %ld, the DJ's row: %d", (long)path.section, (long)path.row,
+                        (long)placeOf(table, path), (int)(placeOf(table, path) < (NSInteger)sQueue.count && indexIn(sInjected, sQueue[placeOf(table, path)]) != NSNotFound));
         if (blocked) {
             SGLog(@"queue page: swipe on the card's row is cancelled");
             gesture.enabled = NO;
@@ -1107,6 +1154,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
             return;
         }
     }
+    if (gesture.state == UIGestureRecognizerStateEnded) SGLog(@"queue page: swipe ends at %.0f", [gesture translationInView:gesture.view].x);
     if (blocked) {
         if (gesture.state == UIGestureRecognizerStateEnded || gesture.state == UIGestureRecognizerStateCancelled ||
             gesture.state == UIGestureRecognizerStateFailed) blocked = NO;
@@ -1163,7 +1211,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
         // The skip changes the queue, and the page reloads its table for it: it is made once this tap has returned,
         // not inside the table's own selection.
         dispatch_async(dispatch_get_main_queue(), ^{
-            id result = [(id<SPTPlayer>)queuePlayer() skipToNextTrackWithOptions:nil track:target];
+            id result = skipToDJTrack(target);
             SGLog(@"queue page: skip to %@ asked of %@, it answered %@", SGURIString(target.URI), [queuePlayer() class], result);
         });
         return;
