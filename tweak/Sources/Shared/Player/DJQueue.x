@@ -54,7 +54,9 @@ static id sAheadContext;
 static NSMutableSet<NSString *> *sHidden, *sSkipped;
 // The page's readers of the queue, and the last queue they were given, to tell them again when a row is hidden.
 static NSHashTable *sReaders;
-static __weak id sLastPlayer, sLastQueue;
+// Held, not weak: the core lets go of its queue object before a name comes back from the network, and a weak one
+// left refreshReaders with nothing to tell the readers ("no queue to refresh the rows with" in the log).
+static id sLastPlayer, sLastQueue;
 
 // What the DJ's pages need: three segments of five and the narration between them, with room for the hand-queued.
 static const int64_t kFutureCap = 80;
@@ -62,6 +64,8 @@ static const int64_t kFutureCap = 80;
 static const NSTimeInterval kGapSeconds = 3;
 // How long the core has to move to a track it was asked to skip back to.
 static const NSTimeInterval kJumpSeconds = 1.5;
+// How long a skip to a track of the page is taken to be on its way (the core steps there one track at a time).
+static const NSTimeInterval kSkipPendingSeconds = 15;
 
 // A track of the DJ's to come: not the narration, a page marker or the delimiter that ends the pages.
 static BOOL isDJTrack(SPTPlayerTrack *track) {
@@ -206,26 +210,53 @@ static UIView *descendant(UIView *root, BOOL (^match)(UIView *)) {
     return nil;
 }
 
-// The avatar in the cell of the card's row (the row whose accessibility label has the card's title), over the
-// placeholder.
+// The avatar in the cell of the card's row (the row whose accessibility label has the card's title): a view of ours in
+// the row's art, over Spotify's own image view. Spotify sets its image view's alpha and image again when the row is
+// selected or reloaded (the avatar went away on a tap on the card); a view of ours it does not touch stays. In any
+// other row the view is taken off, as cells are reused.
+static const NSInteger kAvatarTag = 0x5367;
+
 static void drawCardAvatar(UITableViewCell *cell) {
-    if (!sCardAvatar || !sCardTitle.length) return;
     UIView *row = descendant(cell.contentView, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Cell"]; });
-    if (!row || ![row.accessibilityLabel containsString:sCardTitle]) return;
-    UIView *art = descendant(row, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"Encore.ImageView"]; });
-    UIImageView *image = art ? (UIImageView *)descendant(art, ^BOOL(UIView *view) { return [view isMemberOfClass:UIImageView.class]; }) : nil;
-    if (!image) return;
-    if (image.image != sCardAvatar) {
-        image.image = sCardAvatar;
-        image.contentMode = UIViewContentModeScaleAspectFill;
-        image.clipsToBounds = YES;
-        SGLog(@"queue: card avatar drawn in the row (alpha was %.2f, hidden %d)", image.alpha, image.hidden);
+    UIView *art = row ? descendant(row, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"Encore.ImageView"]; }) : nil;
+    if (!art) return;
+    UIImageView *mine = (UIImageView *)[art viewWithTag:kAvatarTag];
+    BOOL isCard = sCardAvatar && sCardTitle.length && [row.accessibilityLabel containsString:sCardTitle];
+    if (!isCard) {
+        [mine removeFromSuperview];
+        return;
     }
-    // The row's image view waits at alpha 0 for a picture Spotify never loads for the card; it is shown with the picture.
-    image.alpha = 1;
-    image.hidden = NO;
-    UIView *placeholder = descendant(art, ^BOOL(UIView *view) { return [NSStringFromClass(view.class) containsString:@"PlaceholderView"]; });
-    placeholder.hidden = YES;
+    UIImageView *inner = (UIImageView *)descendant(art, ^BOOL(UIView *view) { return [view isMemberOfClass:UIImageView.class] && view.tag != kAvatarTag; });
+    if (!mine) {
+        mine = [[UIImageView alloc] init];
+        mine.tag = kAvatarTag;
+        mine.contentMode = UIViewContentModeScaleAspectFill;
+        mine.clipsToBounds = YES;
+        mine.userInteractionEnabled = NO;
+        mine.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [art addSubview:mine];
+        SGLog(@"queue: card avatar put in the row (art alpha %.2f, hidden %d, image alpha %.2f)", art.alpha, art.hidden, inner.alpha);
+    }
+    mine.frame = art.bounds;
+    mine.layer.cornerRadius = art.layer.cornerRadius > 0 ? art.layer.cornerRadius : inner.layer.cornerRadius;
+    mine.image = sCardAvatar;
+    mine.alpha = 1;
+    mine.hidden = NO;
+    art.alpha = 1;
+    art.hidden = NO;
+    [art bringSubviewToFront:mine];
+}
+
+// The avatar is drawn now and again as the row settles: selecting, highlighting and reloading it all redo Spotify's own.
+static void drawCardAvatarSoon(UITableViewCell *cell) {
+    drawCardAvatar(cell);
+    __weak UITableViewCell *weakCell = cell;
+    for (NSNumber *delay in @[@0.05, @0.3, @0.8]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UITableViewCell *strongCell = weakCell;
+            if (strongCell) drawCardAvatar(strongCell);
+        });
+    }
 }
 
 // The tracks the DJ has to come in the state's future, each "Up next" card as its own row before its track: they end
@@ -538,6 +569,14 @@ static BOOL sReloadQueued;
         if (cell) drawCardAvatar(cell);
     });
 }
+- (void)setSelected:(BOOL)selected animated:(BOOL)animated {
+    %orig;
+    drawCardAvatarSoon((UITableViewCell *)(id)self);
+}
+- (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated {
+    %orig;
+    drawCardAvatarSoon((UITableViewCell *)(id)self);
+}
 %end
 
 // What a context the app gives the core holds: its pages, the tracks on each and where the next one is. The DJ's
@@ -673,6 +712,10 @@ static void logPage(NSString *where, id page) {
     SGLog(@"queue command: skip to %@ [%@]", track.trackTitle, track.provider);
     return %orig;
 }
+- (id)skipToNextTrackWithOptions:(id)options track:(SPTPlayerTrack *)track loggingParams:(id)params {
+    SGLog(@"queue command: skip to (with logging params) %@ [%@] %@", track.trackTitle, track.provider, SGURIString(track.URI));
+    return %orig;
+}
 %end
 
 // The DJ's tracks as they have played, in the session's order, whole, for the steps back the core has no track for.
@@ -766,7 +809,23 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
             SGLog(@"queue page: the card %@ has no track after it to skip to", track.UID);
             return;
         }
-        SGLog(@"queue page: skip to %@ [%@], from row %@ [%@]", SGURIString(target.URI), target.UID, SGURIString(track.URI), track.UID);
+        // The core steps to a track a few places ahead one skip at a time, which takes seconds (about 1.5 s before the
+        // first step, then each track's start); a tap on the same row meanwhile asks again and starts that wait over.
+        static NSString *sSkipTargetUID;
+        static NSDate *sSkipAsked;
+        if ([target.UID isEqualToString:sSkipTargetUID] && sSkipAsked && -sSkipAsked.timeIntervalSinceNow < kSkipPendingSeconds &&
+            ![SGPlayerState().track.UID isEqualToString:target.UID]) {
+            SGLog(@"queue page: skip to %@ was asked %.1f s ago, the tap is left out", SGURIString(target.URI), -sSkipAsked.timeIntervalSinceNow);
+            return;
+        }
+        sSkipTargetUID = target.UID;
+        sSkipAsked = [NSDate date];
+        SGLog(@"queue page: skip to %@ [%@], from row %@ [%@], through %@", SGURIString(target.URI), target.UID, SGURIString(track.URI), track.UID,
+              [SGPlayer() class]);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            SPTPlayerTrack *now = SGPlayerState().track;
+            SGLog(@"queue page: 4 s after the skip to %@ the player is on %@ [%@]", SGURIString(target.URI), SGURIString(now.URI), now.UID);
+        });
         // The skip changes the queue, and the page reloads its table for it: it is made once this tap has returned,
         // not inside the table's own selection.
         dispatch_async(dispatch_get_main_queue(), ^{
