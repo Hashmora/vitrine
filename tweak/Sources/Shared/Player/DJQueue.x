@@ -1492,12 +1492,21 @@ static void logSelectors(NSString *name) {
 }
 
 // The DJ's "Up next" card is not moved by hand: it goes with its track and is only there while the voice is to play.
+// Only that row says no. Every other row is movable as the page has it: the data source is a diffable one that may not
+// answer for itself, and its answer must not take the handle away from the tracks.
 static BOOL (*sOrigCanMove)(id, SEL, UITableView *, NSIndexPath *);
 static BOOL canMoveRow(id self, SEL _cmd, UITableView *table, NSIndexPath *path) {
     NSInteger place = placeOf(table, path);
     SPTPlayerTrack *row = place >= 0 && place < (NSInteger)sQueue.count ? sQueue[place] : nil;
-    if (row && isCardRow(row) && indexIn(sInjected, row) != NSNotFound) return NO;
-    return sOrigCanMove ? sOrigCanMove(self, _cmd, table, path) : YES;
+    BOOL card = row && isCardRow(row) && indexIn(sInjected, row) != NSNotFound;
+    static int logged;
+    if (logged < 30) {
+        logged++;
+        SGLog(@"[DEBUG-dj] canMoveRow section %ld row %ld, place %ld of %lu, card: %d, the page's own answer: %@", (long)path.section,
+              (long)path.row, (long)place, (unsigned long)sQueue.count, (int)card,
+              sOrigCanMove ? (sOrigCanMove(self, _cmd, table, path) ? @"yes" : @"no") : @"none");
+    }
+    return !card;
 }
 
 %ctor {
