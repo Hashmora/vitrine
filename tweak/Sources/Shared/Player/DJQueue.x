@@ -98,6 +98,8 @@ static NSString *const kCardSuffix = @"-card";
 // after the card has gone (the voice has started), so the row's content does not change under the table.
 static NSMutableSet<NSString *> *sCarded;
 static NSMutableSet<NSString *> *sLoggedCards;
+// The player's own card track by uid, kept so the card's row can stay while its voice plays.
+static NSMutableDictionary<NSString *, SPTPlayerTrack *> *sCardTracks;
 
 static SPTPlayerTrack *originalOf(SPTPlayerTrack *row) {
     return [sOriginals objectForKey:row] ?: row;
@@ -237,27 +239,15 @@ static UIImage *sCardAvatar;
 static NSString *sCardAvatarURL, *sCardTitle;
 static NSHashTable<UITableViewCell *> *sQueueCells;
 
-static NSString *avatarFile(NSString *url) {
-    NSString *dir = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
-    return [dir stringByAppendingPathComponent:[@"sg-dj-" stringByAppendingString:url.lastPathComponent]];
-}
-
 static void loadCardAvatar(NSString *url) {
     if (!url.length || [url isEqualToString:sCardAvatarURL]) return;
     sCardAvatarURL = url;
-    UIImage *kept = [UIImage imageWithContentsOfFile:avatarFile(url)];
-    if (kept) {
-        sCardAvatar = kept;
-        SGLog(@"queue: card avatar %@: from the disk", url);
-        return;
-    }
     NSURL *address = [NSURL URLWithString:url];
     if (!address) return;
     [[[NSURLSession sharedSession] dataTaskWithURL:address completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         UIImage *image = data.length ? [UIImage imageWithData:data] : nil;
         SGLog(@"queue: card avatar %@: %@", url, image ? @"loaded" : (error.localizedDescription ?: @"no image"));
         if (!image) return;
-        [data writeToFile:avatarFile(url) atomically:YES];
         dispatch_async(dispatch_get_main_queue(), ^{
             sCardAvatar = image;
             for (UITableViewCell *cell in sQueueCells.allObjects) [cell setNeedsLayout];
@@ -373,6 +363,8 @@ static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
                 SGLog(@"queue: card %@ [%@] metadata: %@", SGURIString(track.URI), track.UID, describeMeta(track.metadata));
                 SGLog(@"queue: its track %@ [%@] metadata: %@", SGURIString(future[i + 1].URI), future[i + 1].UID, describeMeta(future[i + 1].metadata));
             }
+            if (!sCardTracks) sCardTracks = [NSMutableDictionary dictionary];
+            sCardTracks[track.UID] = track;
             card = track;
             sCardTitle = track.metadata[@"title"];
             loadCardAvatar(track.metadata[@"image_url"]);
@@ -530,6 +522,7 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
         [sSkipped removeAllObjects];
         [sCarded removeAllObjects];
         [sLoggedCards removeAllObjects];
+        [sCardTracks removeAllObjects];
     }
     if ([state.contextURI isEqual:sAheadContext]) {
         if (!future.count) {
@@ -550,6 +543,12 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     // What the page shows of them: not the ones it removed, nor the ones queued by hand.
     NSMutableArray<SPTPlayerTrack *> *shown = [NSMutableArray array];
     for (SPTPlayerTrack *track in ahead) if (!isHidden(track)) [shown addObject:track];
+    // While the card's voice plays the core has taken the card out of its list: the card's row stays in ours until the
+    // voice is over, so it (and its avatar) does not go away on a tap on it.
+    SPTPlayerTrack *voiceCard = [SGURIString(state.track.URI) hasPrefix:@"spotify:media:"] ? sCardTracks[state.track.UID] : nil;
+    if (voiceCard && shown.count && [shown.firstObject.UID isEqualToString:voiceCard.UID] && isDJTrack(shown.firstObject)) {
+        [shown insertObject:cardRow(voiceCard) atIndex:0];
+    }
 
     // The hand-queued tracks, the DJ's, then whatever else the queue had.
     NSMutableArray<SPTPlayerTrack *> *queued = [NSMutableArray array], *rest = [NSMutableArray array], *injected = [NSMutableArray array];
