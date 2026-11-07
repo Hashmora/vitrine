@@ -27,6 +27,10 @@
 // hidden so it shows once. The DJ's tracks are left out of the queue the core is given. Every command the page gives
 // for the queue is logged (a drag in the DJ's segment is only logged: the core's order is not the page's to change).
 //
+// The order the user gave the DJ's rows (a drag on the page) is kept here (sOrder), over a copy of the rows the DJ has sent
+// (sKept: the core's own future forgets the tracks it has been moved past). The page shows that order, and the player is
+// held to it: when the core comes to a DJ track that is not the first of ours, it is skipped to the first of ours.
+// A tap on a row passes the DJ's rows before it (they are hidden). The row of the "Up next" card has no swipe actions.
 // The page takes a tap on one of the tracks for a row of the core's queue, which it is not, and gives no command; it
 // is skipped to as the player's here.
 #import <objc/runtime.h>
@@ -427,6 +431,142 @@ static void hideTrack(SPTPlayerTrack *track, NSString *why) {
     SGLog(@"queue: %@ is hidden from the DJ's rows (%@) [%@]", track.trackTitle, why, track.UID);
 }
 
+#pragma mark - the order the user gave the DJ's rows
+
+// The DJ's tracks as they have played, in the session's order, whole, for the steps back the core has no track for.
+static NSMutableArray<SPTPlayerTrack *> *sPlayed;
+// Whether the user has arranged the DJ's rows, the uids (base) of the groups (a card and its track, or a track) in
+// their order, the rows of each as the DJ sent them, and a number that changes with the order, for the list's cache.
+static BOOL sOrdered;
+static NSMutableArray<NSString *> *sOrder;
+static NSMutableDictionary<NSString *, NSArray<SPTPlayerTrack *> *> *sKept;
+static NSUInteger sOrderVersion;
+
+static BOOL isCardRow(SPTPlayerTrack *row) {
+    return [SGURIString(row.URI) hasPrefix:@"spotify:media:"];
+}
+
+static BOOL wasPlayed(NSString *uid) {
+    for (SPTPlayerTrack *played in sPlayed) if ([baseUID(played.UID) isEqualToString:uid]) return YES;
+    return NO;
+}
+
+static NSInteger placeOf(UITableView *table, NSIndexPath *path) {
+    NSInteger place = path.row;
+    for (NSInteger section = 0; section < path.section; section++) place += [table numberOfRowsInSection:section];
+    return place;
+}
+
+static void forgetOrder(void) {
+    sOrdered = NO;
+    [sOrder removeAllObjects];
+    [sKept removeAllObjects];
+    sOrderVersion++;
+}
+
+// The DJ's rows in the user's order: the groups the core still names and the ones kept from before, without the ones
+// that have played, are hidden or are playing now; what the core names that is new goes at the end.
+static NSMutableArray<SPTPlayerTrack *> *arrangedRows(NSArray<SPTPlayerTrack *> *shown, SPTPlayerState *state) {
+    if (!sKept) sKept = [NSMutableDictionary dictionary];
+    NSString *current = inDJ(state.track) ? baseUID(state.track.UID) : nil;
+    NSMutableArray<NSString *> *seen = [NSMutableArray array];
+    NSMutableDictionary<NSString *, NSMutableArray<SPTPlayerTrack *> *> *fresh = [NSMutableDictionary dictionary];
+    for (SPTPlayerTrack *row in shown) {
+        NSString *uid = baseUID(row.UID);
+        if (!uid.length) continue;
+        if (!fresh[uid]) { fresh[uid] = [NSMutableArray array]; [seen addObject:uid]; }
+        [fresh[uid] addObject:row];
+    }
+    for (NSString *uid in seen) {
+        if (wasPlayed(uid) || [uid isEqualToString:current]) continue;
+        sKept[uid] = fresh[uid];
+    }
+    NSMutableArray<NSString *> *order = [NSMutableArray array];
+    for (NSString *uid in sOrder) if (sKept[uid] && ![order containsObject:uid]) [order addObject:uid];
+    for (NSString *uid in seen) if (sKept[uid] && ![order containsObject:uid]) [order addObject:uid];
+    for (NSString *uid in [sKept.allKeys copy]) {
+        if (wasPlayed(uid) || [sHidden containsObject:uid] || [uid isEqualToString:current]) {
+            [sKept removeObjectForKey:uid];
+            [order removeObject:uid];
+        }
+    }
+    sOrder = order;
+    NSMutableArray<SPTPlayerTrack *> *out = [NSMutableArray array];
+    for (NSString *uid in order) [out addObjectsFromArray:sKept[uid]];
+    return out;
+}
+
+// A drag on the page: the row at `from` of the list it shows is now at `to`. A card is moved with its track, and a
+// track with its card. Only the DJ's rows are arranged; NO when the drag was not one.
+static BOOL arrangeByDrag(NSArray<SPTPlayerTrack *> *list, NSInteger from, NSInteger to) {
+    NSInteger count = (NSInteger)list.count;
+    if (from < 0 || to < 0 || from >= count || to >= count || from == to) return NO;
+    SPTPlayerTrack *moved = list[from];
+    if (indexIn(sInjected, moved) == NSNotFound) return NO;
+    NSMutableArray<SPTPlayerTrack *> *after = [list mutableCopy];
+    [after removeObjectAtIndex:from];
+    [after insertObject:moved atIndex:to];
+    NSString *group = baseUID(moved.UID);
+    NSString *before = nil;
+    for (NSInteger i = to + 1; i < (NSInteger)after.count && !before; i++) {
+        if (indexIn(sInjected, after[i]) == NSNotFound) continue;
+        NSString *uid = baseUID(after[i].UID);
+        if (![uid isEqualToString:group]) before = uid;
+    }
+    NSMutableArray<NSString *> *order = [NSMutableArray array];
+    for (SPTPlayerTrack *row in list) {
+        if (indexIn(sInjected, row) == NSNotFound) continue;
+        NSString *uid = baseUID(row.UID);
+        if (![uid isEqualToString:group] && ![order containsObject:uid]) [order addObject:uid];
+    }
+    NSUInteger at = before ? [order indexOfObject:before] : order.count;
+    [order insertObject:group atIndex:at];
+    sOrder = order;
+    sOrdered = YES;
+    sOrderVersion++;
+    SGLog(@"queue: the DJ's rows are arranged by the drag, %@ [%@] from %ld to %ld, now %lu groups", moved.trackTitle, moved.UID,
+          (long)from, (long)to, (unsigned long)order.count);
+    return YES;
+}
+
+// The first of the DJ's tracks in the user's order that has not played: the player's own track.
+static SPTPlayerTrack *wantedNext(void) {
+    for (NSString *uid in sOrder) {
+        if ([sHidden containsObject:uid] || wasPlayed(uid)) continue;
+        for (SPTPlayerTrack *row in sKept[uid]) if (!isCardRow(row) && isDJTrack(row)) return originalOf(row);
+    }
+    return nil;
+}
+
+// The core has come to a DJ track of its own order. If the user's order has another first, the player is skipped to it
+// (its card's voice is skipped on arrival, as for a tap). YES when that was asked, the track is not taken as played.
+static BOOL enforceOrder(SPTPlayerState *state) {
+    SPTPlayerTrack *current = state.track;
+    NSString *uid = baseUID(current.UID);
+    if (!sOrdered || !uid.length || !inDJ(current) || ![sOrder containsObject:uid]) return NO;
+    SPTPlayerTrack *want = wantedNext();
+    if (!want || [baseUID(want.UID) isEqualToString:uid]) return NO;
+    static NSString *lastKey;
+    static NSDate *lastAt;
+    NSString *key = [NSString stringWithFormat:@"%@>%@", uid, want.UID];
+    if ([key isEqualToString:lastKey] && lastAt && -lastAt.timeIntervalSinceNow < 3) return NO;
+    lastKey = key;
+    lastAt = [NSDate date];
+    if ([sCarded containsObject:want.UID]) {
+        sSkipVoiceUID = want.UID;
+        sSkipVoiceAsked = [NSDate date];
+    } else {
+        sSkipVoiceUID = nil;
+    }
+    SGLog(@"queue: the player came to %@ [%@], the user's order has %@ [%@] first, skipping to it", current.trackTitle, current.UID,
+          want.trackTitle, want.UID);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        id result = [(id<SPTPlayer>)queuePlayer() skipToNextTrackWithOptions:nil track:want];
+        SGLog(@"queue: skip to the user's first %@ asked, it answered %@", SGURIString(want.URI), result);
+    });
+    return YES;
+}
+
 // The readers are told the queue again, through the hooks, so the rows go at once and not at the core's next change.
 @protocol SGQueueReader <NSObject>
 - (void)player:(id)player queueDidChange:(id)queue;
@@ -462,6 +602,7 @@ static NSString *signatureOf(SPTPlayerState *state, NSArray<SPTPlayerTrack *> *n
     for (SPTPlayerTrack *t in next) [sig appendFormat:@"%@/%@/%@;", SGURIString(t.URI), t.UID, t.provider];
     [sig appendString:@"|"];
     for (NSString *uid in [sHidden.allObjects sortedArrayUsingSelector:@selector(compare:)]) [sig appendFormat:@"%@,", uid];
+    [sig appendFormat:@"|o%lu", (unsigned long)sOrderVersion];
     return sig;
 }
 
@@ -523,6 +664,7 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
         [sCarded removeAllObjects];
         [sLoggedCards removeAllObjects];
         [sCardTracks removeAllObjects];
+        forgetOrder();
     }
     if ([state.contextURI isEqual:sAheadContext]) {
         if (!future.count) {
@@ -543,6 +685,7 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     // What the page shows of them: not the ones it removed, nor the ones queued by hand.
     NSMutableArray<SPTPlayerTrack *> *shown = [NSMutableArray array];
     for (SPTPlayerTrack *track in ahead) if (!isHidden(track)) [shown addObject:track];
+    if (sOrdered) shown = arrangedRows(shown, state);
     // The hand-queued tracks, the DJ's, then whatever else the queue had.
     NSMutableArray<SPTPlayerTrack *> *queued = [NSMutableArray array], *rest = [NSMutableArray array], *injected = [NSMutableArray array];
     for (SPTPlayerTrack *track in next) {
@@ -800,7 +943,12 @@ static void logRestriction(NSString *what, BOOL answer) {
 - (void)tableView:(UITableView *)tableView moveRowAtIndexPath:(NSIndexPath *)from toIndexPath:(NSIndexPath *)to {
     SGLog(@"queue page: drag section %ld row %ld to section %ld row %ld (%lu rows shown)", (long)from.section, (long)from.row,
           (long)to.section, (long)to.row, (unsigned long)sQueue.count);
+    NSArray<SPTPlayerTrack *> *list = [sQueue copy];
     %orig;
+    BOOL arranged = arrangeByDrag(list, placeOf(tableView, from), placeOf(tableView, to));
+    if (!arranged) SGLog(@"queue page: the drag moved no DJ row, the page's rows are given again");
+    // Once the drop is over, the page is given the list again: ours, or the one it had if the drag was not ours.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ refreshReaders(); });
 }
 %end
 
@@ -820,7 +968,6 @@ static void logRestriction(NSString *what, BOOL answer) {
 %end
 
 // The DJ's tracks as they have played, in the session's order, whole, for the steps back the core has no track for.
-static NSMutableArray<SPTPlayerTrack *> *sPlayed;
 static id sPlayedContext;
 // Set once the core did not move to a track it was asked to skip back to; no more asks in that session.
 static BOOL sJumpRefused;
@@ -860,6 +1007,8 @@ static BOOL sJumpRefused;
             return;
         }
     }
+    // The core has come to a DJ track of its own order that the user's order does not have first.
+    if (enforceOrder(state)) return;
     if (!isDJTrack(track) || !inDJ(track) || !track.UID.length) return;
     for (SPTPlayerTrack *played in sPlayed) if ([played.UID isEqualToString:track.UID]) return;
     [sPlayed addObject:track];
@@ -902,6 +1051,35 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
 // The table's rows are the queue's tracks in order, over its sections (the hand-queued ones, the DJ's, an empty
 // one), so a row's place in the table is its track's in the queue.
 %hook _TtC14Queue_ViewImpl19QueueViewController
+// The page's swipe actions on a row (add to queue, remove) are one horizontal pan. The row of the DJ's "Up next" card
+// has none: the pan is cancelled when it begins on that row.
+- (void)onSwipePanGestureWithGesture:(UIPanGestureRecognizer *)gesture {
+    static BOOL blocked;
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        blocked = NO;
+        UIView *view = gesture.view;
+        UITableView *table = [view isKindOfClass:UITableView.class] ? (UITableView *)view
+            : (UITableView *)descendant(view, ^BOOL(UIView *candidate) { return [candidate isKindOfClass:UITableView.class]; });
+        NSIndexPath *path = table ? [table indexPathForRowAtPoint:[gesture locationInView:table]] : nil;
+        if (path) {
+            NSInteger place = placeOf(table, path);
+            SPTPlayerTrack *row = place < (NSInteger)sQueue.count ? sQueue[place] : nil;
+            blocked = row && isCardRow(row) && indexIn(sInjected, row) != NSNotFound;
+        }
+        if (blocked) {
+            SGLog(@"queue page: swipe on the card's row is cancelled");
+            gesture.enabled = NO;
+            gesture.enabled = YES;
+            return;
+        }
+    }
+    if (blocked) {
+        if (gesture.state == UIGestureRecognizerStateEnded || gesture.state == UIGestureRecognizerStateCancelled ||
+            gesture.state == UIGestureRecognizerStateFailed) blocked = NO;
+        return;
+    }
+    %orig;
+}
 - (void)tableView:(UITableView *)tableView didEndReorderingRowAtIndexPath:(NSIndexPath *)indexPath {
     SGLog(@"queue page: reordering ended on section %ld row %ld", (long)indexPath.section, (long)indexPath.row);
     %orig;
@@ -922,6 +1100,16 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
             row = introduced && [originalOf(introduced).UID isEqualToString:originalOf(track).UID] ? introduced : nil;
         }
         SPTPlayerTrack *target = row ? originalOf(row) : nil;
+        if (target && sOrdered) {
+            // A tap passes the rows before it: they are not played any more, whichever order the core has them in.
+            NSString *tapped = baseUID(target.UID);
+            for (NSInteger i = 0; i < place; i++) {
+                SPTPlayerTrack *before = sQueue[i];
+                if (indexIn(sInjected, before) == NSNotFound) continue;
+                NSString *uid = baseUID(before.UID);
+                if (![uid isEqualToString:tapped] && ![sHidden containsObject:uid]) hideTrack(before, @"passed by a tap");
+            }
+        }
         if (!target) {
             SGLog(@"queue page: the card %@ has no track after it to skip to", track.UID);
             return;
