@@ -1051,9 +1051,12 @@ static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
         if (x > 0) {
             SPTPlayerTrack *own = originalOf(row);
             id wrapper = sWrapper;
-            if (!wrapper) wrapper = [[NSClassFromString(@"SPTPlayerQueueWrapperImpl") alloc] initWithPlayer:queuePlayer()];
+            if (!wrapper) {
+                id fresh = [NSClassFromString(@"SPTPlayerQueueWrapperImpl") alloc];
+                wrapper = ((id (*)(id, SEL, id))objc_msgSend)(fresh, NSSelectorFromString(@"initWithPlayer:"), queuePlayer());
+            }
             SGLog(@"queue page: swipe adds %@ [%@] to the queue, the DJ's row stays (wrapper %@)", row.trackTitle, own.UID, [wrapper class]);
-            id result = [wrapper respondsToSelector:@selector(queueTrack:)] ? ((id (*)(id, SEL, id))objc_msgSend)(wrapper, @selector(queueTrack:), own) : nil;
+            id result = [wrapper respondsToSelector:NSSelectorFromString(@"queueTrack:")] ? ((id (*)(id, SEL, id))objc_msgSend)(wrapper, NSSelectorFromString(@"queueTrack:"), own) : nil;
             SGLog(@"queue page: the swipe's queue answered %@", result);
         } else {
             hideTrack(row, @"removed by a swipe");
