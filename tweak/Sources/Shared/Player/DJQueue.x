@@ -446,6 +446,9 @@ static NSUInteger sOrderVersion;
 // The uids of DJ tracks the core came to that the user's order did not have first: they were skipped away from, not
 // played, so they stay in the order (the core's own future has forgotten them).
 static NSMutableSet<NSString *> *sBounced;
+static NSDate *sNativeQueueAt;
+static __weak id sWrapper;
+static SPTPlayerTrack *sSwipeRow;
 
 static BOOL isCardRow(SPTPlayerTrack *row) {
     return [SGURIString(row.URI) hasPrefix:@"spotify:media:"];
@@ -554,14 +557,44 @@ static BOOL behindCore(SPTPlayerTrack *target) {
     return NO;
 }
 
-static id skipToDJTrack(SPTPlayerTrack *target) {
+static NSString *trackKey(SPTPlayerTrack *track) {
+    return [NSString stringWithFormat:@"%@|%@", SGURIString(track.URI), track.UID];
+}
+
+static id stepBackTo(SPTPlayerTrack *target) {
     id player = queuePlayer();
     SEL back = NSSelectorFromString(@"skipToPreviousTrackWithOptions:track:loggingParams:");
-    if (behindCore(target) && [player respondsToSelector:back]) {
+    if (![player respondsToSelector:back]) return nil;
+    return ((id (*)(id, SEL, id, id, id))objc_msgSend)(player, back, nil, target, nil);
+}
+
+// The core decides by its own order whether a track is behind it, and its reverse list does not always have the
+// ones it went over (a DJ card and its track skipped by a tap), so the direction is checked: when the player has not
+// moved a moment after the skip, the other direction is asked once.
+static void watchSkip(SPTPlayerTrack *target, NSString *was, BOOL wentBack) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSString *now = trackKey(SGPlayerState().track);
+        if (![now isEqualToString:was]) return;
+        SGLog(@"queue: the player did not move to %@ [%@], %@ instead", target.trackTitle, target.UID, wentBack ? @"a skip forward" : @"a step back");
+        if (wentBack) [(id<SPTPlayer>)queuePlayer() skipToNextTrackWithOptions:nil track:target];
+        else stepBackTo(target);
+    });
+}
+
+static id skipToDJTrack(SPTPlayerTrack *target) {
+    id player = queuePlayer();
+    BOOL behind = behindCore(target);
+    NSString *was = trackKey(SGPlayerState().track);
+    id result;
+    if (behind && [player respondsToSelector:NSSelectorFromString(@"skipToPreviousTrackWithOptions:track:loggingParams:")]) {
         SGLog(@"queue: %@ [%@] is behind the core's current track, a step back to it", target.trackTitle, target.UID);
-        return ((id (*)(id, SEL, id, id, id))objc_msgSend)(player, back, nil, target, nil);
+        result = stepBackTo(target);
+    } else {
+        behind = NO;
+        result = [(id<SPTPlayer>)player skipToNextTrackWithOptions:nil track:target];
     }
-    return [(id<SPTPlayer>)player skipToNextTrackWithOptions:nil track:target];
+    watchSkip(target, was, behind);
+    return result;
 }
 
 // The core has come to a DJ track of its own order. If the user's order has another first, the player is skipped to it
@@ -595,6 +628,16 @@ static BOOL enforceOrder(SPTPlayerState *state) {
     return YES;
 }
 
+// The DJ track that played right after `current`, when the player has been taken back over played tracks; nil at the
+// newest one.
+static SPTPlayerTrack *playedAfter(SPTPlayerTrack *current) {
+    NSString *uid = baseUID(current.UID);
+    for (NSUInteger i = 0; i + 1 < sPlayed.count; i++) {
+        if ([baseUID(sPlayed[i].UID) isEqualToString:uid]) return originalOf(sPlayed[i + 1]);
+    }
+    return nil;
+}
+
 // The next button while the user's order is on: the core would go to its own next DJ track, which would sound for a
 // moment before enforceOrder skips away from it. The skip is asked for the user's first track at once instead, so the
 // tracks passed over are never played and stay in the order. nil when the core's next is to be left alone.
@@ -602,7 +645,10 @@ static SPTPlayerTrack *redirectedNext(void) {
     SPTPlayerState *state = SGPlayerState();
     SPTPlayerTrack *current = state.track;
     if (!sOrdered || !current || !inDJ(current) || [SGURIString(current.URI) hasPrefix:@"spotify:media:"]) return nil;
-    SPTPlayerTrack *want = wantedNext();
+    // Gone back over tracks that have played, the next one is the one that played after this, not the user's first
+    // new track: the new part of the order is reached once the played ones are.
+    SPTPlayerTrack *replay = playedAfter(current);
+    SPTPlayerTrack *want = replay ?: wantedNext();
     if (!want || [baseUID(want.UID) isEqualToString:baseUID(current.UID)]) return nil;
     if ([sCarded containsObject:want.UID]) {
         sSkipVoiceUID = want.UID;
@@ -610,8 +656,8 @@ static SPTPlayerTrack *redirectedNext(void) {
     } else {
         sSkipVoiceUID = nil;
     }
-    SGLog(@"queue: next pressed on %@, the user's order has %@ [%@] first, skipping to it at once", current.trackTitle,
-          want.trackTitle, want.UID);
+    SGLog(@"queue: next pressed on %@, %@ %@ [%@], skipping to it at once", current.trackTitle,
+          replay ? @"it played before" : @"the user's order has", want.trackTitle, want.UID);
     return want;
 }
 
@@ -924,6 +970,7 @@ static void logPage(NSString *where, id page) {
     %orig;
 }
 - (void)setQueue:(id)request onResponse:(id)onResponse {
+    sNativeQueueAt = [NSDate date];
     NSMutableArray *tracks = [request valueForKey:@"nextTracksArray"];
     NSMutableArray *djs = [NSMutableArray array];
     NSMutableSet<NSString *> *sent = [NSMutableSet set];
@@ -979,9 +1026,35 @@ static void logRestriction(NSString *what, BOOL answer) {
 - (BOOL)disallowSetQueue { BOOL answer = %orig; logRestriction(@"set queue", answer); return answer; }
 %end
 
+// When the page last gave the core a queue command of its own, and the page's queue wrapper: a swipe on a DJ row that
+// the page did not act on is done here (the page's swipe does nothing for those rows).
+
+static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
+    NSDate *at = [NSDate date];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (sNativeQueueAt && [sNativeQueueAt timeIntervalSinceDate:at] >= 0) {
+            SGLog(@"queue page: the page acted on the swipe of %@ itself", row.trackTitle);
+            return;
+        }
+        if (x > 0) {
+            SPTPlayerTrack *own = originalOf(row);
+            id wrapper = sWrapper;
+            if (!wrapper) wrapper = [[NSClassFromString(@"SPTPlayerQueueWrapperImpl") alloc] initWithPlayer:queuePlayer()];
+            SGLog(@"queue page: swipe adds %@ [%@] to the queue, the DJ's row stays (wrapper %@)", row.trackTitle, own.UID, [wrapper class]);
+            id result = [wrapper respondsToSelector:@selector(queueTrack:)] ? ((id (*)(id, SEL, id))objc_msgSend)(wrapper, @selector(queueTrack:), own) : nil;
+            SGLog(@"queue page: the swipe's queue answered %@", result);
+        } else {
+            hideTrack(row, @"removed by a swipe");
+            refreshReaders();
+        }
+    });
+}
+
 // The page's own queue commands before they reach the client: what its swipe actions and its drag call.
 %hook SPTPlayerQueueWrapperImpl
 - (id)queueTrackInternal:(SPTPlayerTrack *)track options:(id)options loggingParams:(id)params {
+    sWrapper = self;
+    sNativeQueueAt = [NSDate date];
     SGLog(@"queue page: queue track %@ [%@] %@", track.trackTitle, track.UID, SGURIString(track.URI));
     if (track && indexIn(sInjected, track) != NSNotFound && !isCardRow(track)) {
         // A DJ row: its copy is not the core's track. The core queues the player's own, as one more track among the
@@ -993,10 +1066,12 @@ static void logRestriction(NSString *what, BOOL answer) {
     return %orig;
 }
 - (id)queueTracksInternal:(NSArray<SPTPlayerTrack *> *)tracks options:(id)options loggingParams:(id)params {
+    sNativeQueueAt = [NSDate date];
     SGLog(@"queue page: queue %lu tracks, first %@", (unsigned long)tracks.count, SGURIString(tracks.firstObject.URI));
     return %orig;
 }
 - (id)queueTrackPlayNext:(SPTPlayerTrack *)track {
+    sNativeQueueAt = [NSDate date];
     SGLog(@"queue page: play next %@ [%@] %@", track.trackTitle, track.UID, SGURIString(track.URI));
     return %orig;
 }
@@ -1035,11 +1110,16 @@ static void logRestriction(NSString *what, BOOL answer) {
                 SGLog(@"queue: 2 s after the next to %@ the player is on %@ [%@]%@", want.trackTitle, now.trackTitle, now.UID,
                       [now.UID isEqualToString:was] ? @", it did not move" : @"");
             });
+            NSString *startedOn = trackKey(SGPlayerState().track);
             if (behindCore(want)) {
                 SGLog(@"queue: %@ is behind the core's current track, a step back to it", want.trackTitle);
-                return ((id (*)(id, SEL, id, id, id))objc_msgSend)(self, @selector(skipToPreviousTrackWithOptions:track:loggingParams:), options, want, params);
+                id result = ((id (*)(id, SEL, id, id, id))objc_msgSend)(self, @selector(skipToPreviousTrackWithOptions:track:loggingParams:), options, want, params);
+                watchSkip(want, startedOn, YES);
+                return result;
             }
-            return %orig(options, want, params);
+            id result = %orig(options, want, params);
+            watchSkip(want, startedOn, NO);
+            return result;
         }
     }
     return %orig;
@@ -1144,6 +1224,9 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
             NSInteger place = placeOf(table, path);
             SPTPlayerTrack *row = place < (NSInteger)sQueue.count ? sQueue[place] : nil;
             blocked = row && isCardRow(row) && indexIn(sInjected, row) != NSNotFound;
+            sSwipeRow = row && !blocked && indexIn(sInjected, row) != NSNotFound ? row : nil;
+        } else {
+            sSwipeRow = nil;
         }
         if (path) SGLog(@"queue page: swipe begins on section %ld row %ld, place %ld, the DJ's row: %d", (long)path.section, (long)path.row,
                         (long)placeOf(table, path), (int)(placeOf(table, path) < (NSInteger)sQueue.count && indexIn(sInjected, sQueue[placeOf(table, path)]) != NSNotFound));
@@ -1154,7 +1237,12 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
             return;
         }
     }
-    if (gesture.state == UIGestureRecognizerStateEnded) SGLog(@"queue page: swipe ends at %.0f", [gesture translationInView:gesture.view].x);
+    if (gesture.state == UIGestureRecognizerStateEnded) {
+        CGFloat x = [gesture translationInView:gesture.view].x;
+        SGLog(@"queue page: swipe ends at %.0f", x);
+        if (sSwipeRow && fabs(x) >= 110) swipeDJRow(sSwipeRow, x);
+        sSwipeRow = nil;
+    }
     if (blocked) {
         if (gesture.state == UIGestureRecognizerStateEnded || gesture.state == UIGestureRecognizerStateCancelled ||
             gesture.state == UIGestureRecognizerStateFailed) blocked = NO;
