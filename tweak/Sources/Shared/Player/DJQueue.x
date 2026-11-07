@@ -297,8 +297,7 @@ static CGFloat otherRowsRadius(void) {
     return 0;
 }
 
-static void drawCardAvatar(UITableViewCell *cell) {
-    UIView *row = descendant(cell.contentView, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Cell"] || [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Header"]; });
+static void drawAvatarInRow(UIView *row) {
     UIView *art = row ? descendant(row, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"Encore.ImageView"]; }) : nil;
     if (!art) return;
     UIImageView *mine = (UIImageView *)[art viewWithTag:kAvatarTag];
@@ -328,6 +327,18 @@ static void drawCardAvatar(UITableViewCell *cell) {
     art.alpha = 1;
     art.hidden = NO;
     [art bringSubviewToFront:mine];
+}
+
+static void drawCardAvatar(UITableViewCell *cell) {
+    UIView *row = descendant(cell.contentView, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Cell"] || [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Header"]; });
+    if (row) drawAvatarInRow(row);
+}
+
+// The "Now playing" row above the table is not a cell: while the DJ's voice plays it is the card, and it has the
+// placeholder where the avatar goes. It is found in the page's view and drawn the same.
+static void drawHeaderAvatar(UIView *page) {
+    UIView *row = descendant(page, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Header"]; });
+    if (row) drawAvatarInRow(row);
 }
 
 // The avatar is drawn now and again as the row settles: selecting, highlighting and reloading it all redo Spotify's own.
@@ -446,6 +457,7 @@ static NSUInteger sOrderVersion;
 // The uids of DJ tracks the core came to that the user's order did not have first: they were skipped away from, not
 // played, so they stay in the order (the core's own future has forgotten them).
 static NSMutableSet<NSString *> *sBounced;
+static NSTimer *sHeaderTimer;
 static NSDate *sNativeQueueAt;
 static __weak id sWrapper;
 static SPTPlayerTrack *sSwipeRow;
@@ -1250,6 +1262,26 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
     }
     %orig;
 }
+- (void)viewDidLayoutSubviews {
+    %orig;
+    drawHeaderAvatar(((UIViewController *)(id)self).view);
+}
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    // The header's row is rebuilt without the page laying out, so it is looked at again while the page is on screen.
+    [sHeaderTimer invalidate];
+    __weak UIViewController *page = (UIViewController *)(id)self;
+    sHeaderTimer = [NSTimer scheduledTimerWithTimeInterval:0.4 repeats:YES block:^(NSTimer *timer) {
+        UIViewController *strong = page;
+        if (!strong) { [timer invalidate]; return; }
+        drawHeaderAvatar(strong.view);
+    }];
+}
+- (void)viewDidDisappear:(BOOL)animated {
+    %orig;
+    [sHeaderTimer invalidate];
+    sHeaderTimer = nil;
+}
 - (void)tableView:(UITableView *)tableView didEndReorderingRowAtIndexPath:(NSIndexPath *)indexPath {
     SGLog(@"queue page: reordering ended on section %ld row %ld", (long)indexPath.section, (long)indexPath.row);
     %orig;
@@ -1346,8 +1378,26 @@ static void logSelectors(NSString *name) {
     SGLog(@"queue: selectors of %@: %@", name, [found componentsJoinedByString:@" "]);
 }
 
+// The DJ's "Up next" card is not moved by hand: it goes with its track and is only there while the voice is to play.
+static BOOL (*sOrigCanMove)(id, SEL, UITableView *, NSIndexPath *);
+static BOOL canMoveRow(id self, SEL _cmd, UITableView *table, NSIndexPath *path) {
+    NSInteger place = placeOf(table, path);
+    SPTPlayerTrack *row = place >= 0 && place < (NSInteger)sQueue.count ? sQueue[place] : nil;
+    if (row && isCardRow(row) && indexIn(sInjected, row) != NSNotFound) return NO;
+    return sOrigCanMove ? sOrigCanMove(self, _cmd, table, path) : YES;
+}
+
 %ctor {
     %init;
+    {
+        Class source = NSClassFromString(@"_TtC14Queue_ViewImpl38QueueTableViewDataSourceImplementation");
+        SEL canMove = @selector(tableView:canMoveRowAtIndexPath:);
+        Method existing = source ? class_getInstanceMethod(source, canMove) : NULL;
+        if (source) {
+            sOrigCanMove = existing ? (BOOL (*)(id, SEL, UITableView *, NSIndexPath *))method_getImplementation(existing) : NULL;
+            class_replaceMethod(source, canMove, (IMP)canMoveRow, "c@:@@");
+        }
+    }
     SGLog(@"queue: DJ queue hooks are on");
     installExceptionLog();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
