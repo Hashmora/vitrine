@@ -540,7 +540,45 @@ static BOOL sReloadQueued;
 }
 %end
 
+// What a context the app gives the core holds: its pages, the tracks on each and where the next one is. The DJ's
+// session is handed over as pages (five tracks each); whether the app gives the core all of them or one is in the log.
+static void logContext(NSString *where, id context) {
+    if (![context respondsToSelector:@selector(pagesArray)]) return;
+    NSArray *pages = [context valueForKey:@"pagesArray"];
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (id page in pages) {
+        NSArray *tracks = [page valueForKey:@"tracksArray"];
+        NSString *next = [page valueForKey:@"nextPageURL"];
+        [parts addObject:[NSString stringWithFormat:@"%lu tracks, next %@", (unsigned long)tracks.count, next.length ? next : @"none"]];
+    }
+    SGLog(@"[DEBUG-dj] context via %@: %@ (%lu pages) %@", where, [context valueForKey:@"uri"], (unsigned long)pages.count,
+          [parts componentsJoinedByString:@" | "]);
+}
+
+static void logPage(NSString *where, id page) {
+    if (![page respondsToSelector:@selector(tracksArray)]) return;
+    NSString *next = [page valueForKey:@"nextPageURL"];
+    SGLog(@"[DEBUG-dj] context page via %@: %lu tracks, next %@", where, (unsigned long)[[page valueForKey:@"tracksArray"] count],
+          next.length ? next : @"none");
+}
+
 %hook ESPContextPlayerClientImpl
+- (void)preparePlay:(id)request onResponse:(id)onResponse {
+    logContext(@"preparePlay", [request valueForKey:@"context"]);
+    %orig;
+}
+- (void)play:(id)request onResponse:(id)onResponse {
+    logContext(@"play", [[request valueForKey:@"preparePlayRequest"] valueForKey:@"context"]);
+    %orig;
+}
+- (void)updateContext:(id)request onResponse:(id)onResponse {
+    logContext(@"updateContext", [request valueForKey:@"context"]);
+    %orig;
+}
+- (void)updateContextPage:(id)request onResponse:(id)onResponse {
+    logPage(@"updateContextPage", [request valueForKey:@"contextPage"]);
+    %orig;
+}
 // The state request the player's subscription makes of the core carries caps on the tracks before and after the current
 // one. The future's cap is raised before the request goes.
 - (void)getState:(id)request onResponse:(id)onResponse {
