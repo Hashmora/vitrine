@@ -1086,9 +1086,15 @@ static void logPlayerContext(NSString *where, id context) {
     id track = [request valueForKey:@"track"];
     SGLog(@"queue command: addToQueue %@", describeEsp(track));
     SPTPlayerTrack *dj = injectedNamed([track valueForKey:@"uri"], nil);
-    // A DJ row that is queued stays a row: the queued track is one more, in the hand-queued ones.
-    if (dj) SGLog(@"queue command: addToQueue: the DJ's row %@ stays", dj.trackTitle);
-    else SGLog(@"queue command: addToQueue: not one of the DJ's rows");
+    // A DJ row that is queued is moved, not copied: the queued track is the hand-queued one, and the DJ's own row of it
+    // is hidden, or the core plays the track twice (the queued one, then the DJ's, one after the other).
+    if (dj && !isCardRow(dj)) {
+        hideTrack(dj, @"queued by hand");
+        SGLog(@"queue command: addToQueue: the DJ's row %@ is moved to the hand-queued tracks", dj.trackTitle);
+        refreshReaders();
+    } else {
+        SGLog(@"queue command: addToQueue: not one of the DJ's rows");
+    }
     %orig;
 }
 - (void)setQueue:(id)request onResponse:(id)onResponse {
@@ -1165,7 +1171,7 @@ static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
                 id fresh = [NSClassFromString(@"SPTPlayerQueueWrapperImpl") alloc];
                 wrapper = ((id (*)(id, SEL, id))objc_msgSend)(fresh, NSSelectorFromString(@"initWithPlayer:"), queuePlayer());
             }
-            SGLog(@"queue page: swipe adds %@ [%@] to the queue, the DJ's row stays (wrapper %@)", row.trackTitle, own.UID, [wrapper class]);
+            SGLog(@"queue page: swipe adds %@ [%@] to the queue, the DJ's row moves to it (wrapper %@)", row.trackTitle, own.UID, [wrapper class]);
             id result = [wrapper respondsToSelector:NSSelectorFromString(@"queueTrack:")] ? ((id (*)(id, SEL, id))objc_msgSend)(wrapper, NSSelectorFromString(@"queueTrack:"), own) : nil;
             SGLog(@"queue page: the swipe's queue answered %@", result);
         } else {
@@ -1183,9 +1189,9 @@ static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
     SGLog(@"queue page: queue track %@ [%@] %@", track.trackTitle, track.UID, SGURIString(track.URI));
     if (track && indexIn(sInjected, track) != NSNotFound && !isCardRow(track)) {
         // A DJ row: its copy is not the core's track. The core queues the player's own, as one more track among the
-        // hand-queued ones before the DJ's. The DJ's row stays where it is, and so does the user's order.
+        // hand-queued ones before the DJ's. The DJ's row of it is hidden by the addToQueue that follows.
         SPTPlayerTrack *own = originalOf(track);
-        SGLog(@"queue page: queue track %@ given to the core as its own %@ [%@], the DJ's row stays", track.trackTitle, SGURIString(own.URI), own.UID);
+        SGLog(@"queue page: queue track %@ given to the core as its own %@ [%@], the DJ's row is hidden after", track.trackTitle, SGURIString(own.URI), own.UID);
         return %orig(own, options, params);
     }
     return %orig;
