@@ -937,43 +937,27 @@ static BOOL sReloadQueued;
 }
 %end
 
-// The row's own drag handle (its customReorderImageView) belongs at the right edge. On rows the page built late it
-// is left where it was made, over the cover; it is put back at the right, centred on the row.
+// The drag handle of a row is UIKit's UITableViewCellReorderControl, a view of the cell itself, 44 by 44, right of the
+// content (x = the content's width, centred on the row). On rows the page made late it stays at {0, 0}, over the
+// cover. It is put where the other rows have it.
 static void placeReorderHandle(UITableViewCell *cell) {
-    UIView *handle = nil;
-    @try { handle = [cell valueForKey:@"customReorderImageView"]; } @catch (NSException *e) { handle = nil; }
-    if (![handle isKindOfClass:UIView.class]) {
-        // Not found by its name: the small image views of the row are logged, to find it by what it is.
-        static int notFound;
-        if (notFound < 4) {
-            notFound++;
-            NSMutableArray<NSString *> *found = [NSMutableArray array];
-            NSMutableArray<UIView *> *todo = [NSMutableArray arrayWithObject:cell];
-            while (todo.count && found.count < 12) {
-                UIView *v = todo.firstObject;
-                [todo removeObjectAtIndex:0];
-                [todo addObjectsFromArray:v.subviews];
-                if ([v isKindOfClass:UIImageView.class] && v.bounds.size.width <= 60 && v != cell) {
-                    CGRect r = [v.superview convertRect:v.frame toView:cell];
-                    [found addObject:[NSString stringWithFormat:@"%@ x%.0f y%.0f w%.0f hidden %d", NSStringFromClass(v.class), r.origin.x, r.origin.y, r.size.width, (int)v.hidden]];
-                }
-            }
-            SGLog(@"[DEBUG-dj] reorder handle: customReorderImageView not found in a row %.0f wide; small images: %@", cell.bounds.size.width, [found componentsJoinedByString:@" | "]);
-        }
-        return;
+    UIView *control = nil;
+    for (UIView *view in cell.subviews) {
+        if ([NSStringFromClass(view.class) isEqualToString:@"UITableViewCellReorderControl"]) { control = view; break; }
     }
-    if (handle.hidden || handle.superview == nil) return;
-    CGRect in = [handle.superview convertRect:handle.frame toView:cell];
+    if (!control || control.hidden || cell.bounds.size.width < 100) return;
+    CGFloat width = cell.bounds.size.width, height = cell.bounds.size.height;
+    CGFloat content = cell.contentView.frame.size.width;
+    CGFloat x = (content > 0 && content < width) ? CGRectGetMaxX(cell.contentView.frame) : width - 60;
+    CGRect want = CGRectMake(x, (height - control.frame.size.height) / 2, control.frame.size.width, control.frame.size.height);
+    if (control.frame.origin.x >= width / 2 || control.frame.size.width <= 0) return;
     static int logged;
-    if (logged < 20) {
+    if (logged < 12) {
         logged++;
-        SGLog(@"[DEBUG-dj] reorder handle at x %.0f y %.0f w %.0f h %.0f in a row %.0f wide (in %@)", in.origin.x, in.origin.y, in.size.width,
-              in.size.height, cell.bounds.size.width, NSStringFromClass(handle.superview.class));
+        SGLog(@"[DEBUG-dj] reorder handle at x %.0f y %.0f in a row %.0f wide, put at x %.0f y %.0f", control.frame.origin.x,
+              control.frame.origin.y, width, want.origin.x, want.origin.y);
     }
-    if (CGRectGetMidX(in) >= cell.bounds.size.width / 2 || in.size.width <= 0) return;
-    CGFloat x = cell.bounds.size.width - in.size.width - 16;
-    CGPoint to = [cell convertPoint:CGPointMake(x + in.size.width / 2, CGRectGetMidY(in)) toView:handle.superview];
-    handle.center = to;
+    control.frame = want;
 }
 
 %hook _TtC14Queue_ViewImpl9QueueCell
@@ -989,7 +973,7 @@ static void placeReorderHandle(UITableViewCell *cell) {
     __weak UITableViewCell *weakSelf = cellSelf;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UITableViewCell *cell = weakSelf;
-        if (cell) drawCardAvatar(cell);
+        if (cell) { drawCardAvatar(cell); placeReorderHandle(cell); }
     });
 }
 - (void)setSelected:(BOOL)selected animated:(BOOL)animated {
