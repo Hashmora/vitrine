@@ -359,13 +359,19 @@ static void drawCardAvatarSoon(UITableViewCell *cell) {
 // The tracks the DJ has to come in the state's future, each "Up next" card as its own row before its track: they end
 // at the delimiter, after which the core puts the whole session again as hidden stand-ins, and a track the list has
 // already named is such a stand-in too.
+// A track the core made for the queue: its provider is "queue", or (as a DJ track queued by hand comes back, with the
+// context's provider) its uid starts with q, which a context's uids (hex) never do.
+static BOOL isCoreQueued(SPTPlayerTrack *track) {
+    return [track.provider isEqualToString:@"queue"] || [track.UID hasPrefix:@"q"];
+}
+
 static NSArray<SPTPlayerTrack *> *djFuture(NSArray<SPTPlayerTrack *> *future) {
     NSMutableArray<SPTPlayerTrack *> *tracks = [NSMutableArray array];
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
     SPTPlayerTrack *card;
     for (NSUInteger i = 0; i < future.count; i++) {
         SPTPlayerTrack *track = future[i];
-        if ([track.provider isEqualToString:@"queue"]) continue;
+        if (isCoreQueued(track)) continue;
         if ([SGURIString(track.URI) isEqualToString:@"spotify:delimiter"]) break;
         BOOL isTheCard = isCard(future, i);
         if (!isTheCard && !isDJTrack(track)) continue;
@@ -628,12 +634,7 @@ static BOOL enforceOrder(SPTPlayerState *state) {
     lastAt = [NSDate date];
     if (!sBounced) sBounced = [NSMutableSet set];
     [sBounced addObject:uid];
-    if ([sCarded containsObject:want.UID]) {
-        sSkipVoiceUID = want.UID;
-        sSkipVoiceAsked = [NSDate date];
-    } else {
-        sSkipVoiceUID = nil;
-    }
+    sSkipVoiceUID = nil;
     SGLog(@"queue: the player came to %@ [%@], the user's order has %@ [%@] first, skipping to it", current.trackTitle, current.UID,
           want.trackTitle, want.UID);
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -665,12 +666,12 @@ static SPTPlayerTrack *redirectedNext(void) {
     SPTPlayerTrack *replay = playedAfter(current);
     SPTPlayerTrack *want = replay ?: wantedNext();
     if (!want || [baseUID(want.UID) isEqualToString:baseUID(current.UID)]) return nil;
-    if ([sCarded containsObject:want.UID]) {
-        sSkipVoiceUID = want.UID;
-        sSkipVoiceAsked = [NSDate date];
-    } else {
-        sSkipVoiceUID = nil;
-    }
+    // A track queued by hand comes first, and the core's own next is the one to be left alone when it is the user's
+    // first too (the core goes to it, and its voice plays).
+    SPTPlayerTrack *coreNext = SGPlayerState().future.firstObject;
+    if (!replay && coreNext && (isCoreQueued(coreNext) || [baseUID(coreNext.UID) isEqualToString:baseUID(want.UID)])) return nil;
+    // The voice that introduces the track plays: only a tap on a row passes it.
+    sSkipVoiceUID = nil;
     SGLog(@"queue: next pressed on %@, %@ %@ [%@], skipping to it at once", current.trackTitle,
           replay ? @"it played before" : @"the user's order has", want.trackTitle, want.UID);
     return want;
@@ -810,7 +811,7 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     NSMutableArray<NSString *> *handLeft = [sHandQueued mutableCopy];
     for (SPTPlayerTrack *track in next) {
         NSString *uriString = SGURIString(track.URI);
-        if ([track.provider isEqualToString:@"queue"]) { [queued addObject:track]; [handLeft removeObject:uriString]; continue; }
+        if (isCoreQueued(track)) { [queued addObject:track]; [handLeft removeObject:uriString]; continue; }
         if ([handLeft containsObject:uriString]) {
             // The core's own copy of a DJ track the user queued: a hand-queued track, whichever provider it names.
             [handLeft removeObject:uriString];
@@ -941,7 +942,27 @@ static BOOL sReloadQueued;
 static void placeReorderHandle(UITableViewCell *cell) {
     UIView *handle = nil;
     @try { handle = [cell valueForKey:@"customReorderImageView"]; } @catch (NSException *e) { handle = nil; }
-    if (![handle isKindOfClass:UIView.class] || handle.hidden || handle.superview == nil) return;
+    if (![handle isKindOfClass:UIView.class]) {
+        // Not found by its name: the small image views of the row are logged, to find it by what it is.
+        static int notFound;
+        if (notFound < 4) {
+            notFound++;
+            NSMutableArray<NSString *> *found = [NSMutableArray array];
+            NSMutableArray<UIView *> *todo = [NSMutableArray arrayWithObject:cell];
+            while (todo.count && found.count < 12) {
+                UIView *v = todo.firstObject;
+                [todo removeObjectAtIndex:0];
+                [todo addObjectsFromArray:v.subviews];
+                if ([v isKindOfClass:UIImageView.class] && v.bounds.size.width <= 60 && v != cell) {
+                    CGRect r = [v.superview convertRect:v.frame toView:cell];
+                    [found addObject:[NSString stringWithFormat:@"%@ x%.0f y%.0f w%.0f hidden %d", NSStringFromClass(v.class), r.origin.x, r.origin.y, r.size.width, (int)v.hidden]];
+                }
+            }
+            SGLog(@"[DEBUG-dj] reorder handle: customReorderImageView not found in a row %.0f wide; small images: %@", cell.bounds.size.width, [found componentsJoinedByString:@" | "]);
+        }
+        return;
+    }
+    if (handle.hidden || handle.superview == nil) return;
     CGRect in = [handle.superview convertRect:handle.frame toView:cell];
     static int logged;
     if (logged < 20) {
