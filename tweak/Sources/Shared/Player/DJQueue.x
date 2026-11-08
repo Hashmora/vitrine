@@ -57,6 +57,9 @@ static id sAheadContext;
 // The uids of the DJ's tracks the page removed or that were queued by hand (hidden from its rows), and the tracks
 // (uri and uid) the player was already skipped past, once each.
 static NSMutableSet<NSString *> *sHidden, *sSkipped;
+// The uris of DJ tracks the user queued by hand (swipe, menu), in the order queued: the core may give such a track
+// back with the context's provider instead of "queue", and it is still a hand-queued one, before the DJ's rows.
+static NSMutableArray<NSString *> *sHandQueued;
 // The uid of a track the page was tapped on whose "Up next" card is ahead of it, and when: the core plays the card's
 // voice first (the voice and the track have one uid), and the voice is skipped when the player comes to it.
 static NSString *sSkipVoiceUID;
@@ -770,6 +773,7 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
         [sCarded removeAllObjects];
         [sLoggedCards removeAllObjects];
         [sCardTracks removeAllObjects];
+        [sHandQueued removeAllObjects];
         forgetOrder();
     }
     if ([state.contextURI isEqual:sAheadContext]) {
@@ -799,8 +803,20 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     // `ahead` already holds, by uri, or one already taken, is not a row of its own.
     NSMutableSet<NSString *> *aheadURIs = [NSMutableSet set], *restKeys = [NSMutableSet set];
     for (SPTPlayerTrack *track in ahead) [aheadURIs addObject:SGURIString(track.URI)];
+    // A hand-queued DJ track is taken once as it plays (its DJ row is hidden, so what plays of it is the queued one).
+    if (state.track && [sHandQueued containsObject:SGURIString(state.track.URI)]) {
+        [sHandQueued removeObject:SGURIString(state.track.URI)];
+    }
+    NSMutableArray<NSString *> *handLeft = [sHandQueued mutableCopy];
     for (SPTPlayerTrack *track in next) {
-        if ([track.provider isEqualToString:@"queue"]) { [queued addObject:track]; continue; }
+        NSString *uriString = SGURIString(track.URI);
+        if ([track.provider isEqualToString:@"queue"]) { [queued addObject:track]; [handLeft removeObject:uriString]; continue; }
+        if ([handLeft containsObject:uriString]) {
+            // The core's own copy of a DJ track the user queued: a hand-queued track, whichever provider it names.
+            [handLeft removeObject:uriString];
+            [queued addObject:track];
+            continue;
+        }
         if (indexIn(ahead, track) != NSNotFound) continue;
         NSString *uri = SGURIString(track.URI);
         if ([uri isEqualToString:@"spotify:delimiter"]) continue;
@@ -920,9 +936,29 @@ static BOOL sReloadQueued;
 }
 %end
 
+// The row's own drag handle (its customReorderImageView) belongs at the right edge. On rows the page built late it
+// is left where it was made, over the cover; it is put back at the right, centred on the row.
+static void placeReorderHandle(UITableViewCell *cell) {
+    UIView *handle = nil;
+    @try { handle = [cell valueForKey:@"customReorderImageView"]; } @catch (NSException *e) { handle = nil; }
+    if (![handle isKindOfClass:UIView.class] || handle.hidden || handle.superview == nil) return;
+    CGRect in = [handle.superview convertRect:handle.frame toView:cell];
+    static int logged;
+    if (logged < 20) {
+        logged++;
+        SGLog(@"[DEBUG-dj] reorder handle at x %.0f y %.0f w %.0f h %.0f in a row %.0f wide (in %@)", in.origin.x, in.origin.y, in.size.width,
+              in.size.height, cell.bounds.size.width, NSStringFromClass(handle.superview.class));
+    }
+    if (CGRectGetMidX(in) >= cell.bounds.size.width / 2 || in.size.width <= 0) return;
+    CGFloat x = cell.bounds.size.width - in.size.width - 16;
+    CGPoint to = [cell convertPoint:CGPointMake(x + in.size.width / 2, CGRectGetMidY(in)) toView:handle.superview];
+    handle.center = to;
+}
+
 %hook _TtC14Queue_ViewImpl9QueueCell
 - (void)layoutSubviews {
     %orig;
+    placeReorderHandle((UITableViewCell *)(id)self);
     // The hooked class is declared here without its superclass, so it is taken as the table cell it is.
     UITableViewCell *cellSelf = (UITableViewCell *)(id)self;
     if (!sQueueCells) sQueueCells = [NSHashTable weakObjectsHashTable];
@@ -1090,6 +1126,8 @@ static void logPlayerContext(NSString *where, id context) {
     // is hidden, or the core plays the track twice (the queued one, then the DJ's, one after the other).
     if (dj && !isCardRow(dj)) {
         hideTrack(dj, @"queued by hand");
+        if (!sHandQueued) sHandQueued = [NSMutableArray array];
+        [sHandQueued addObject:SGURIString(dj.URI)];
         SGLog(@"queue command: addToQueue: the DJ's row %@ is moved to the hand-queued tracks", dj.trackTitle);
         refreshReaders();
     } else {
