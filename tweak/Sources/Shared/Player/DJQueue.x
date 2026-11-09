@@ -1340,6 +1340,35 @@ static BOOL sJumpRefused;
 // played, soon after, is the step back; any other is the track played again, as the newest.
 static NSDate *sBackAsked;
 
+// After the DJ's voice the cover list of the full player is to show the track's cover where the voice's blue cell was:
+// both are the same uid, so Spotify sometimes keeps the voice's cell (the DJ's logo over the track) until a swipe makes
+// the cell reused. A voice cell that is still showing while the player is on a track is reloaded out of the list.
+static void freeStuckVoiceCell(void) {
+    NSString *uri = SGURIString(SGPlayerState().track.URI);
+    if (![uri hasPrefix:@"spotify:track:"] && ![uri hasPrefix:@"spotify:episode:"]) return;
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        UIView *list = descendant(window, ^BOOL(UIView *view) { return [NSStringFromClass(view.class) hasSuffix:@"AccessibleCollectionView"]; });
+        UIView *voice = list ? descendant(list, ^BOOL(UIView *view) {
+            return [NSStringFromClass(view.class) hasSuffix:@"DJMContentLayerCell"] && !view.hidden && view.alpha > 0.01;
+        }) : nil;
+        if (!voice || ![list isKindOfClass:UICollectionView.class]) continue;
+        SGLog(@"queue: the DJ's voice cell still shows on %@, the cover list is reloaded", uri);
+        UICollectionView *collection = (UICollectionView *)list;
+        [collection reloadData];
+        [collection layoutIfNeeded];
+    }
+}
+
+static NSString *sVoiceCheckedFor;
+static void freeStuckVoiceCellSoon(SPTPlayerTrack *track) {
+    NSString *key = trackKey(track);
+    if ([key isEqualToString:sVoiceCheckedFor] || ![SGURIString(track.URI) hasPrefix:@"spotify:track:"]) return;
+    sVoiceCheckedFor = key;
+    for (NSNumber *delay in @[@0.6, @1.5, @3]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ freeStuckVoiceCell(); });
+    }
+}
+
 @interface SGDJHistory : NSObject <SGPlayerStateObserver>
 @end
 
@@ -1351,6 +1380,7 @@ static NSDate *sBackAsked;
         sJumpRefused = NO;
     }
     SPTPlayerTrack *track = state.track;
+    if (inDJ(track)) freeStuckVoiceCellSoon(track);
     // A track tapped on the page that has the DJ's card ahead of it: the core plays the voice first (it has the track's
     // uid), and the voice is skipped, so the tap lands on the track.
     if (sSkipVoiceUID && track.UID.length) {
