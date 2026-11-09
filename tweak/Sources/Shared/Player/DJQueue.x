@@ -526,6 +526,16 @@ static NSMutableArray<SPTPlayerTrack *> *arrangedRows(NSArray<SPTPlayerTrack *> 
     return out;
 }
 
+// The index of the track of the "Up next" card that is the first of the DJ's rows (the card is the row before it),
+// -1 when the first of the DJ's rows is not a card. The card and its track are one: nothing is put above or between them.
+static NSInteger topPairEnd(NSArray<SPTPlayerTrack *> *list) {
+    for (NSUInteger i = 0; i < list.count; i++) {
+        if (isCoreQueued(list[i])) continue;
+        return isCardRow(list[i]) && i + 1 < list.count ? (NSInteger)i + 1 : -1;
+    }
+    return -1;
+}
+
 // A drag on the page: the row at `from` of the list it shows is now at `to`. A card is moved with its track, and a
 // track with its card. Only the DJ's rows are arranged; NO when the drag was not one.
 static BOOL arrangeByDrag(NSArray<SPTPlayerTrack *> *list, NSInteger from, NSInteger to) {
@@ -533,6 +543,12 @@ static BOOL arrangeByDrag(NSArray<SPTPlayerTrack *> *list, NSInteger from, NSInt
     if (from < 0 || to < 0 || from >= count || to >= count || from == to) return NO;
     SPTPlayerTrack *moved = list[from];
     if (indexIn(sInjected, moved) == NSNotFound) return NO;
+    // Above the "Up next" card (or between it and its track) goes nothing from below them, and the card is not moved.
+    NSInteger pairEnd = topPairEnd(list);
+    if (pairEnd >= 0 && (isCardRow(moved) || (from > pairEnd && to <= pairEnd))) {
+        SGLog(@"queue: the drag of %@ above the Up next card is not taken", moved.trackTitle);
+        return NO;
+    }
     NSMutableArray<SPTPlayerTrack *> *after = [list mutableCopy];
     [after removeObjectAtIndex:from];
     [after insertObject:moved atIndex:to];
@@ -1134,7 +1150,9 @@ static void logPlayerContext(NSString *where, id context) {
         if (!sHandQueued) sHandQueued = [NSMutableArray array];
         [sHandQueued addObject:SGURIString(dj.URI)];
         SGLog(@"queue command: addToQueue: the DJ's row %@ is moved to the hand-queued tracks", dj.trackTitle);
-        refreshReaders();
+        // The rows change once, when the core gives the queue with the queued track: not here (the row would go, and
+        // the rows below it show shifted, for the moment before). A late refresh is for a core that gives nothing.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ refreshReaders(); });
     } else {
         SGLog(@"queue command: addToQueue: not one of the DJ's rows");
     }
@@ -1305,6 +1323,10 @@ static id sPlayedContext;
 // Set once the core did not move to a track it was asked to skip back to; no more asks in that session.
 static BOOL sJumpRefused;
 
+// When the player was last asked to step back (the previous button, or a replay here): an arrival at a track that has
+// played, soon after, is the step back; any other is the track played again, as the newest.
+static NSDate *sBackAsked;
+
 @interface SGDJHistory : NSObject <SGPlayerStateObserver>
 @end
 
@@ -1343,8 +1365,20 @@ static BOOL sJumpRefused;
     // The core has come to a DJ track of its own order that the user's order does not have first.
     if (enforceOrder(state)) return;
     if (!isDJTrack(track) || !inDJ(track) || !track.UID.length) return;
-    for (SPTPlayerTrack *played in sPlayed) if ([played.UID isEqualToString:track.UID]) return;
-    [sPlayed addObject:track];
+    NSUInteger at = NSNotFound;
+    for (NSUInteger i = 0; i < sPlayed.count; i++) if ([sPlayed[i].UID isEqualToString:track.UID]) { at = i; break; }
+    if (at == NSNotFound) {
+        [sPlayed addObject:track];
+        return;
+    }
+    BOOL steppedBack = sBackAsked && -sBackAsked.timeIntervalSinceNow < 4;
+    if (!steppedBack && at + 1 != sPlayed.count) {
+        // The core went on to a track that played (its own order has it after this one): it is the newest now, or "next"
+        // on it would go back to the track that played after it, and the two would take turns.
+        [sPlayed removeObjectAtIndex:at];
+        [sPlayed addObject:track];
+        SGLog(@"queue: %@ played again, as the newest of the played", track.trackTitle);
+    }
 }
 @end
 
@@ -1362,6 +1396,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
 // Every step back of Spotify's ends here, `track` nil for the plain one. With nothing behind the current track in
 // the state, the core has run out of the ten it keeps, and the one the DJ played before is asked for by its uid.
 - (id)skipToPreviousTrackWithOptions:(id)options track:(SPTPlayerTrack *)track loggingParams:(id)params {
+    sBackAsked = [NSDate date];
     SPTPlayerState *state = SGPlayerState();
     SPTPlayerTrack *target = track || sJumpRefused || state.reverse.count || !inDJ(state.track) ? nil : playedBefore(state);
     if (!target) return %orig;
@@ -1543,11 +1578,35 @@ static void logSelectors(NSString *name) {
 // The DJ's "Up next" card is not moved by hand: it goes with its track and is only there while the voice is to play.
 // Only that row says no. Every other row is movable as the page has it: the data source is a diffable one that may not
 // answer for itself, and its answer must not take the handle away from the tracks.
+static NSIndexPath *pathForPlace(UITableView *table, NSInteger place) {
+    for (NSInteger section = 0; section < table.numberOfSections; section++) {
+        NSInteger rows = [table numberOfRowsInSection:section];
+        if (place < rows) return [NSIndexPath indexPathForRow:place inSection:section];
+        place -= rows;
+    }
+    return nil;
+}
+
+// While a row is dragged, the place it would be dropped at: a row from below the "Up next" card and its track is not
+// let go above them (the table shows it stay below).
+static NSIndexPath *(*sOrigTarget)(id, SEL, UITableView *, NSIndexPath *, NSIndexPath *);
+static NSIndexPath *targetRow(id self, SEL _cmd, UITableView *table, NSIndexPath *from, NSIndexPath *proposed) {
+    NSIndexPath *result = sOrigTarget ? sOrigTarget(self, _cmd, table, from, proposed) : proposed;
+    NSInteger pairEnd = topPairEnd(sQueue);
+    if (pairEnd < 0 || !result) return result;
+    NSInteger fromPlace = placeOf(table, from), toPlace = placeOf(table, result);
+    if (fromPlace > pairEnd && toPlace <= pairEnd) {
+        NSIndexPath *held = pathForPlace(table, pairEnd + 1);
+        if (held) return held;
+    }
+    return result;
+}
+
 static BOOL (*sOrigCanMove)(id, SEL, UITableView *, NSIndexPath *);
 static BOOL canMoveRow(id self, SEL _cmd, UITableView *table, NSIndexPath *path) {
     NSInteger place = placeOf(table, path);
     SPTPlayerTrack *row = place >= 0 && place < (NSInteger)sQueue.count ? sQueue[place] : nil;
-    BOOL card = row && isCardRow(row) && indexIn(sInjected, row) != NSNotFound;
+    BOOL card = row && isCardRow(row);
     static int logged;
     if (logged < 30) {
         logged++;
@@ -1567,6 +1626,13 @@ static BOOL canMoveRow(id self, SEL _cmd, UITableView *table, NSIndexPath *path)
         if (source) {
             sOrigCanMove = existing ? (BOOL (*)(id, SEL, UITableView *, NSIndexPath *))method_getImplementation(existing) : NULL;
             class_replaceMethod(source, canMove, (IMP)canMoveRow, "c@:@@");
+        }
+        Class delegate = NSClassFromString(@"_TtC14Queue_ViewImpl19QueueViewController");
+        SEL target = @selector(tableView:targetIndexPathForMoveFromRowAtIndexPath:toProposedIndexPath:);
+        Method current = delegate ? class_getInstanceMethod(delegate, target) : NULL;
+        if (delegate) {
+            sOrigTarget = current ? (NSIndexPath *(*)(id, SEL, UITableView *, NSIndexPath *, NSIndexPath *))method_getImplementation(current) : NULL;
+            class_replaceMethod(delegate, target, (IMP)targetRow, "@@:@@@");
         }
     }
     SGLog(@"queue: DJ queue hooks are on");
