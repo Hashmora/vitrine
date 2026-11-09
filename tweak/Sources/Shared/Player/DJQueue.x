@@ -1433,7 +1433,11 @@ static NSDate *sBackAsked;
 static void freeStuckVoiceCell(void) {
     NSString *uri = SGURIString(SGPlayerState().track.URI);
     if (![uri hasPrefix:@"spotify:track:"] && ![uri hasPrefix:@"spotify:episode:"]) return;
-    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if ([scene isKindOfClass:UIWindowScene.class]) [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
+    }
+    for (UIWindow *window in windows) {
         UIView *list = descendant(window, ^BOOL(UIView *view) { return [NSStringFromClass(view.class) hasSuffix:@"AccessibleCollectionView"]; });
         UIView *voice = list ? descendant(list, ^BOOL(UIView *view) {
             return [NSStringFromClass(view.class) hasSuffix:@"DJMContentLayerCell"] && !view.hidden && view.alpha > 0.01;
