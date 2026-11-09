@@ -624,6 +624,15 @@ static id skipToDJTrack(SPTPlayerTrack *target) {
     NSString *was = trackKey(SGPlayerState().track);
     id result;
     if (behind && [player respondsToSelector:NSSelectorFromString(@"skipToPreviousTrackWithOptions:track:loggingParams:")]) {
+        // The card's voice is the item before its track (the same uid): a step back to the track alone lands after it
+        // and the voice never plays, so the step is to the voice when the core still has it behind.
+        for (SPTPlayerTrack *t in SGPlayerState().reverse) {
+            if ([t.UID isEqualToString:target.UID] && [SGURIString(t.URI) hasPrefix:@"spotify:media:"]) {
+                SGLog(@"queue: the DJ's voice of %@ [%@] is behind too, the step back is to it", target.trackTitle, target.UID);
+                target = t;
+                break;
+            }
+        }
         SGLog(@"queue: %@ [%@] is behind the core's current track, a step back to it", target.trackTitle, target.UID);
         result = stepBackTo(target);
     } else {
@@ -895,9 +904,21 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     return NO;
 }
 
+// A key of an esperanto track, nil when its class has none: the tracks of a setQueue are ESPProvidedTrack, which has no
+// uri key (valueForKey: threw NSUnknownKeyException and the app crashed when a queued track was removed).
+static id espValue(id track, NSArray<NSString *> *keys) {
+    for (NSString *key in keys) {
+        if ([track respondsToSelector:NSSelectorFromString(key)]) return [track valueForKey:key];
+    }
+    return nil;
+}
+static NSString *espURI(id track) { return espValue(track, @[@"uri", @"URI", @"trackUri", @"trackURI"]); }
+static NSString *espUID(id track) { return espValue(track, @[@"uid", @"UID"]); }
+
 // An ESPContextTrack as a line of the log.
 static NSString *describeEsp(id track) {
-    return [NSString stringWithFormat:@"%@ [%@]", [track valueForKey:@"uri"], [track valueForKey:@"uid"]];
+    if (!espURI(track)) return [NSString stringWithFormat:@"%@ with no uri key: %@", NSStringFromClass([track class]), track];
+    return [NSString stringWithFormat:@"%@ [%@]", espURI(track), espUID(track)];
 }
 
 %hook _TtC16Queue_UpNextImpl19UpNextTrackProvider
@@ -1142,7 +1163,7 @@ static void logPlayerContext(NSString *where, id context) {
 - (void)addToQueue:(id)request onResponse:(id)onResponse {
     id track = [request valueForKey:@"track"];
     SGLog(@"queue command: addToQueue %@", describeEsp(track));
-    SPTPlayerTrack *dj = injectedNamed([track valueForKey:@"uri"], nil);
+    SPTPlayerTrack *dj = injectedNamed(espURI(track), nil);
     // A DJ row that is queued stays where it is: the queued track is one more, a hand-queued one that plays next, and
     // the DJ's own row of it plays again at its place (a track queued twice is played twice, that is what it is for).
     // The core's copy has its own uid (it starts with q) and is not part of the DJ's order.
@@ -1157,9 +1178,9 @@ static void logPlayerContext(NSString *where, id context) {
     NSMutableSet<NSString *> *sent = [NSMutableSet set];
     for (id track in tracks) {
         SGLog(@"queue command: setQueue track %@", describeEsp(track));
-        if (injectedNamed([track valueForKey:@"uri"], [track valueForKey:@"uid"])) {
+        if (injectedNamed(espURI(track), espUID(track))) {
             [djs addObject:track];
-            [sent addObject:[track valueForKey:@"uid"]];
+            [sent addObject:espUID(track)];
         }
     }
     SGLog(@"queue command: setQueue %lu next tracks, %lu of the DJ's rows, %lu rows shown", (unsigned long)tracks.count,
@@ -1181,7 +1202,7 @@ static void logPlayerContext(NSString *where, id context) {
     BOOL hid = NO;
     for (id track in [request valueForKey:@"tracksArray"]) {
         SGLog(@"queue command: playAsNextInQueue %@", describeEsp(track));
-        SPTPlayerTrack *dj = injectedNamed([track valueForKey:@"uri"], nil);
+        SPTPlayerTrack *dj = injectedNamed(espURI(track), nil);
         if (dj) { hideTrack(dj, @"played next by hand"); hid = YES; }
     }
     if (hid) refreshReaders();
