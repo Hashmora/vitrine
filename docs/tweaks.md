@@ -791,7 +791,9 @@ Spotify's own through.
   one. The core asks for it itself, with no context page from the app (no `play`, `updateContext` or
   `updateContextPage`), so it cannot be asked for earlier. With nothing of a segment left but removed or played
   tracks, the player is paused 0.7 s before the end, skipped to the segment's last, then to the next segment's first
-  once it has come (up to 6 s), and resumed, so nothing removed or played sounds. The future is read only up to
+  once it has come (up to 6 s), and resumed, so nothing removed or played sounds. Next pressed then does the same at
+  once, and a tap on the segment's last row with removed or played tracks after it in the core's order plays that
+  track from the core's queue once the next segment has come (gone to directly, the core made no next segment). The future is read only up to
   `spotify:delimiter`: past it the core repeats the session with other uids.
 - **Removing:** a swipe or Edit hides the row, and the player passes the track when the core comes to it.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
@@ -803,7 +805,9 @@ Spotify's own through.
   track whose card has not played is never queued, and loses its card if it is ever played from the queue.
 - **The copies:** a track played from the core's queue is a copy (a `q…` uid, `is_queued` and `queued_by` in its
   metadata), which Spotify draws as queued by hand: the queue badge, "Playing Queue". The now playing screens are shown
-  it as the DJ's track it stands for (its uid, provider and metadata provider, the queue keys taken out). Back from a
+  it as the DJ's track it stands for (its uid, provider and metadata provider, the queue keys taken out), and so is the
+  queue page, which draws its now playing row from the queue's own `track`. A skip of ours that the core takes to a copy
+  of the track in its queue (put in before a launch) is taken as that track too. Back from a
   copy goes to the track before it and puts the copy's track first in the order again. A copy that is no longer
   wanted is taken out with a `setQueue` of the core's whole `nextTracks` without it (one of only the queued tracks is
   ignored).
