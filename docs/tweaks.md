@@ -789,8 +789,9 @@ session (its playlist, `spotify:playlist:37i9dQZF1EYkqdzj48dyYq`) Spotify's queu
 each "Up next" card as a row of its own before the track it introduces. In any other context every hook passes
 Spotify's own through.
 
-- **How many:** the DJ's segment, about five tracks. The player's state subscription asks for two tracks to come; the
-  cap is raised to 16 at launch, for every context, since the subscription is made before any context is known. With a
+- **How many:** the DJ's segment, about five tracks. The player's state subscription asks for two tracks to come and
+  two behind; both caps are raised to 16 at launch, for every context, since the subscription is made before any
+  context is known (with two behind, a step back from a new segment found only the tracks the hand-over went past). With a
   cap of 80 the core still gave one segment (9.1.90): the next is made when the core comes to the last track of this
   one. The core asks for it itself, with no context page from the app (no `play`, `updateContext` or
   `updateContextPage`), so it cannot be asked for earlier. With nothing of a segment left but removed or played
@@ -799,7 +800,17 @@ Spotify's own through.
   once, and a tap on the segment's last row with removed or played tracks after it in the core's order plays that
   track from the core's queue once the next segment has come (gone to directly, the core made no next segment). The future is read only up to
   `spotify:delimiter`: past it the core repeats the session with other uids.
-- **Removing:** a swipe or Edit hides the row, and the player passes the track when the core comes to it.
+- **Removing:** a swipe or Edit hides the row, and the player passes the track when the core comes to it. In Edit a
+  tap on a row ticks it and plays nothing. Edit is told by its close button: the table is always editing, as that is
+  how it shows the reorder handles. Spotify keeps the ticks itself (the table has one row selected at a time),
+  so they are followed tap by tap. Remove and Move up act on the ticked rows when the button is pressed: Spotify's
+  Remove sends the core only its own queue, and nothing when that is empty. Move up puts the ticked rows first in the
+  user's order, below the "Up next" card on top. The toast's Undo puts back what Edit removed. The X button clears the
+  ticks.
+- **Back:** past the removed and played tracks in the core's history, to the nearest one that is neither. When the
+  history has only such tracks, the step goes to the last visible played track by its uid. Should the core still land
+  on one, the player goes back to the track it came from, not on. After a step back, the tracks that played after it
+  come again in their order.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
   future as it was), so the order is kept here and the player is held to it. A track the core would come to first is
   skipped to. Any other is queued (the core's own copy) and played from the queue, so the core keeps its place before
@@ -817,7 +828,11 @@ Spotify's own through.
   ignored).
 - **Ahead of its turn:** the user's next (or, with no order, the core's next that was not removed or played) is put
   in the core's queue as the track before it starts, so a track that ends by itself goes on to it, not to the core's
-  own for a moment. A track whose card has not played is left to the core, so the voice plays.
+  own for a moment. A track whose card has not played is left to the core, so the voice plays. The card is looked for
+  anywhere in the core's future: its next item may be the DJ's words after the track playing. The track put in ahead
+  is kept over a launch: still wanted, it is taken up; not wanted, it is taken out of the core's queue, instead of
+  showing as a track queued by hand above its own card. A queued copy is looked for anywhere in the core's future, not
+  only at its front: after a step back, the core has the track it left before its queue.
 - **A tap** on a row passes the rows before it, as Spotify's queue does: the core goes to it in one skip when nothing
   the user put after it is before it in the core's order, and a copy put in ahead of anything else is taken out first.
   Nothing is put in ahead until the tap has been carried out.
