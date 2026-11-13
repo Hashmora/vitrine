@@ -44,3 +44,14 @@ BOOL SGRLegacyTabBarOn(void) { return NO; }
 BOOL SGRLegacyTabBarMinimized(void) { return NO; }
 void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated) {}
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height) { return CGRectNull; }
+// SGRRepaint.x, the layer hooks that keep a glassed sheet clear of Spotify's grey: the harness has no Spotify sheet.
+__weak UIView *sgr_sheetChromeRoot = nil;
+void SGRWatchSheetPaint(UIView *root) {}
+// The toast and the tooltip (SGRSnackbar.x, SGRTooltip.x), which follow the now playing bar: the harness shows neither.
+void SGRSnackbarFollowNowPlayingBar(void) {}
+void SGRTooltipFollowNowPlayingBar(void) {}
+// SGRRestyle.m's lookup, as it is there.
+Class SGRSwiftClass(NSString *module, NSString *name) {
+    NSString *mangled = [NSString stringWithFormat:@"_TtC%lu%@%lu%@", (unsigned long)module.length, module, (unsigned long)name.length, name];
+    return NSClassFromString(mangled) ?: NSClassFromString([NSString stringWithFormat:@"%@.%@", module, name]);
+}
