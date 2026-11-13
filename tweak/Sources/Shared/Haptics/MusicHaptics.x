@@ -680,6 +680,8 @@ static void readSettings(void) {
 }
 
 void SGMusicHapticsRelayQuietChanged(void) {
+    // The relay watches the lock also when the %ctor stopped early (Spotify's output out of reach), with no sg_wake.
+    if (!sg_wake) return;
     updateListening();
 }
 
