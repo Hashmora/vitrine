@@ -1518,6 +1518,7 @@ static BOOL sReloadQueued;
 // stood out of line).
 static CGFloat sHandleX = -1;
 static NSHashTable<UIView *> *sPlacedHandles;
+static __weak UIView *sUIKitHandle;
 static void placeReorderHandle(UITableViewCell *cell) {
     UIView *control = nil;
     for (UIView *view in cell.subviews) {
@@ -1536,6 +1537,7 @@ static void placeReorderHandle(UITableViewCell *cell) {
             }
         } else {
             sHandleX = control.frame.origin.x;
+            sUIKitHandle = control;
         }
         return;
     }
@@ -1543,6 +1545,21 @@ static void placeReorderHandle(UITableViewCell *cell) {
     CGFloat x = sHandleX >= 0 ? sHandleX : (content > 0 && content < width) ? CGRectGetMaxX(cell.contentView.frame) - 3 : width - 60;
     control.frame = CGRectMake(x, (height - control.frame.size.height) / 2, control.frame.size.width, control.frame.size.height);
     [sPlacedHandles addObject:control];
+}
+
+// The "Now playing" row has no handle, so Spotify lays it out the table's full width and its ▶ sits against the
+// sheet's edge, right of the handles' column. It is moved to that column's middle with a transform, which Auto
+// Layout leaves alone.
+static void alignHeaderPlay(UIView *page) {
+    UIView *handle = sUIKitHandle;
+    if (!page || !handle.window) return;
+    UIView *row = descendant(page, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"TrackRowQueue.Header"]; });
+    UIView *play = row ? descendant(row.superview ?: row, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"header-play-button"]; }) : nil;
+    if (!play.superview || play.window != handle.window) return;
+    CGFloat want = [handle.superview convertPoint:handle.center toView:play.superview].x;
+    CGFloat dx = want - play.center.x;
+    if (fabs(dx) > 60) return;
+    if (fabs(play.transform.tx - dx) > 0.5) play.transform = CGAffineTransformMakeTranslation(dx, 0);
 }
 
 %hook _TtC14Queue_ViewImpl9QueueCell
@@ -2376,6 +2393,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
 - (void)viewDidLayoutSubviews {
     %orig;
     drawHeaderAvatar(((UIViewController *)(id)self).view);
+    if (sDJActive) alignHeaderPlay(((UIViewController *)(id)self).view);
 }
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
@@ -2388,6 +2406,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
         UIViewController *strong = page;
         if (!strong || !sDJActive) { [timer invalidate]; return; }
         drawHeaderAvatar(strong.view);
+        alignHeaderPlay(strong.view);
     }];
 }
 - (void)viewDidDisappear:(BOOL)animated {
