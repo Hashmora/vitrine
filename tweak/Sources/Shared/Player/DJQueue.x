@@ -1512,21 +1512,37 @@ static BOOL sReloadQueued;
 }
 %end
 
-// The drag handle of a row is UIKit's UITableViewCellReorderControl, a view of the cell itself, 44 by 44, right of the
-// content (x = the content's width, centred on the row). On rows the page made late it stays at {0, 0}, over the
-// cover. It is put where the other rows have it.
+// The drag handle of a row is UIKit's UITableViewCellReorderControl, a view of the cell itself, right of the content.
+// On rows the page made late it stays at {0, 0}, over the cover. It is put where UIKit put the other rows' handles: its
+// x is learned from a handle UIKit placed itself (the right edge of the content was 3 points off, and those rows' handles
+// stood out of line).
+static CGFloat sHandleX = -1;
+static NSHashTable<UIView *> *sPlacedHandles;
 static void placeReorderHandle(UITableViewCell *cell) {
     UIView *control = nil;
     for (UIView *view in cell.subviews) {
         if ([NSStringFromClass(view.class) isEqualToString:@"UITableViewCellReorderControl"]) { control = view; break; }
     }
-    if (!control || control.hidden || cell.bounds.size.width < 100) return;
+    if (!control || control.hidden || cell.bounds.size.width < 100 || control.frame.size.width <= 0) return;
     CGFloat width = cell.bounds.size.width, height = cell.bounds.size.height;
+    if (!sPlacedHandles) sPlacedHandles = [NSHashTable weakObjectsHashTable];
+    if (control.frame.origin.x >= width / 2) {
+        if ([sPlacedHandles containsObject:control]) {
+            // Placed here before UIKit's own was known: in line with it now.
+            if (sHandleX >= 0 && fabs(control.frame.origin.x - sHandleX) > 0.5) {
+                CGRect frame = control.frame;
+                frame.origin.x = sHandleX;
+                control.frame = frame;
+            }
+        } else {
+            sHandleX = control.frame.origin.x;
+        }
+        return;
+    }
     CGFloat content = cell.contentView.frame.size.width;
-    CGFloat x = (content > 0 && content < width) ? CGRectGetMaxX(cell.contentView.frame) : width - 60;
-    CGRect want = CGRectMake(x, (height - control.frame.size.height) / 2, control.frame.size.width, control.frame.size.height);
-    if (control.frame.origin.x >= width / 2 || control.frame.size.width <= 0) return;
-    control.frame = want;
+    CGFloat x = sHandleX >= 0 ? sHandleX : (content > 0 && content < width) ? CGRectGetMaxX(cell.contentView.frame) - 3 : width - 60;
+    control.frame = CGRectMake(x, (height - control.frame.size.height) / 2, control.frame.size.width, control.frame.size.height);
+    [sPlacedHandles addObject:control];
 }
 
 %hook _TtC14Queue_ViewImpl9QueueCell
