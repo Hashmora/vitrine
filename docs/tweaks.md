@@ -782,6 +782,26 @@ Documents/Lossless folder (Files app › Spotify › Lossless) plays in place of
   design only: [Lossless sources](lossless-sources.md), [addons](lossless-addons.md),
   [playback investigation](lossless-playback.md), [prototype history](lossless-prototype.md).
 
+## DJ queue
+
+On until switched off (`spotifyglass.djqueue`, Player › DJ, read at launch; `Shared/Player/DJQueue.x`). In the AI DJ's
+session (its playlist, `spotify:playlist:37i9dQZF1EYkqdzj48dyYq`) Spotify's queue page shows the DJ's tracks to come,
+each "Up next" card as a row of its own before the track it introduces. In any other context every hook passes
+Spotify's own through.
+
+- **How many:** the DJ's segment, about five tracks. The player's state subscription asks for two tracks to come; the
+  cap is raised to 16 at launch, for every context, since the subscription is made before any context is known. With a
+  cap of 80 the core still gave one segment (9.1.90): the next is made when the last track of this one is reached.
+- **Removing:** a swipe or Edit hides the row, and the player passes the track when the core comes to it.
+- **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
+  future as it was), so the order is kept here and the player is held to it. A track the core would come to first is
+  skipped to. Any other is queued (the core's own copy) and played from the queue, so the core keeps its place before
+  the tracks it has not come to, and a card moved down still has its voice when its turn comes. The core is never
+  stepped back to a DJ track: the now playing screens draw a step back backwards, and it lands after the voice.
+- **The now playing screens** are told the state with its future in the user's order (`SGSetPlayerStateLens`,
+  `Shared/Player/PlayerState.h`), so the cover list moves forward to the track the player goes to.
+- The order, the hidden tracks and what has played live in memory: after a relaunch the core's own order is back.
+
 ## Make targets
 
     make build      # out/vitrine-<version>.ipa with FLEX in it
