@@ -794,21 +794,36 @@ Spotify's own through.
   cap of 80 the core still gave one segment (9.1.90): the next is made when the core comes to the last track of this
   one. The core asks for it itself, with no context page from the app (no `play`, `updateContext` or
   `updateContextPage`), so it cannot be asked for earlier. With nothing of a segment left but removed or played
-  tracks, the player goes to its last in one skip and on once the next has come.
+  tracks, the player is paused 0.7 s before the end, skipped to the segment's last, then to the next segment's first
+  once it has come (up to 6 s), and resumed, so nothing removed or played sounds. The future is read only up to
+  `spotify:delimiter`: past it the core repeats the session with other uids.
 - **Removing:** a swipe or Edit hides the row, and the player passes the track when the core comes to it.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
   future as it was), so the order is kept here and the player is held to it. A track the core would come to first is
   skipped to. Any other is queued (the core's own copy) and played from the queue, so the core keeps its place before
   the tracks it has not come to, and a card moved down still has its voice when its turn comes. The core is never
   stepped back to a DJ track: the now playing screens draw a step back backwards, and it lands after the voice.
+  The core does not take a voice (`spotify:media:`) into its queue (asked to, it answers and leaves it out), so a
+  track whose card has not played is never queued, and loses its card if it is ever played from the queue.
+- **The copies:** a track played from the core's queue is a copy (a `q…` uid, `is_queued` and `queued_by` in its
+  metadata), which Spotify draws as queued by hand: the queue badge, "Playing Queue". The now playing screens are shown
+  it as the DJ's track it stands for (its uid, provider and metadata provider, the queue keys taken out). Back from a
+  copy goes to the track before it and puts the copy's track first in the order again. A copy that is no longer
+  wanted is taken out with a `setQueue` of the core's whole `nextTracks` without it (one of only the queued tracks is
+  ignored).
 - **Ahead of its turn:** the user's next (or, with no order, the core's next that was not removed or played) is put
   in the core's queue as the track before it starts, so a track that ends by itself goes on to it, not to the core's
   own for a moment. A track whose card has not played is left to the core, so the voice plays.
 - **A tap** on a row passes the rows before it, as Spotify's queue does: the core goes to it in one skip when nothing
-  the user put after it is before it in the core's order.
+  the user put after it is before it in the core's order, and a copy put in ahead of anything else is taken out first.
+  Nothing is put in ahead until the tap has been carried out.
+- **The DJ's voice** sometimes plays with its cell's circle missing (only the blue backing): 0.8 and 1.6 s after
+  the player comes to a voice, the cover list is reloaded if the centered `DJMContentLayerCell` has no
+  `VisualizationView` showing.
 - **The now playing screens** are told the state with its future in the user's order (`SGSetPlayerStateLens`,
   `Shared/Player/PlayerState.h`), so the cover list moves forward to the track the player goes to.
-- **Over a launch:** the order, the hidden tracks, what has played and the voices heard are kept
+- **Over a launch:** the order, the hidden tracks, what has played, the voices heard and which copy stands for which
+  DJ track are kept
   (`spotifyglass.djqueue.session`) and taken back when the launch goes on in the DJ's session. The first state of a
   launch is not taken for the player coming to its track.
 
