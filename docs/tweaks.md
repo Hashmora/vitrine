@@ -791,16 +791,26 @@ Spotify's own through.
 
 - **How many:** the DJ's segment, about five tracks. The player's state subscription asks for two tracks to come; the
   cap is raised to 16 at launch, for every context, since the subscription is made before any context is known. With a
-  cap of 80 the core still gave one segment (9.1.90): the next is made when the last track of this one is reached.
+  cap of 80 the core still gave one segment (9.1.90): the next is made when the core comes to the last track of this
+  one. The core asks for it itself, with no context page from the app (no `play`, `updateContext` or
+  `updateContextPage`), so it cannot be asked for earlier. With nothing of a segment left but removed or played
+  tracks, the player goes to its last in one skip and on once the next has come.
 - **Removing:** a swipe or Edit hides the row, and the player passes the track when the core comes to it.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
   future as it was), so the order is kept here and the player is held to it. A track the core would come to first is
   skipped to. Any other is queued (the core's own copy) and played from the queue, so the core keeps its place before
   the tracks it has not come to, and a card moved down still has its voice when its turn comes. The core is never
   stepped back to a DJ track: the now playing screens draw a step back backwards, and it lands after the voice.
+- **Ahead of its turn:** the user's next (or, with no order, the core's next that was not removed or played) is put
+  in the core's queue as the track before it starts, so a track that ends by itself goes on to it, not to the core's
+  own for a moment. A track whose card has not played is left to the core, so the voice plays.
+- **A tap** on a row passes the rows before it, as Spotify's queue does: the core goes to it in one skip when nothing
+  the user put after it is before it in the core's order.
 - **The now playing screens** are told the state with its future in the user's order (`SGSetPlayerStateLens`,
   `Shared/Player/PlayerState.h`), so the cover list moves forward to the track the player goes to.
-- The order, the hidden tracks and what has played live in memory: after a relaunch the core's own order is back.
+- **Over a launch:** the order, the hidden tracks, what has played and the voices heard are kept
+  (`spotifyglass.djqueue.session`) and taken back when the launch goes on in the DJ's session. The first state of a
+  launch is not taken for the player coming to its track.
 
 ## Make targets
 
