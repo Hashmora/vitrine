@@ -821,7 +821,10 @@ Spotify's own through.
   of the track in its queue (put in before a launch) is taken as that track too. Back from a
   copy goes to the track before it and puts the copy's track first in the order again. A copy that is no longer
   wanted is taken out with a `setQueue` of the core's whole `nextTracks` without it (one of only the queued tracks is
-  ignored).
+  ignored). That list is the one the readers were told last, which can be from before the player moved on, and the core
+  then keeps the copy: a second later the core's future is looked at, and the copy is taken out again (up to 3 times).
+  After a launch the core can go back to a track before ones that played from its queue: a DJ track that played before
+  the launch is no row, as the next put in ahead passes it.
 - **Ahead of its turn:** the user's next (or, with no order, the core's next that was not removed or played) is put
   in the core's queue as the track before it starts, so a track that ends by itself goes on to it, not to the core's
   own for a moment. A track whose card has not played is left to the core, so the voice plays. The card is looked for
