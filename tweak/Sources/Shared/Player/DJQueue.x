@@ -893,6 +893,7 @@ static void dropQueuedTries(NSString *uri, NSString *why, int tries) {
         if ([SGURIString(left[i].URI) isEqualToString:uri]) drop = i;
     }
     if (drop < 0) {
+        if (tries < 0) return;   // a check after a removal: the readers' queue has it gone already
         // Put in a moment ago, it may not have reached the queue the readers were told yet: looked for again.
         if (tries < 8) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -911,6 +912,23 @@ static void dropQueuedTries(NSString *uri, NSString *why, int tries) {
     id result = ((id (*)(id, SEL, id, id, id))objc_msgSend)(player, setQueue, copy, nil, nil);
     sOwnQueueCommand = NO;
     SGLog(@"queue: %@ is taken out of the core's queue (%@), it answered %@", uri, why, result);
+    // Sent with the queue the readers were told last, which may be one from before the player moved on (a copy taken out
+    // as the player came to the next track stayed, and showed as queued by hand): looked at again, and sent again with
+    // the queue as it is then.
+    if (tries >= 100) return;
+    int checks = tries < 0 ? -tries : 0;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (sAheadQueued && [SGURIString(sAheadQueued.URI) isEqualToString:uri]) return;   // wanted again meanwhile
+        BOOL there = NO;
+        for (SPTPlayerTrack *t in SGPlayerState().future) {
+            if ([SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) break;
+            if (isCoreQueued(t) && [SGURIString(t.URI) isEqualToString:uri]) { there = YES; break; }
+        }
+        if (!there) return;
+        if (checks >= 3) { SGLog(@"queue: %@ is still in the core's queue after %d tries (%@)", uri, checks + 1, why); return; }
+        SGLog(@"queue: %@ is still in the core's queue, taken out again (%@)", uri, why);
+        dropQueuedTries(uri, why, -(checks + 1));
+    });
 }
 
 static id queueInCore(SPTPlayerTrack *track) {
@@ -1371,7 +1389,16 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     sAhead = ahead;
     // What the page shows of them: not the ones it removed, nor the ones queued by hand.
     NSMutableArray<SPTPlayerTrack *> *shown = [NSMutableArray array];
-    for (SPTPlayerTrack *track in ahead) if (!isHidden(track)) [shown addObject:track];
+    // A track of the DJ's that played before the launch is not a row again: the core restores its place before it (the
+    // track was played from its queue), and the next the mod puts in skips it, so it showed as a row that never played.
+    NSString *playingUID = baseUID(state.track.UID);
+    for (SPTPlayerTrack *track in ahead) {
+        if (isHidden(track)) continue;
+        NSString *uid = baseUID(track.UID);
+        if (uid.length && ![uid isEqualToString:playingUID] && [sPlayedBefore containsObject:uid] && isDJTrack(track) &&
+            ![SGURIString(track.URI) hasPrefix:@"spotify:media:"]) continue;
+        [shown addObject:track];
+    }
     for (NSDictionary *entry in sMoved.allValues) if (!isHidden(entry[@"row"])) [shown addObject:entry[@"row"]];
     if (sOrdered) shown = arrangedRows(shown, state);
     // The hand-queued tracks, the DJ's, then whatever else the queue had.
@@ -1514,11 +1541,11 @@ static BOOL sReloadQueued;
 %end
 
 // The drag handle of a row is UIKit's UITableViewCellReorderControl, a view of the cell itself, right of the content.
-// On rows the page made late it stays at {0, 0}, over the cover. It is put where UIKit put the other rows' handles: its
-// x is learned from a handle UIKit placed itself (the right edge of the content was 3 points off, and those rows' handles
-// stood out of line).
-static CGFloat sHandleX = -1;
-static NSHashTable<UIView *> *sPlacedHandles;
+// On rows the page made late it stays at {0, 0}, over the cover, and on a row the page reloads mid-change UIKit can
+// leave it stretched at the far right ({355, 0, 27, 64} beside {342, 10, 44, 44}). Every handle is given the frame of
+// one UIKit laid out the usual way, a square right of the content; until one is known, a late handle goes to the right
+// edge of the content.
+static CGRect sHandleFrame = {{-1, 0}, {0, 0}};
 static __weak UIView *sUIKitHandle;
 static __weak UIView *sQueuePageView;
 static void alignHeaderPlay(UIView *page);
@@ -1529,30 +1556,30 @@ static void placeReorderHandle(UITableViewCell *cell) {
     }
     if (!control || control.hidden || cell.bounds.size.width < 100 || control.frame.size.width <= 0) return;
     CGFloat width = cell.bounds.size.width, height = cell.bounds.size.height;
-    if (!sPlacedHandles) sPlacedHandles = [NSHashTable weakObjectsHashTable];
-    if (control.frame.origin.x >= width / 2) {
-        if ([sPlacedHandles containsObject:control]) {
-            // Placed here before UIKit's own was known: in line with it now.
-            if (sHandleX >= 0 && fabs(control.frame.origin.x - sHandleX) > 0.5) {
-                CGRect frame = control.frame;
-                frame.origin.x = sHandleX;
-                control.frame = frame;
-            }
-        } else {
-            sHandleX = control.frame.origin.x;
-            if (sUIKitHandle != control) {
-                sUIKitHandle = control;
-                // The handles are made anew each time the queue opens, after the page's own layout pass: the ▶ goes
-                // to their column in the same pass, before the page is on screen.
-                alignHeaderPlay(sQueuePageView);
-            }
-        }
+    CGRect frame = control.frame;
+    BOOL usual = frame.origin.x >= width / 2 && fabs(frame.size.width - frame.size.height) < 1 && frame.size.height < height;
+    if (usual && control != sUIKitHandle && (sHandleFrame.origin.x < 0 || fabs(frame.origin.x - sHandleFrame.origin.x) > 0.5)) {
+        BOOL first = sHandleFrame.origin.x < 0;
+        sHandleFrame = frame;
+        sUIKitHandle = control;
+        // The handles are made anew each time the queue opens, after the page's own layout pass: the ▶ goes to their
+        // column in the same pass, before the page is on screen.
+        if (first || sQueuePageView) alignHeaderPlay(sQueuePageView);
+    } else if (usual && !sUIKitHandle) {
+        sUIKitHandle = control;
+    }
+    CGRect want;
+    if (sHandleFrame.origin.x >= 0) {
+        want = CGRectMake(sHandleFrame.origin.x, (height - sHandleFrame.size.height) / 2, sHandleFrame.size.width, sHandleFrame.size.height);
+    } else if (frame.origin.x < width / 2) {
+        CGFloat content = cell.contentView.frame.size.width;
+        CGFloat x = (content > 0 && content < width) ? CGRectGetMaxX(cell.contentView.frame) - 3 : width - 60;
+        want = CGRectMake(x, (height - frame.size.height) / 2, frame.size.width, frame.size.height);
+    } else {
         return;
     }
-    CGFloat content = cell.contentView.frame.size.width;
-    CGFloat x = sHandleX >= 0 ? sHandleX : (content > 0 && content < width) ? CGRectGetMaxX(cell.contentView.frame) - 3 : width - 60;
-    control.frame = CGRectMake(x, (height - control.frame.size.height) / 2, control.frame.size.width, control.frame.size.height);
-    [sPlacedHandles addObject:control];
+    if (CGRectEqualToRect(CGRectIntegral(want), CGRectIntegral(frame))) return;
+    control.frame = want;
 }
 
 // The "Now playing" row has no handle, so Spotify lays it out the table's full width and its ▶ sits against the
