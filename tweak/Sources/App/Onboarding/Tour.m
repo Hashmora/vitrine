@@ -627,7 +627,7 @@ void SGShowOnboarding(void) {
     if (sg_tour) return;
     UIViewController *top = SGTopController();
     // Presenting from an alert lands nowhere; the tour waits for it to go.
-    if (!top || [top isKindOfClass:UIAlertController.class]) {
+    if (!top || SGIsAlertController(top)) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ SGShowOnboarding(); });
         return;
     }

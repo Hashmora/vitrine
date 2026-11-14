@@ -307,6 +307,10 @@ UIViewController *SGTopController(void) {
     return top;
 }
 
+BOOL SGIsAlertController(UIViewController *controller) {
+    return [controller isKindOfClass:UIAlertController.class] || [controller conformsToProtocol:@protocol(SGAlertScreen)];
+}
+
 @interface SGPopoverStyle : NSObject <UIPopoverPresentationControllerDelegate>
 @end
 
