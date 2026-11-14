@@ -525,6 +525,21 @@ void SGRNowPlayingBarFollowTabBar(void) {
     placeInline(container);
     [container.view setNeedsLayout];
     [container.view layoutIfNeeded];
+    SGRSnackbarFollowNowPlayingBar();
+    SGRTooltipFollowNowPlayingBar();
+}
+
+CGFloat SGRNowPlayingBarInlineShift(void) {
+    UIView *view = sg_inline;
+    return view ? view.transform.ty : 0;
+}
+
+CGFloat SGRNowPlayingBarShiftOver(CGRect frame, UIWindow *window) {
+    CGFloat shift = SGRNowPlayingBarInlineShift();
+    if (shift == 0 || !window) return 0;
+    CGRect bar = SGRNowPlayingCardFrameIn(window, NULL);
+    if (CGRectIsNull(bar)) return shift;
+    return CGRectGetMaxY(frame) <= CGRectGetMinY(bar) - shift + 24 ? shift : 0;
 }
 
 CGRect SGRNowPlayingStripFrameIn(UIView *host) {
