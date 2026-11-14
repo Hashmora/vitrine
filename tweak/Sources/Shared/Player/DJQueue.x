@@ -1597,6 +1597,33 @@ static void alignHeaderPlay(UIView *page) {
     if (fabs(play.transform.tx - dx) > 0.5) {
         [UIView performWithoutAnimation:^{ play.transform = CGAffineTransformMakeTranslation(dx, 0); }];
     }
+    // Spotify lays the title out up to where the button was, so moved left the button sat over the text and the text
+    // showed past it: the row's text fades out before the button.
+    UIView *content = descendant(row, ^BOOL(UIView *view) { return [view.accessibilityIdentifier isEqualToString:@"Track.Row.Content"]; });
+    if (!content || content.bounds.size.width <= 0) return;
+    CGFloat cut = [play.superview convertRect:play.frame toView:content].origin.x - 8;
+    CGFloat width = content.bounds.size.width, fade = 16;
+    CAGradientLayer *mask = [content.layer.mask isKindOfClass:CAGradientLayer.class] && [content.layer.mask.name isEqualToString:@"SGQueuePlayFade"] ?
+        (CAGradientLayer *)content.layer.mask : nil;
+    if (cut >= width) {
+        if (mask) content.layer.mask = nil;
+        return;
+    }
+    if (!mask) {
+        if (content.layer.mask) return;   // a mask of Spotify's own is left alone
+        mask = [CAGradientLayer layer];
+        mask.name = @"SGQueuePlayFade";
+        mask.startPoint = CGPointMake(0, 0.5);
+        mask.endPoint = CGPointMake(1, 0.5);
+        mask.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor, (id)UIColor.clearColor.CGColor];
+        content.layer.mask = mask;
+    }
+    CGFloat end = MAX(0, cut) / width, start = MAX(0, cut - fade) / width;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    mask.frame = content.bounds;
+    mask.locations = @[@0, @(start), @(end), @1];
+    [CATransaction commit];
 }
 
 // Spotify lays the button out again on its own (a play state change rebuilds it): it is put back in the column in
