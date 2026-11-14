@@ -5,6 +5,7 @@
 #import <UIKit/UIKit.h>
 #import "SGLegacyGlass.h"
 #import "SGGlassTouch.h"
+#import "SGGlassThumb.h"
 
 #define SGKeyLegacyGlass @"spotifyglass.redesign.legacyglass"
 
