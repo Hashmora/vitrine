@@ -28,6 +28,15 @@ UIView *SGRGlassCapsuleInside(UIView *control, const void *key, CGSize size, BOO
 // does): a capsule wider than its control, or the legacy glass's press, which grows past it, would be cut off.
 void SGRUnclipUpTo(UIView *view, BOOL (^isLast)(UIView *ancestor));
 
+// The glass capsule a name sits on at the top of a page (a bar's title, a header's name), level with the glass circles
+// beside it: SGRGlassCircleSize tall, SGRTitlePadding of glass each side of `content` (the name's width,
+// SGRTitleWidth), never narrower than it is tall and at most `room` wide. It goes inside `holder` under `key`
+// (SGRGlassCapsuleInside); with `isLast` the views from `holder` up stop clipping as SGRUnclipUpTo has it, for a holder
+// as small as its name. Returns the capsule, nil for no content.
+UIView *SGRGlassTitleCapsule(UIView *holder, const void *key, CGFloat content, CGFloat room, BOOL (^isLast)(UIView *ancestor));
+// The width `label`'s text takes on one line, rounded up.
+CGFloat SGRTitleWidth(UILabel *label);
+
 // Shows or hides a shape of the Kit's by its effect, never by an alpha on it or on a view above it
 // (Redesigned/Player/PlayerMotion.x): UIKit draws the material wrongly or not at all under a fading alpha.
 // The solid shape Reduce Transparency puts in its place has no effect and fades by its own alpha. Animates
@@ -43,6 +52,16 @@ UIView *SGRGlassFlatBox(UIView *box, const void *key, BOOL prominent);
 // `maxRadius`, and a pane (under `glassKey`) and a film (under `filmKey`) of its size. Not clipped with the legacy
 // glass, whose pane has the corners and whose press grows past it. Returns the pane.
 UIView *SGRGlassFloatingCard(UIView *card, const void *glassKey, const void *filmKey, CGFloat maxRadius);
+
+// A glass capsule that is the whole of `box` and follows it: the box is cleared and made a capsule, and the glass is its first subview with
+// the box's size kept by autoresizing, so a box that is resized (the AI playlist's Refine field, which Create narrows) takes its glass along
+// frame by frame. It answers no press: for a field that is typed into, the grown, stretched glass of a press lags behind the finger and
+// reads as a fault. `prominent` lays the white film in as SGRGlassFlatBox does. Safe to call on every pass; nil on iOS 26.
+UIView *SGRGlassFillBox(UIView *box, const void *key, BOOL prominent);
+
+// Lays the white film SGRGlassCapsuleInside gives a prominent shape inside any shape of the Kit's (a pane made by SGGlassFor), or takes it
+// away, so a card or bubble on glass over black reads as a plate instead of a hole. The film carries the corners `radius`.
+void SGRGlassSetFilm(UIView *shape, BOOL on, CGFloat radius);
 
 // The faint white film over a floating bar's glass (the tab bar's platter, the now playing card), without
 // which the bar disappears into Spotify's near-black chrome. Made once under `key`, kept just above `glass`
