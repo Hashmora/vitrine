@@ -490,6 +490,7 @@ static NSMutableSet<NSString *> *sBounced;
 // played, soon after, is the step back; any other is the track played again, as the newest.
 static NSDate *sBackAsked;
 static NSTimer *sHeaderTimer;
+static __weak UIViewController *sHeaderTimerPage;
 static NSDate *sNativeQueueAt;
 static __weak id sWrapper;
 static SPTPlayerTrack *sSwipeRow;
@@ -1573,6 +1574,19 @@ static void alignHeaderPlay(UIView *page) {
 
 // Spotify lays the button out again on its own (a play state change rebuilds it): it is put back in the column in
 // that pass, not at the page's next tick.
+// The "Now playing" row is the new track's as soon as the player is on it: its avatar and ▶ are put in then and as
+// the row settles, not at the page's next tick.
+static void drawHeaderSoon(void) {
+    for (NSNumber *delay in @[@0.05, @0.3, @0.8]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *page = sQueuePageView;
+            if (!page.window || !sDJActive) return;
+            drawHeaderAvatar(page);
+            alignHeaderPlay(page);
+        });
+    }
+}
+
 %hook _TtC28EncoreConsumerMobile_BaseKit14PlayButtonView
 - (void)layoutSubviews {
     %orig;
@@ -2111,6 +2125,7 @@ static void scheduleHandOver(void) {
         SGLog(@"queue: the player is on %@ [%@] at %.1f s", SGURIString(track.URI), track.UID, state.position);
         // The core tells the page of a queued track it has come to only with its next queue: the rows are made again now.
         refreshReaders();
+        drawHeaderSoon();
     }
     if (arrived && [SGURIString(track.URI) hasPrefix:@"spotify:media:"]) {
         for (NSNumber *delay in @[@0.8, @1.6]) {
@@ -2424,6 +2439,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
     sHeaderTimer = nil;
     if (!sDJActive) return;
     __weak UIViewController *page = (UIViewController *)(id)self;
+    sHeaderTimerPage = page;
     sHeaderTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *timer) {
         UIViewController *strong = page;
         if (!strong || !sDJActive) { [timer invalidate]; return; }
@@ -2433,6 +2449,9 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
 }
 - (void)viewDidDisappear:(BOOL)animated {
     %orig;
+    // Only the page the timer is for stops it: a queue page going away after a new one has appeared (the queue closed
+    // and opened again) stopped the new page's, and the card's avatar was not drawn in its "Now playing" row.
+    if (sHeaderTimerPage && sHeaderTimerPage != (UIViewController *)(id)self) return;
     [sHeaderTimer invalidate];
     sHeaderTimer = nil;
 }
