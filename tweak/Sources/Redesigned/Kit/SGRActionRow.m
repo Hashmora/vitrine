@@ -608,6 +608,10 @@ void SGRPlacePinnedBack(UIView *page) {
     placeInCorner(page, button, YES, 0);
 }
 
+SGRMirrorButton *SGRPinnedBackIn(UIView *page) {
+    return page ? objc_getAssociatedObject(page, &kBackButtonKey) : nil;
+}
+
 SGRMirrorButton *SGRPinnedBackOf(UIView *page, UIView *source) {
     if (@available(iOS 26.0, *)) return nil;
     return page ? pinBack(page, source) : nil;

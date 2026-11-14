@@ -171,6 +171,35 @@ UIView *SGRGlassFlatBox(UIView *box, const void *key, BOOL prominent) {
     return SGRGlassCapsuleInside(box, key, size, prominent);
 }
 
+static char kAccentFilmKey;
+
+UIView *SGRGlassEncoreButton(UIView *button, const void *key, BOOL accent) {
+    if (@available(iOS 26.0, *)) return nil;
+    if (button.backgroundColor && ![button.backgroundColor isEqual:UIColor.clearColor]) button.backgroundColor = UIColor.clearColor;
+    if (button.layer.backgroundColor) button.layer.backgroundColor = NULL;
+    UIView *film = objc_getAssociatedObject(button, &kAccentFilmKey);
+    UIView *inner = button.subviews.lastObject;
+    if (inner && inner != film && CGSizeEqualToSize(inner.bounds.size, button.bounds.size)
+        && inner.layer.backgroundColor && CGColorGetAlpha(inner.layer.backgroundColor) > 0.05) {
+        inner.layer.backgroundColor = NULL;
+    }
+    UIView *glass = SGRGlassFlatBox(button, key, NO);
+    if (!accent) return glass;
+    if (!film) {
+        film = [UIView new];
+        film.userInteractionEnabled = NO;
+        film.layer.cornerCurve = kCACornerCurveContinuous;
+        objc_setAssociatedObject(button, &kAccentFilmKey, film, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    UIColor *color = [SGRAccent() colorWithAlphaComponent:0.8];
+    if (![film.backgroundColor isEqual:color]) film.backgroundColor = color;
+    if (film.superview != button) [button insertSubview:film atIndex:glass ? 1 : 0];
+    if (!CGRectEqualToRect(film.frame, button.bounds)) film.frame = button.bounds;
+    CGFloat radius = button.bounds.size.height / 2;
+    if (film.layer.cornerRadius != radius) film.layer.cornerRadius = radius;
+    return glass;
+}
+
 UIView *SGRGlassFloatingCard(UIView *card, const void *glassKey, const void *filmKey, CGFloat maxRadius) {
     CGFloat radius = MIN(card.bounds.size.height / 2, maxRadius);
     if (card.layer.backgroundColor) card.layer.backgroundColor = NULL;
@@ -565,3 +594,10 @@ UIView *SGRGlassTitleCapsule(UIView *holder, const void *key, CGFloat content, C
 }
 
 #pragma mark - a sheet's pane
+
+UIView *SGRSheetPaneOfNavigation(UINavigationController *navigation) {
+    UIView *pane = navigation.view.superview;
+    if (!navigation || !pane || pane.bounds.size.width < 300) return nil;
+    if (pane.bounds.size.height >= UIScreen.mainScreen.bounds.size.height - 1) return nil;
+    return pane;
+}

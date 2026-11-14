@@ -305,6 +305,35 @@ Class SGRSwiftClass(NSString *module, NSString *name) {
     return NSClassFromString(mangled) ?: NSClassFromString([NSString stringWithFormat:@"%@.%@", module, name]);
 }
 
+Class SGRPrivateSwiftClass(NSString *module, NSString *suffix) {
+    // The app's own images walked by name, without realizing any class (objc_copyClassList realizes every class of the
+    // process, which a launch pays for), each name compared as it is read and none kept.
+    const char *prefix = [NSString stringWithFormat:@"_TtC%lu%@", (unsigned long)module.length, module].UTF8String;
+    const char *end = suffix.UTF8String;
+    const char *bundle = NSBundle.mainBundle.bundlePath.fileSystemRepresentation;
+    if (!prefix || !end || !bundle) return nil;
+    size_t prefixLength = strlen(prefix), endLength = strlen(end), bundleLength = strlen(bundle);
+    Class found = nil;
+    unsigned int imageCount = 0;
+    const char **images = objc_copyImageNames(&imageCount);
+    for (unsigned int i = 0; i < imageCount && !found; i++) {
+        if (strncmp(images[i], bundle, bundleLength) != 0) continue;
+        unsigned int count = 0;
+        const char **classes = objc_copyClassNamesForImage(images[i], &count);
+        for (unsigned int j = 0; j < count; j++) {
+            const char *name = classes[j];
+            size_t length = strlen(name);
+            if (length < prefixLength + endLength || strncmp(name, prefix, prefixLength) != 0) continue;
+            if (strcmp(name + length - endLength, end) != 0) continue;
+            found = objc_getClass(name);
+            break;
+        }
+        free(classes);
+    }
+    free(images);
+    return found;
+}
+
 void SGRConceal(UIView *view) {
     if (!view) return;
     if (!view.layer.hidden) view.layer.hidden = YES;
