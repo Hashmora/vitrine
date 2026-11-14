@@ -129,11 +129,69 @@ UIView *SGRGlassCapsuleInside(UIView *control, const void *key, CGSize size, BOO
     return glassInside(control, key, size, YES, prominent);
 }
 
+// The dimming SGRDarkenGlass puts inside a pane's content.
+@interface SGRGlassDim : UIView
+@end
+@implementation SGRGlassDim
+@end
+
 void SGRShowGlass(UIView *shape, BOOL shown) {
     if ([shape isKindOfClass:UIVisualEffectView.class]) {
         UIVisualEffectView *glass = (UIVisualEffectView *)shape;
         if ((glass.effect != nil) != shown) glass.effect = shown ? SGGlassEffect() : nil;
+        // A blur comes and goes by its effect, which leaves its content on screen: its dimming goes with it, or a dark
+        // shape stays where the glass was.
+        for (UIView *view in glass.contentView.subviews) {
+            if ([view isKindOfClass:SGRGlassDim.class]) view.alpha = shown ? 1 : 0;
+        }
     } else {
         shape.alpha = shown ? 1 : 0;
     }
+}
+
+#pragma mark - a film over glass
+
+const CGFloat SGRBarDim = 0.45;
+
+UIView *SGRDarkenGlass(UIView *pane, const void *key, CGFloat radius, CGFloat alpha) {
+    if (@available(iOS 26.0, *)) return nil;
+    UIView *content = [pane isKindOfClass:UIVisualEffectView.class] ? ((UIVisualEffectView *)pane).contentView
+                    : [pane isKindOfClass:SGLegacyGlassView.class] ? ((SGLegacyGlassView *)pane).contentView : nil;
+    if (!content) return nil;
+    UIView *dim = SGLazyChild(content, key, ^UIView *{
+        UIView *view = [SGRGlassDim new];
+        view.userInteractionEnabled = NO;
+        // Shown as the blur is (SGRShowGlass).
+        if ([pane isKindOfClass:UIVisualEffectView.class] && !((UIVisualEffectView *)pane).effect) view.alpha = 0;
+        view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        return view;
+    });
+    UIColor *color = [UIColor colorWithWhite:0 alpha:alpha];
+    if (![dim.backgroundColor isEqual:color]) dim.backgroundColor = color;
+    if (dim.superview != content) [content insertSubview:dim atIndex:0];
+    if (!CGRectEqualToRect(dim.frame, content.bounds)) dim.frame = content.bounds;
+    if (dim.layer.cornerRadius != radius) dim.layer.cornerRadius = radius;
+    if (dim.layer.cornerCurve != pane.layer.cornerCurve) dim.layer.cornerCurve = pane.layer.cornerCurve;
+    return dim;
+}
+
+UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radius) {
+    if (@available(iOS 26.0, *)) return nil;
+    UIView *film = SGLazyChild(host, key, ^UIView *{
+        UIView *view = [UIView new];
+        view.backgroundColor = SGRGlassFilmColor();
+        view.userInteractionEnabled = NO;
+        view.layer.cornerCurve = kCACornerCurveContinuous;
+        view.layer.masksToBounds = YES;
+        return view;
+    });
+    if (film.superview != host) [host insertSubview:film aboveSubview:glass];
+    if (!CGRectEqualToRect(film.frame, glass.frame)) film.frame = glass.frame;
+    if (film.layer.cornerRadius != radius) film.layer.cornerRadius = radius;
+    // The film covers its pane, and with it the pane's own highlight, so the film carries one.
+    if ([glass isKindOfClass:SGLegacyGlassView.class]) {
+        if (((SGLegacyGlassView *)glass).classic) SGLegacyGlassClassicSpecular(film.layer, film.bounds, radius);
+        else SGLegacyGlassSpecular(film.layer, film.bounds, radius);
+    }
+    return film;
 }
