@@ -101,6 +101,10 @@ UIView *SGRSheetPaneOf(UIView *view);
 // (the share menu's ShareMenuSheetView, which UIKit presents over the screen on its own, not in Navigation's
 // sheet): the pane, the screen's top corners and the cleared grey, as above.
 UIView *SGRGlassSheetView(UIView *sheet);
+// Takes SGRGlassSheetView's pane off a sheet and gives the pane back its corners and paint (black when it had none). For a sheet
+// that was glassed before it was known to be one that stays Spotify's, as Edit profile (Profile/ProfileEdit.x). Safe to call on
+// every pass; does nothing on a sheet that was never glassed.
+void SGRRemoveSheetGlass(UIView *sheet);
 // Whether `layer` is the shadow of a sheet SGRGlassSheetChrome glassed, which UIKit gives its shadow back on every move
 // between detents: Kit/SGRSheetPopups.x keeps it at 0 as it is written.
 BOOL SGRSheetShadowHeld(CALayer *layer);

@@ -34,6 +34,10 @@
 @property (nonatomic, weak, readonly) UIView *source;
 // Drawn, in white, when Spotify's button has no image view to copy (a glyph it draws itself).
 @property (nonatomic, strong) UIImage *fallbackGlyph;
+// YES draws fallbackGlyph centred at its own size and never Spotify's image: for a control whose own image has
+// uneven padding in its canvas (the Eat this playlist cross sat off the middle of its circle), where copying it
+// copies the offset. The label and the action are still Spotify's. NO, the default, copies Spotify's glyph.
+@property (nonatomic, assign) BOOL ownGlyph;
 // The color to draw the mirrored glyph in, whatever color Spotify drew it. nil, the default, keeps
 // Spotify's -- which is what a glyph that says something by its color needs (shuffle turns the accent
 // color while it is on). Set it for a glyph whose color is only the weight Spotify gave the control it

@@ -658,6 +658,10 @@ Redesigned:
                   on passes the header never sees) and the filter
                   chips are glass as the Library's are (LibraryHeader.x takes both rows). The search in the Library, the podcast
                   "Find in this show" page and "Find on this page" have their field and Cancel on glass the same way
+    Profile/      below iOS 26, the lists a profile opens (Followers, Following, playlists): UIKit's bar with the back
+                  button on a glass circle, the title on a glass capsule and Spotify's dark blur behind the bar hidden
+                  while such a page is on top; the page that adds playlists to the profile has that bar without a capsule
+                  (it has no title) and the queue's glass behind its Remove from profile button (Profile.h lists its files)
     Library/      Your Library the way Home and Search have their headers: a large title at the leading edge, the avatar
                   at the trailing edge with the search and create buttons before it, the header's scrim gone, each row's
                   artwork at the Kit's radius with a circular one left round, a hairline between the rows, and the search
