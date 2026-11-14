@@ -1519,6 +1519,8 @@ static BOOL sReloadQueued;
 static CGFloat sHandleX = -1;
 static NSHashTable<UIView *> *sPlacedHandles;
 static __weak UIView *sUIKitHandle;
+static __weak UIView *sQueuePageView;
+static void alignHeaderPlay(UIView *page);
 static void placeReorderHandle(UITableViewCell *cell) {
     UIView *control = nil;
     for (UIView *view in cell.subviews) {
@@ -1537,7 +1539,12 @@ static void placeReorderHandle(UITableViewCell *cell) {
             }
         } else {
             sHandleX = control.frame.origin.x;
-            sUIKitHandle = control;
+            if (sUIKitHandle != control) {
+                sUIKitHandle = control;
+                // The handles are made anew each time the queue opens, after the page's own layout pass: the ▶ goes
+                // to their column in the same pass, before the page is on screen.
+                alignHeaderPlay(sQueuePageView);
+            }
         }
         return;
     }
@@ -1559,8 +1566,22 @@ static void alignHeaderPlay(UIView *page) {
     CGFloat want = [handle.superview convertPoint:handle.center toView:play.superview].x;
     CGFloat dx = want - play.center.x;
     if (fabs(dx) > 60) return;
-    if (fabs(play.transform.tx - dx) > 0.5) play.transform = CGAffineTransformMakeTranslation(dx, 0);
+    if (fabs(play.transform.tx - dx) > 0.5) {
+        [UIView performWithoutAnimation:^{ play.transform = CGAffineTransformMakeTranslation(dx, 0); }];
+    }
 }
+
+// Spotify lays the button out again on its own (a play state change rebuilds it): it is put back in the column in
+// that pass, not at the page's next tick.
+%hook _TtC28EncoreConsumerMobile_BaseKit14PlayButtonView
+- (void)layoutSubviews {
+    %orig;
+    UIView *button = (UIView *)self;
+    if (!sDJActive || !sQueuePageView || button.window != sQueuePageView.window) return;
+    if (![button.accessibilityIdentifier isEqualToString:@"header-play-button"]) return;
+    alignHeaderPlay(sQueuePageView);
+}
+%end
 
 %hook _TtC14Queue_ViewImpl9QueueCell
 - (void)layoutSubviews {
@@ -2393,6 +2414,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
 - (void)viewDidLayoutSubviews {
     %orig;
     drawHeaderAvatar(((UIViewController *)(id)self).view);
+    sQueuePageView = ((UIViewController *)(id)self).view;
     if (sDJActive) alignHeaderPlay(((UIViewController *)(id)self).view);
 }
 - (void)viewDidAppear:(BOOL)animated {
@@ -2536,6 +2558,6 @@ static BOOL canMoveRow(id self, SEL _cmd, UITableView *table, NSIndexPath *path)
     SGSetPlayerStateLens(djLens);
     SGRequireClasses(@[@"_TtC16Queue_UpNextImpl19UpNextTrackProvider", @"_TtC14Queue_ViewImpl22PlayerStateEventSource",
                        @"_TtC14Queue_ViewImpl20QueuedTracksObserver", @"_TtC14Queue_ViewImpl19QueueViewController",
-                       @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer", @"SPTPlayerQueueWrapperImpl", @"_TtC14Queue_ViewImpl9QueueCell",
+                       @"ESPContextPlayerClientImpl", @"SPTEsperantoPlayer", @"SPTPlayerQueueWrapperImpl", @"_TtC14Queue_ViewImpl9QueueCell", @"_TtC28EncoreConsumerMobile_BaseKit14PlayButtonView",
                        @"_TtC14Queue_ViewImpl38QueueTableViewDataSourceImplementation"]);
 }
