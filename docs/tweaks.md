@@ -651,7 +651,13 @@ Redesigned:
     Search/       the Browse page decluttered to its category cards (an allow list of the list's cells: the watch feed
                   carousels and promos collapse, and the cards move up by the spacing they leave), the header the way Home
                   has it without the camera, and each card as Liquid Glass tinted by its own color, read off the Box's
-                  shape layer (Search.h lists its files)
+                  shape layer (Search.h lists its files). Below iOS 26 the results page's header (SearchHeader.x) loses
+                  Spotify's #1F1F1F backing and nothing put in its place (a plate sized on layout passes
+                  cut the header's animations off), the field and Cancel are glass capsules with a faint white film floating over
+                  the page (dressed from the field's own layout as well as the header's, since Spotify rebuilds the field's fill
+                  on passes the header never sees) and the filter
+                  chips are glass as the Library's are (LibraryHeader.x takes both rows). The search in the Library, the podcast
+                  "Find in this show" page and "Find on this page" have their field and Cancel on glass the same way
     Library/      Your Library the way Home and Search have their headers: a large title at the leading edge, the avatar
                   at the trailing edge with the search and create buttons before it, the header's scrim gone, each row's
                   artwork at the Kit's radius with a circular one left round, a hairline between the rows, and the search

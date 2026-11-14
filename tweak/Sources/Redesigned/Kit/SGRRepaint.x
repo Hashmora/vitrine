@@ -14,7 +14,9 @@ __weak UIView *sgr_playlistRoot = nil;
 __weak UIView *sgr_albumRoot = nil;
 __weak UIView *sgr_artistRoot = nil;
 __weak UIView *sgr_sheetChromeRoot = nil;
+__weak UIView *sgr_searchHeaderRoot = nil;
 __weak UIView *sgr_addSongsSearchBar = nil;
+__weak UIView *sgr_searchFieldFill = nil;
 __weak UIView *sgr_showSearchField = nil;
 __weak UIView *sgr_showSearchHeader = nil;
 
@@ -28,6 +30,36 @@ void SGRHoldClear(UIView *view) {
     [heldClear addObject:view];
 }
 
+// Classes are never unloaded, so plain pointers do; a handful at most.
+static Class heldClearClasses[8];
+static int heldClearClassCount;
+
+void SGRHoldClearClass(Class cls) {
+    if (!cls) return;
+    for (int i = 0; i < heldClearClassCount; i++) if (heldClearClasses[i] == cls) return;
+    if (heldClearClassCount >= 8) return;
+    heldClearClasses[heldClearClassCount++] = cls;
+    // At the view as well: UIView keeps the colour it is given and puts it on its layer again by ways of its own (a
+    // change of traits), past the layer's setter, so a view left holding its black got it back on its layer after the
+    // layer had been cleared (Home's header element, its view and its layer both #000000 with the hold in place). On
+    // this class alone: its own -setBackgroundColor:, or one added over the one it inherits.
+    SEL set = @selector(setBackgroundColor:);
+    Method method = class_getInstanceMethod(cls, set);
+    if (!method) return;
+    IMP inherited = method_getImplementation(method);
+    IMP cleared = imp_implementationWithBlock(^(UIView *view, UIColor *color) {
+        ((void (*)(id, SEL, UIColor *))inherited)(view, set, nil);
+    });
+    if (!class_addMethod(cls, set, cleared, method_getTypeEncoding(method))) method_setImplementation(method, cleared);
+}
+
+static BOOL ofHeldClearClass(id owner) {
+    if (!heldClearClassCount || !owner) return NO;
+    Class cls = object_getClass(owner);
+    for (int i = 0; i < heldClearClassCount; i++) if (heldClearClasses[i] == cls) return YES;
+    return NO;
+}
+
 // The flat, translucent white Spotify tints an unselected filter chip with (#FFFFFF@0.10). A selected chip is painted a solid colour of its own, which is never this.
 static BOOL isNeutralTint(CGColorRef color) {
     if (!color || CFGetTypeID(color) != CGColorGetTypeID()) return NO;
@@ -37,6 +69,28 @@ static BOOL isNeutralTint(CGColorRef color) {
     size_t n = CGColorGetNumberOfComponents(color);
     for (size_t i = 0; i + 1 < n; i++) if (c[i] < 0.9) return NO;
     return n >= 2;
+}
+
+// The fill of a library filter chip: the plain view FilterChipView lays under its label. Spotify paints
+// it again on its own passes (a chip pressed, selected or let go, a cell coming back from reuse), none
+// of which lays the library page out, so clearing it once from the page's pass left the grey back under
+// the glass every time. Told apart by the class of its parent, not by a root: the root library and a
+// folder can both be alive, and each has chips. The cross that clears the filters has a fill of the same kind
+// in its ClearChipView.
+static BOOL isChipFill(UIView *view) {
+    if (view.superview == nil || ![view isMemberOfClass:UIView.class]) return NO;
+    NSString *parent = NSStringFromClass(view.superview.class);
+    return [parent isEqualToString:@"EncoreConsumerMobile_BaseKit.FilterChipView"] || [parent hasSuffix:@"ClearChipView"];
+}
+
+// The opaque backing Spotify paints the library's pinned header with (#121212, black under the AMOLED hook).
+// Library/LibraryHeader.x leaves the header with no backing at all, so the title row and the filter chips
+// float over the page as glass; this keeps Spotify's own paint from covering them again on its passes. Size first, name second: this runs for every colour any layer is given.
+static BOOL isLibraryHeader(UIView *view) {
+    CGSize size = view.bounds.size;
+    if (size.width < 300 || size.height < 100 || size.height > 260) return NO;
+    NSString *name = NSStringFromClass(view.class);
+    return [name hasSuffix:@"YourLibraryHeaderView"] || [name hasSuffix:@"FolderHeaderView"];
 }
 
 // One walk up from the view says which roots it is inside, the way SGIsInside would for each: not past a
@@ -50,12 +104,25 @@ enum { kInNowPlaying = 1, kInLyrics = 2, kInPage = 4 };
         return;
     }
     BOOL legacyLook = SGBelowiOS26();
+    if (legacyLook && color && CGColorGetAlpha(color) > 0.5) {
+        UIView *header = (UIView *)self.delegate;
+        if ([header isKindOfClass:UIView.class] && header.layer == self && isLibraryHeader(header)) color = NULL;
+    }
+    // The search results header's backing and the grey in its field: the glass of the field stands in its place, the header has none.
+    if (legacyLook && color && (sgr_searchHeaderRoot || sgr_searchFieldFill)) {
+        id owner = self.delegate;
+        if (owner == sgr_searchHeaderRoot && CGColorGetAlpha(color) > 0.5) color = NULL;
+        else if (owner == sgr_searchFieldFill && (isNeutralTint(color) || CGColorGetAlpha(color) > 0.5)) color = NULL;
+    }
     // The podcast search page's field: the grey goes, the glass (Pages/ShowSearch.x) stands in its place.
     if (legacyLook && color && sgr_showSearchField && self.delegate == sgr_showSearchField && (isNeutralTint(color) || CGColorGetAlpha(color) > 0.5)) color = NULL;
     // The podcast search page's header, Spotify's black behind the field row: it goes and the field and Cancel float.
     if (legacyLook && color && sgr_showSearchHeader && self.delegate == sgr_showSearchHeader && CGColorGetAlpha(color) > 0.5) color = NULL;
     // The Add songs sheet's search bar: its grey goes, the glass (Playlist/PlaylistAddSearch.x) stands in its place.
     if (legacyLook && color && sgr_addSongsSearchBar && self.delegate == sgr_addSongsSearchBar && CGColorGetAlpha(color) > 0.5) color = NULL;
+    // A class the Kit holds clear (SGRHoldClearClass), whichever view of it is painted.
+    if (legacyLook && color && heldClearClassCount && CGColorGetAlpha(color) > 0.05 && ofHeldClearClass(self.delegate)
+        && ((UIView *)self.delegate).layer == self) color = NULL;
     // A fill the Kit holds clear (SGRHoldClear): the button or disc is on glass, and Spotify's paint goes whenever it is set.
     if (legacyLook && color && heldClear.count && CGColorGetAlpha(color) > 0.05 && NSThread.isMainThread) {
         UIView *held = (UIView *)self.delegate;
@@ -65,12 +132,18 @@ enum { kInNowPlaying = 1, kInLyrics = 2, kInPage = 4 };
     // in), because selecting and deselecting a chip repaints the fill and lays nothing out, so the glass kept
     // whatever state the last layout gave it (hidden under a selected colour that was gone again).
     UIView *paintedChip = nil;
+    BOOL dressedChip = NO;
     if (legacyLook && color && (isNeutralTint(color) || CGColorGetAlpha(color) > 0.5)) {
         UIView *fill = (UIView *)self.delegate;
         if ([fill isKindOfClass:UIView.class] && fill.layer == self) {
-            // The pill of a chip dressed by the Kit (SGRChips.h): the genres over Liked Songs, Recents' chips.
-            if (SGRIsDressedChipPill(fill)) paintedChip = fill.superview;
-            if (paintedChip && (isNeutralTint(color) || SGRIsSheetSurface(color))) color = NULL;
+            if (isChipFill(fill) && SGRIsGlassChip(fill.superview)) {
+                paintedChip = fill.superview;
+            } else if (SGRIsDressedChipPill(fill)) {
+                // The pill of a chip dressed by the Kit (SGRChips.h): the genres over Liked Songs, Recents' chips.
+                paintedChip = fill.superview;
+                dressedChip = YES;
+            }
+            if (paintedChip && (isNeutralTint(color) || (dressedChip && SGRIsSheetSurface(color)))) color = NULL;
             // A selected chip's solid colour lands as a tint over the chip's glass (SGRChips.h).
             else if (paintedChip) color = SGRSelectedChipPaint(color);
         }
@@ -139,7 +212,10 @@ enum { kInNowPlaying = 1, kInLyrics = 2, kInPage = 4 };
     }
     %orig(color);
     if (paintedPill) dispatch_async(dispatch_get_main_queue(), ^{ SGRSheetPillPainted(paintedPill); });
-    if (paintedChip) dispatch_async(dispatch_get_main_queue(), ^{ SGRDressedChipPainted(paintedChip); });
+    if (paintedChip) dispatch_async(dispatch_get_main_queue(), ^{
+        if (dressedChip) SGRDressedChipPainted(paintedChip);
+        else SGRLibraryChipPainted(paintedChip);
+    });
 }
 %end
 

@@ -15,6 +15,10 @@ void SGRRepeatPass(UIViewController *controller, NSArray<NSNumber *> *delays, SG
 // Runs `pass` on the view after each delay (seconds), while it is in a window.
 void SGRRepeatViewPass(UIView *view, NSArray<NSNumber *> *delays, void (^pass)(UIView *view));
 
+// Runs `follow` with `scroll` whenever its content offset changes, by an observer that lives as long as `scroll` does.
+// One per `scroll` and `key`: a call that finds one in place does nothing.
+void SGRFollowOffset(UIScrollView *scroll, const void *key, void (^follow)(UIScrollView *scroll));
+
 // Runs `pass` on every controller of `cls` (and its subclasses) as it will appear, after each of its layouts, and
 // as it has appeared and after SGRSettleDelays. Hooks the class's own methods, so it runs whether or not a
 // subclass calls super. Nothing when `cls` is nil.

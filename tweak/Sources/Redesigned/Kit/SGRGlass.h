@@ -23,6 +23,11 @@ UIView *SGRGlassInside(UIView *control, const void *key, CGFloat side);
 // leads (the playlist header's Play). `prominent` lays a white film inside the shape, so that control
 // reads a step brighter than the circles beside it without leaving the same material.
 UIView *SGRGlassCapsuleInside(UIView *control, const void *key, CGSize size, BOOL prominent);
+// Controls side by side on one glass capsule, as iOS 26 groups a bar's buttons, instead of a circle each: the capsule is
+// `height` tall, runs from the first control's leading edge to the last one's trailing edge with `pad` beyond each, and
+// sits in `host` (their common superview) behind all of them, under `key`. Controls with no size are left out; with
+// none it is hidden. Safe to call on every pass; nil on iOS 26.
+UIView *SGRGlassGroupPill(UIView *host, NSArray<UIView *> *controls, const void *key, CGFloat height, CGFloat pad);
 
 // The views from `view` up stop clipping, through the first one `isLast` answers YES for (to the window when it never
 // does): a capsule wider than its control, or the legacy glass's press, which grows past it, would be cut off.

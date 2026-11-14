@@ -19,3 +19,5 @@ void SGAlbumQueueMarkSource(UIView *view) {}
 // SGRRepaint.x, the layer hooks that keep a glassed sheet clear of Spotify's grey: the harness has no Spotify sheet.
 __weak UIView *sgr_sheetChromeRoot = nil;
 void SGRWatchSheetPaint(UIView *root) {}
+// SGRSheetPills.x, for Encore's chips with a pill: the harness's chips are the Library's own, which have none.
+BOOL SGRPillIsSelected(UIView *pill) { return NO; }

@@ -131,6 +131,57 @@ UIView *SGRGlassCapsuleInside(UIView *control, const void *key, CGSize size, BOO
     return glassInside(control, key, size, YES, prominent);
 }
 
+// How far apart two controls may stand and still share a group's capsule.
+static const CGFloat kGroupGap = 16;
+
+UIView *SGRGlassGroupPill(UIView *host, NSArray<UIView *> *controls, const void *key, CGFloat height, CGFloat pad) {
+    if (@available(iOS 26.0, *)) return nil;
+    if (!host || !key) return nil;
+    UIView *holder = objc_getAssociatedObject(host, key);
+    if (!holder) {
+        holder = [UIView new];
+        holder.userInteractionEnabled = NO;
+        holder.accessibilityElementsHidden = YES;
+        objc_setAssociatedObject(host, key, holder, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    // The controls shown, where they are drawn (their frames, with the transform a page may move them by: the Library's
+    // header moves its buttons to the trailing edge that way, and by their centres they stood far to the left, so the
+    // capsule took the avatar alone), trailing first; the capsule takes the run of them that stand side by side from
+    // the trailing one, so a control standing apart (the Library's Recents, parked at the row's leading edge while it
+    // is hidden) does not stretch it across the title.
+    NSMutableArray<NSValue *> *spans = [NSMutableArray array];
+    for (UIView *control in controls) {
+        if (control.bounds.size.width < 1 || control.hidden || control.alpha < 0.01) continue;
+        CGRect drawn = [control.superview convertRect:control.frame toView:host];
+        [spans addObject:[NSValue valueWithCGRect:CGRectMake(CGRectGetMinX(drawn), CGRectGetMidY(drawn), drawn.size.width, 0)]];
+    }
+    [spans sortUsingComparator:^NSComparisonResult(NSValue *a, NSValue *b) {
+        CGFloat ax = CGRectGetMaxX(a.CGRectValue), bx = CGRectGetMaxX(b.CGRectValue);
+        return ax > bx ? NSOrderedAscending : ax < bx ? NSOrderedDescending : NSOrderedSame;
+    }];
+    CGFloat minX = CGFLOAT_MAX, maxX = -CGFLOAT_MAX, midY = 0;
+    NSUInteger counted = 0;
+    for (NSValue *value in spans) {
+        CGRect span = value.CGRectValue;
+        if (counted && minX - CGRectGetMaxX(span) > kGroupGap) break;
+        minX = MIN(minX, CGRectGetMinX(span));
+        maxX = MAX(maxX, CGRectGetMaxX(span));
+        midY += span.origin.y;
+        counted++;
+    }
+    if (!counted) {
+        holder.hidden = YES;
+        return nil;
+    }
+    midY /= counted;
+    if (holder.superview != host) [host insertSubview:holder atIndex:0];
+    else if (host.subviews.firstObject != holder) [host sendSubviewToBack:holder];
+    holder.hidden = NO;
+    CGRect frame = CGRectMake(round(minX - pad), round(midY - height / 2), round(maxX - minX + 2 * pad), height);
+    if (!CGRectEqualToRect(holder.frame, frame)) holder.frame = frame;
+    return SGRGlassCapsuleInside(holder, key, frame.size, NO);
+}
+
 // The dimming SGRDarkenGlass puts inside a pane's content.
 @interface SGRGlassDim : UIView
 @end
