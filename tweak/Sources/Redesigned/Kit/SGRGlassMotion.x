@@ -30,7 +30,9 @@ static const CGFloat kBubbleRowsScale = 0.94;
 static const CFTimeInterval kTouchLife = 1.0;
 static const CGSize kControlMax = {140, 80};
 
-static CGRect sLeavingRect;
+static CGRect sLeavingRect;        // in the window
+static CGRect sLeavingFrame;       // in sLeavingParent
+static __weak UIView *sLeavingParent;
 static CGFloat sLeavingRadius;
 static CFTimeInterval sLeavingAt;
 
@@ -41,6 +43,17 @@ static BOOL motionOn(void) {
 
 static BOOL onScreen(UIView *view) {
     return view.window && !view.hidden && view.alpha > 0.01 && view.bounds.size.width >= 1 && view.bounds.size.height >= 1;
+}
+
+// A view or one above it that is moving or resizing on an animation of its own (a sheet being presented, dismissed or
+// let go after a drag): a shape drawn for it then would end where it was a moment ago.
+static BOOL inMotion(UIView *view) {
+    for (UIView *v = view; v; v = v.superview) {
+        CALayer *layer = v.layer;
+        if ([layer animationForKey:@"position"] || [layer animationForKey:@"bounds"] || [layer animationForKey:@"bounds.size"] ||
+            [layer animationForKey:@"position.y"] || [layer animationForKey:@"transform"]) return YES;
+    }
+    return NO;
 }
 
 // The corners a control is drawn with: its layer's, or a capsule's when it has none.
@@ -75,21 +88,30 @@ static void arrive(CALayer *layer, CFTimeInterval delay, CGFloat scale) {
 void SGRGlassNoteLeaving(UIView *view) {
     if (!motionOn() || !onScreen(view)) return;
     sLeavingRect = [view convertRect:view.bounds toView:nil];
+    sLeavingParent = view.superview;
+    sLeavingFrame = view.frame;
     sLeavingRadius = radiusOf(view);
     sLeavingAt = CACurrentMediaTime();
 }
 
 void SGRGlassMorphFromLeaving(UIView *to, SGRGlassMaker glass) {
     if (!motionOn() || !to || !glass || !sLeavingAt || CACurrentMediaTime() - sLeavingAt > kLeavingLife) return;
-    CGRect start = sLeavingRect;
+    CGRect windowStart = sLeavingRect, localStart = sLeavingFrame;
+    __weak UIView *leavingParent = sLeavingParent;
     CGFloat startRadius = sLeavingRadius;
     sLeavingAt = 0;
     // Spotify lays the header out after it has shown and hidden its controls: the shape ends where that puts `to`.
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *window = to.window;
-        if (!onScreen(to)) return;
+        UIView *parent = to.superview;
+        // While the sheet is on its way (it opens as Spotify first sets the header up) there is nothing to flow: the
+        // controls just arrive with it.
+        if (!onScreen(to) || !parent || inMotion(to)) return;
         [window layoutIfNeeded];
-        CGRect end = [to convertRect:to.bounds toView:nil];
+        // The shape lives in the controls' own superview, so it goes where the sheet goes when the sheet is dragged
+        // or settles while it runs, not where the sheet was when it began.
+        CGRect end = to.frame;
+        CGRect start = leavingParent == parent ? localStart : [parent convertRect:windowStart fromView:nil];
         if (CGRectEqualToRect(CGRectIntegral(start), CGRectIntegral(end))) return;
         CGFloat endRadius = radiusOf(to);
 
@@ -107,7 +129,7 @@ void SGRGlassMorphFromLeaving(UIView *to, SGRGlassMaker glass) {
         pane.bounds = CGRectMake(0, 0, MAX(start.size.width, end.size.width), MAX(start.size.height, end.size.height));
         pane.center = CGPointMake(start.size.width / 2, start.size.height / 2);
         SGShapeGlass(pane, MIN(startRadius, endRadius), NO);
-        [window addSubview:shape];
+        [parent insertSubview:shape aboveSubview:to];
 
         arrive(to.layer, kArriveDelay, kArriveScale);
         [UIView animateWithDuration:kMorphDuration delay:0 usingSpringWithDamping:kMorphDamping initialSpringVelocity:0
