@@ -837,7 +837,9 @@ static void noteCopy(SPTPlayerTrack *copy, SPTPlayerTrack *original) {
     if ([original.metadata[@"provider"] isKindOfClass:NSString.class]) info[@"mprovider"] = original.metadata[@"provider"];
     if (copy.trackTitle.length) info[@"title"] = copy.trackTitle;
     sCopyOf[copy.UID] = info;
-    while (sCopyOf.count > 50) [sCopyOf removeObjectForKey:sCopyOf.allKeys.firstObject];
+    // Keep the same span as the saved session. A DJ session can outlive 50 tracks; evicting an internal copy that's
+    // still in Spotify's future makes it look hand-queued and lets the original row play again beside it.
+    while (sCopyOf.count > kSavedMax) [sCopyOf removeObjectForKey:sCopyOf.allKeys.firstObject];
 }
 
 // The DJ track put in the core's queue ahead of its turn (the player's own track; the core's copy has a q uid): when the
@@ -1417,7 +1419,17 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
         if (aheadCopy && [trackKey(track) isEqualToString:trackKey(aheadCopy)]) continue;
         if ([trackKey(track) isEqualToString:playing]) continue;     // a queue from before the player came to it
         if (isCoreQueued(track) && movedBySource(track)) continue;   // taken into the DJ's rows, the core is being told
-        if (isCoreQueued(track)) { [queued addObject:track]; continue; }
+        if (isCoreQueued(track)) {
+            // Copies we made to enforce the DJ's order are implementation details, not hand-queued rows. The core
+            // can keep one in its future after it plays or after the user's order changes; sAheadQueued then no longer
+            // identifies it, but sCopyOf still does. A copy queued by the user has no sCopyOf entry and stays visible.
+            if (track.UID.length && sCopyOf[track.UID]) continue;
+            [queued addObject:track];
+            continue;
+        }
+        // Spotify repeats the DJ's tracks later in the same queue. A hidden original can reappear there after its
+        // internal queued copy was played; don't put that original back beside the copy in the visible queue.
+        if (isHidden(track)) continue;
         if (indexIn(ahead, track) != NSNotFound) continue;
         NSString *uri = SGURIString(track.URI);
         if ([uri isEqualToString:@"spotify:delimiter"]) continue;
