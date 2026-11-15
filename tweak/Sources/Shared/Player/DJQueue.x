@@ -489,6 +489,14 @@ static NSMutableSet<NSString *> *sBounced;
 // When the player was last asked to step back (the previous button, or a replay here): an arrival at a track that has
 // played, soon after, is the step back; any other is the track played again, as the newest.
 static NSDate *sBackAsked;
+// The uids of the DJ's tracks the user went past with a tap on a later row: hidden from the rows, but they are in the
+// core's history and in sPlayed, so a step back (and the next after it) goes over them one by one. A track removed or
+// played through the queue is not among them: a step back still goes past it.
+static NSMutableSet<NSString *> *sPassed;
+// The DJ track the next button was last sent back over the history to, and when: its arrival is the walk, not the core
+// coming to a track that played.
+static NSString *sWalkUID;
+static NSDate *sWalkAt;
 static NSTimer *sHeaderTimer;
 static __weak UIViewController *sHeaderTimerPage;
 static NSDate *sNativeQueueAt;
@@ -508,6 +516,26 @@ static BOOL wasPlayed(NSString *uid) {
     if ([sPlayedBefore containsObject:uid]) return YES;
     for (SPTPlayerTrack *played in sPlayed) if ([baseUID(played.UID) isEqualToString:uid]) return YES;
     return NO;
+}
+
+static BOOL staysHidden(SPTPlayerTrack *track) {
+    return isHidden(track) && ![sPassed containsObject:baseUID(track.UID)];
+}
+
+static NSUInteger playedIndex(NSString *uid) {
+    for (NSUInteger i = 0; i < sPlayed.count; i++) if ([baseUID(sPlayed[i].UID) isEqualToString:uid]) return i;
+    return NSNotFound;
+}
+
+// The player came to a track that has played, as a walk over the history and not as the core going back to it on its own:
+// the one the next button was sent to, or the one that played right after the track the player was on.
+static BOOL walkArrival(SPTPlayerTrack *track, NSString *leftUID) {
+    NSString *uid = baseUID(track.UID);
+    NSUInteger at = uid.length ? playedIndex(uid) : NSNotFound;
+    if (at == NSNotFound) return NO;
+    if (sWalkUID && sWalkAt && -sWalkAt.timeIntervalSinceNow < 4 && [sWalkUID isEqualToString:uid]) return YES;
+    NSString *left = baseUID(leftUID);
+    return at > 0 && left.length && [baseUID(sPlayed[at - 1].UID) isEqualToString:left];
 }
 
 static NSInteger placeOf(UITableView *table, NSIndexPath *path) {
@@ -956,6 +984,7 @@ static NSDate *sSkipAt;
 static id landAtSegmentEnd(SPTPlayerTrack *play);
 static SPTPlayerTrack *playedAfter(SPTPlayerTrack *current);
 static BOOL segmentSpent(SPTPlayerState *state);
+static BOOL isUnspent(SPTPlayerTrack *t);
 // Set from the pause before a hand-over to the next segment until the player resumes.
 static BOOL sHandingOver;
 static BOOL onlyThisLeft(SPTPlayerState *state, SPTPlayerTrack *target);
@@ -988,13 +1017,13 @@ static void queueAhead(void) {
         coming = t;
         break;
     }
-    SPTPlayerTrack *next = coreNextUnplayed(state);
-    BOOL nextIsVoice = [SGURIString(next.URI) hasPrefix:@"spotify:media:"];
-    // The user's next, or with no order of theirs the core's own next that has not played and was not removed, when the
-    // core would come to a track that played or was removed first (it sounded for a moment before the skip past it).
-    // Taken back over tracks that played, the one that played after this comes again, as a step back and next do.
-    SPTPlayerTrack *replay = playedAfter(current);
-    want = replay ?: (sOrdered ? wantedNext() : (nextIsVoice ? nil : next));
+    // The user's next, when the core would come to a track that played or was removed first (it sounded for a moment
+    // before the skip past it). Only an order the user arranged needs a copy ahead: the core has no other way to play
+    // it. Without one, the core's own next is skipped to directly (the next button, skipPastSpent just before the
+    // track's end), so nothing is put in the queue, where Spotify draws it as a track queued by hand. Nor on a walk
+    // back over the history: the core has those tracks to come, and the next button skips straight to the one that
+    // played after this.
+    if (sOrdered && !playedAfter(current)) want = wantedNext();
     if (want && (movedBySource(want) || sameGroup(want, current) || sameGroup(want, coming) ||
                  [SGURIString(current.URI) isEqualToString:SGURIString(want.URI)])) want = nil;
     // A track whose card has not played is left to the core, which plays the card's voice first. The card is looked for
@@ -1059,11 +1088,33 @@ static void queueAhead(void) {
 //   do: the core takes a context track it is given in a setQueue for the context's, and goes on without it (9.1.90).
 // The core is never stepped back to a track of the DJ's: the now playing screens draw a step back backwards, and it
 // lands on the track after a voice, the voice never played (9.1.90).
+// `target`'s item in the core's future (its voice first when it has one that has not been heard), when everything the core
+// has before it is spent: played, removed, passed or a voice heard. The core can be skipped straight to it.
+static SPTPlayerTrack *reachableInFuture(SPTPlayerState *state, SPTPlayerTrack *target) {
+    for (SPTPlayerTrack *t in state.future) {
+        if (isCoreQueued(t)) continue;
+        if ([SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) break;
+        BOOL voice = [SGURIString(t.URI) hasPrefix:@"spotify:media:"];
+        if (sameGroup(t, target)) {
+            if (voice && [sVoiced containsObject:t.UID]) continue;   // its voice was heard: the track itself
+            return t;
+        }
+        if (isUnspent(t)) return nil;
+    }
+    return nil;
+}
+
 static id advanceTo(SPTPlayerTrack *target, BOOL voiceFirst) {
     if (queueMovedNext(target)) return skipForward(nil);
     SPTPlayerState *state = SGPlayerState();
     SPTPlayerTrack *next = coreNextUnplayed(state);
     BOOL aheadThere = sameGroup(sAheadQueued, target) && queuedCopyOf(sAheadQueued, state, NULL);
+    // A track the core has still to come, with only tracks that played, were removed or were passed before it (a step
+    // back and then forward again): skipped to as it is, not put in the queue.
+    if (!aheadThere && !(next && sameGroup(next, target))) {
+        SPTPlayerTrack *reach = reachableInFuture(state, target);
+        if (reach) next = reach;
+    }
     // The last of the segment that has not played, with ones that played or were removed after it in the core's order:
     // gone to directly, the core is not on its last track and makes no next segment until it has played through those.
     if (!aheadThere && onlyThisLeft(state, target)) {
@@ -1140,11 +1191,14 @@ static id advanceTo(SPTPlayerTrack *target, BOOL voiceFirst) {
 // Gone on from a track the user's order had last, the core comes back to the tracks it was skipped past, which have
 // played: the player goes on to the first that has not.
 // `arrived`: the state is the player's coming to this track, not a pause, a resume or a load on the same one.
-static BOOL enforceOrder(SPTPlayerState *state, BOOL arrived) {
+static BOOL enforceOrder(SPTPlayerState *state, BOOL arrived, BOOL walking) {
     SPTPlayerTrack *current = state.track;
     NSString *uid = baseUID(current.UID);
     if (!sOrdered || !uid.length || !inDJ(current)) return NO;
     BOOL steppedBack = sBackAsked && -sBackAsked.timeIntervalSinceNow < 4;
+    // A walk over the history (a step back, the next after it, a track going on to the one that played after it) is the
+    // user's, not the core coming back to tracks it was skipped past.
+    if (walking) return NO;
     BOOL replay = arrived && isDJTrack(current) && wasPlayed(uid) && !steppedBack;
     if (!replay && ![sOrder containsObject:uid]) return NO;
     SPTPlayerTrack *want = wantedNext();
@@ -1171,8 +1225,9 @@ static SPTPlayerTrack *playedAfter(SPTPlayerTrack *current) {
     NSString *uid = baseUID(current.UID);
     for (NSUInteger i = 0; i + 1 < sPlayed.count; i++) {
         if (![baseUID(sPlayed[i].UID) isEqualToString:uid]) continue;
-        // Not the hidden ones it went past (the segment's last a hand-over lands on).
-        for (NSUInteger j = i + 1; j < sPlayed.count; j++) if (!isHidden(sPlayed[j])) return originalOf(sPlayed[j]);
+        // Not the removed ones it went past (the segment's last a hand-over lands on); the ones the user passed with a tap are
+        // part of the way, one by one.
+        for (NSUInteger j = i + 1; j < sPlayed.count; j++) if (!staysHidden(sPlayed[j])) return originalOf(sPlayed[j]);
         return nil;
     }
     return nil;
@@ -1207,6 +1262,10 @@ static SPTPlayerTrack *redirectedNext(void) {
     if (!replay && coreNext && (isCoreQueued(coreNext) || [baseUID(coreNext.UID) isEqualToString:baseUID(want.UID)])) return nil;
     // The voice that introduces the track plays (the skip goes through it): only a tap on a track's row passes it.
     sSkipVoiceUID = nil;
+    if (replay) {
+        sWalkUID = baseUID(want.UID);
+        sWalkAt = [NSDate date];
+    }
     SGLog(@"queue: next pressed on %@, %@ %@ [%@], skipping to it at once", current.trackTitle,
           replay ? @"it played before" : @"the user's order has", want.trackTitle, want.UID);
     return want;
@@ -2129,20 +2188,109 @@ static id landAtSegmentEnd(SPTPlayerTrack *play) {
     return result ?: @YES;
 }
 
+// The player is on the segment's last item (its last track, or the DJ's words after it) and the core has nothing more to
+// come yet. The next segment is made once the core is on this last track; when it has not come by the end of the track,
+// the core went back over the tracks that had played, and one of them sounded for a moment before it was skipped away
+// from. The player is paused just before the end instead, and goes on once the next segment has come.
+static BOOL atSegmentEnd(SPTPlayerState *state) {
+    SPTPlayerTrack *cur = state.track;
+    if (!sDJActive || sHandingOver || sAdvancing || !isDJSession(state) || !cur.UID.length || isCoreQueued(cur) || !inDJ(cur)) return NO;
+    BOOL onVoice = [SGURIString(cur.URI) hasPrefix:@"spotify:media:"];
+    // A voice before its track (a card's) has the track still to come; the DJ's words after a track have played it.
+    if (onVoice && !wasPlayed(baseUID(cur.UID))) return NO;
+    for (SPTPlayerTrack *t in state.future) if (isCoreQueued(t)) return NO;
+    if (sOrdered && wantedNext()) return NO;
+    SPTPlayerTrack *last = lastOfSegment(state);
+    if (!last || !sameGroup(last, cur)) return NO;
+    if (!onVoice && [SGURIString(last.URI) hasPrefix:@"spotify:media:"]) return NO;   // the DJ's words after it are to come
+    return coreNextUnplayed(state) == nil;
+}
+
+static void holdAtEnd(void) {
+    SPTPlayerState *state = SGPlayerState();
+    if (sHandingOver || !atSegmentEnd(state)) return;
+    sHandingOver = YES;
+    id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
+    NSString *from = trackKey(state.track);
+    SGLog(@"queue: the player is at the end of the segment's last item %@ and the next segment has not come: paused until it does",
+          state.track.trackTitle ?: SGURIString(state.track.URI));
+    [player pause:nil];
+    __block int tries = 0;
+    __block void (^poll)(void);
+    void (^check)(void) = ^{
+        SPTPlayerState *now = SGPlayerState();
+        BOOL moved = ![trackKey(now.track) isEqualToString:from];
+        SPTPlayerTrack *to = moved ? nil : coreNextUnplayed(now);
+        if (!moved && !to && ++tries < (int)(kSegmentWait / 0.2)) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), poll);
+            return;
+        }
+        poll = nil;
+        if (!moved) {
+            SGLog(@"queue: %@", to ? [NSString stringWithFormat:@"the next segment came, on to %@ and resumed", SGURIString(to.URI)]
+                                  : @"no next segment came, the player goes on and resumes");
+            skipForward(to);
+        }
+        [player resume:nil];
+        sHandingOver = NO;
+    };
+    poll = check;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), poll);
+}
+
+// With no order of the user's: the core's next item is a track that was removed (or played through the queue) and a
+// track to play comes after it. The core would play the removed one for a moment before it is skipped away from, and a
+// copy of the next put in its queue ahead (which Spotify draws as queued by hand) is no answer: the player is skipped
+// to the track that comes, in one skip, just before the end. nil when the core's next is to be left alone.
+static SPTPlayerTrack *skipPastSpent(SPTPlayerState *state) {
+    SPTPlayerTrack *cur = state.track;
+    if (!sDJActive || sOrdered || sHandingOver || sAdvancing || sPlayingMoved || !isDJSession(state) || !cur.UID.length ||
+        isCoreQueued(cur) || !inDJ(cur) || isHidden(cur)) return nil;
+    BOOL onVoice = [SGURIString(cur.URI) hasPrefix:@"spotify:media:"];
+    if (onVoice && !wasPlayed(baseUID(cur.UID))) return nil;   // a card's voice: its track is to come
+    for (SPTPlayerTrack *t in state.future) if (isCoreQueued(t)) return nil;
+    SPTPlayerTrack *coming = nil;
+    for (SPTPlayerTrack *t in state.future) {
+        if ([SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) break;
+        if (sameGroup(t, cur)) {
+            if (!onVoice && [SGURIString(t.URI) hasPrefix:@"spotify:media:"]) return nil;   // the DJ's words after it are to come
+            continue;
+        }
+        coming = t;
+        break;
+    }
+    if (!coming || !staysHidden(coming)) return nil;
+    SPTPlayerTrack *next = coreNextUnplayed(state);
+    return next && !sameGroup(next, coming) ? next : nil;
+}
+
+static BOOL needsHandOver(SPTPlayerState *state) {
+    return segmentSpent(state) || atSegmentEnd(state) || skipPastSpent(state) != nil;
+}
+
 static void handOver(void) {
-    if (!sHandingOver && segmentSpent(SGPlayerState())) landAtSegmentEnd(nil);
+    if (sHandingOver) return;
+    SPTPlayerState *state = SGPlayerState();
+    if (segmentSpent(state)) { landAtSegmentEnd(nil); return; }
+    if (atSegmentEnd(state)) { holdAtEnd(); return; }
+    SPTPlayerTrack *to = skipPastSpent(state);
+    if (to) {
+        SGLog(@"queue: %@ is about to end and the core's next was removed or played: on to %@ [%@] in one skip", state.track.trackTitle,
+              to.trackTitle ?: SGURIString(to.URI), to.UID);
+        skipForward(to);
+    }
 }
 
 // Looked at again whenever the player comes to a track, plays or pauses; while nothing of the segment is left, the time to
 // the track's end is watched (a seek tells the state's observers nothing).
 static void scheduleHandOver(void) {
-    if (sHandOverTimer.isValid && segmentSpent(SGPlayerState())) return;
+    if (sHandOverTimer.isValid && needsHandOver(SGPlayerState())) return;
     [sHandOverTimer invalidate];
     sHandOverTimer = nil;
-    if (sHandingOver || !segmentSpent(SGPlayerState())) return;
+    if (sHandingOver || !needsHandOver(SGPlayerState())) return;
     sHandOverTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *timer) {
         SPTPlayerState *now = SGPlayerState();
-        if (sHandingOver || !segmentSpent(now)) { [timer invalidate]; if (sHandOverTimer == timer) sHandOverTimer = nil; return; }
+        if (sHandingOver || !needsHandOver(now)) { [timer invalidate]; if (sHandOverTimer == timer) sHandOverTimer = nil; return; }
         if (now.isPaused || now.duration <= 0) return;
         double speed = now.playbackSpeed > 0 ? now.playbackSpeed : 1;
         if ((now.duration - now.position) / speed > kHandOverLead) return;
@@ -2170,6 +2318,8 @@ static void scheduleHandOver(void) {
     BOOL arrived = lastKey && ![trackKey(track) isEqualToString:lastKey];
     NSString *leftUID = arrived ? lastUID : nil;
     lastUID = track.UID;
+    // A walk over the history: the next button's replay, or the track that played right after the one that was playing.
+    BOOL walking = arrived && walkArrival(track, leftUID);
     // A step back from a DJ track played from the core's queue: it has not played for the user any more, its row comes
     // back first in their order (before, it was gone from the page, and a next went past it).
     NSDictionary *backFrom = leftUID ? sCopyOf[leftUID] : nil;
@@ -2257,7 +2407,11 @@ static void scheduleHandOver(void) {
     // are skipped, once each.
     // Come to by a step back that found nothing else behind: back to the track it came from, not on past it (the
     // tracks after a hidden one count as played once they were).
-    if (isHidden(track) && !sHandingOver && arrived && sBackAsked && -sBackAsked.timeIntervalSinceNow < 4) {
+    BOOL backAsked = sBackAsked && -sBackAsked.timeIntervalSinceNow < 4;
+    // A track the user passed with a tap, come to by a step back or as a walk over the history, is played: it is one of
+    // the way back, not a track the core came to that was removed or played through the queue.
+    BOOL passedWalk = isHidden(track) && [sPassed containsObject:baseUID(track.UID)] && arrived && (backAsked || walking);
+    if (isHidden(track) && !passedWalk && !sHandingOver && arrived && backAsked) {
         SPTPlayerTrack *to = nil;
         for (SPTPlayerTrack *t in state.future) {
             if ([SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) break;
@@ -2271,7 +2425,7 @@ static void scheduleHandOver(void) {
             return;
         }
     }
-    if (isHidden(track) && !sHandingOver) {
+    if (isHidden(track) && !passedWalk && !sHandingOver) {
         NSString *key = [SGURIString(track.URI) stringByAppendingString:track.UID];
         if (!sSkipped) sSkipped = [NSMutableSet set];
         if (![sSkipped containsObject:key]) {
@@ -2298,7 +2452,7 @@ static void scheduleHandOver(void) {
         }
     }
     // The core has come to a DJ track of its own order that the user's order does not have first.
-    if (enforceOrder(state, arrived)) return;
+    if (enforceOrder(state, arrived, walking)) return;
     if (!isDJTrack(track) || !inDJ(track) || !track.UID.length) return;
     NSUInteger at = NSNotFound;
     for (NSUInteger i = 0; i < sPlayed.count; i++) if ([sPlayed[i].UID isEqualToString:track.UID]) { at = i; break; }
@@ -2307,7 +2461,7 @@ static void scheduleHandOver(void) {
         return;
     }
     BOOL steppedBack = sBackAsked && -sBackAsked.timeIntervalSinceNow < 4;
-    if (!steppedBack && at + 1 != sPlayed.count) {
+    if (!steppedBack && !walking && at + 1 != sPlayed.count) {
         // The core went on to a track that played (its own order has it after this one): it is the newest now, or "next"
         // on it would go back to the track that played after it, and the two would take turns.
         [sPlayed removeObjectAtIndex:at];
@@ -2390,7 +2544,7 @@ static SPTPlayerTrack *shownPlayedBefore(SPTPlayerState *state) {
     }
     while (at > 0) {
         SPTPlayerTrack *t = sPlayed[--at];
-        if (!isHidden(t) && !sameGroup(t, state.track) && ![SGURIString(t.URI) hasPrefix:@"spotify:media:"]) return t;
+        if (!staysHidden(t) && !sameGroup(t, state.track) && ![SGURIString(t.URI) hasPrefix:@"spotify:media:"]) return t;
     }
     return nil;
 }
@@ -2413,10 +2567,11 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
     // hand-over to the next segment lands on): stepped back to, it was passed forward again at once, and back from a
     // new segment went nowhere. The step goes to the nearest one before it that is not hidden. Past the first seconds
     // the step back starts the track again, as Spotify's does.
-    if (!track && isDJSession(state) && state.position < 3 && isHidden(state.reverse.lastObject)) {
+    // The tracks the user passed with a tap are not past: the core's step back goes to them one by one, as the queue was.
+    if (!track && isDJSession(state) && state.position < 3 && staysHidden(state.reverse.lastObject)) {
         SPTPlayerTrack *before = nil;
         for (SPTPlayerTrack *t in state.reverse.reverseObjectEnumerator) {
-            if (isHidden(t) || [SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) continue;
+            if (staysHidden(t) || [SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) continue;
             before = t;
             break;
         }
@@ -2559,7 +2714,17 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
                 SPTPlayerTrack *before = sQueue[i];
                 if (indexIn(sInjected, before) == NSNotFound) continue;
                 NSString *uid = baseUID(before.UID);
-                if (![uid isEqualToString:tapped] && ![sHidden containsObject:uid]) hideTrack(before, @"passed by a tap");
+                if ([uid isEqualToString:tapped]) continue;
+                BOOL fresh = ![sHidden containsObject:uid];
+                if (fresh) hideTrack(before, @"passed by a tap");
+                // Passed, not removed: they stay in the history, so a step back goes over them (5-4-3-2-1). A card and
+                // its track have one uid: the card's row makes it passed, the track's row puts it in the history.
+                if (fresh || [sPassed containsObject:uid]) {
+                    if (!sPassed) sPassed = [NSMutableSet set];
+                    [sPassed addObject:uid];
+                    SPTPlayerTrack *own = originalOf(before);
+                    if (!isCardRow(before) && isDJTrack(own) && playedIndex(uid) == NSNotFound && ![sPlayedBefore containsObject:uid]) [sPlayed addObject:own];
+                }
             }
         }
         if (!target) {
