@@ -4,15 +4,35 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Pages.h"
 
-static char kCloseGlass;
+static char kClosePinned;
 
 static void closeGlass(UIViewController *page) {
+    if (!page.viewIfLoaded.window) return;
     UIView *content = SGRChildNamed(page.navigationController.navigationBar, @"_UINavigationBarContentView");
     UIView *stack = SGRBarStackButton(content, NO);
-    UIView *button = SGRChildNamed(stack, @"_UIModernBarButton");
-    if (!button || button.bounds.size.width < 1) return;
-    SGRUnclipUpTo(button, ^BOOL(UIView *v) { return v.superview == page.navigationController.navigationBar; });
-    SGRGlassInside(button, &kCloseGlass, 44);
+    // In this particular wizard introduction UIKit compresses the Close
+    // _UIModernBarButton to 0pt at x=391. Its 44pt inset glass then ends up
+    // half outside the screen. Mirror the real bar control at x=330 instead.
+    UIView *source = SGRChildNamed(stack, @"_UIButtonBarButton");
+    if (!source) return;
+    // Pin inside the navigation content itself (44pt high), rather than the
+    // page below the interactive navigation bar, which would eat its taps.
+    SGRMirrorButton *close = objc_getAssociatedObject(content, &kClosePinned);
+    if (!close) {
+        close = [[SGRMirrorButton alloc] initWithFrame:CGRectZero];
+        close.ownGlyph = YES;
+        close.fallbackGlyph = [UIImage systemImageNamed:@"xmark"];
+        close.glyphColor = SGRPrimary();
+        objc_setAssociatedObject(content, &kClosePinned, close, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CGRect frame = CGRectMake(content.bounds.size.width - 16 - 44, 0, 44, 44);
+    if (!CGRectEqualToRect(close.frame, frame)) close.frame = frame;
+    if (close.superview != content) [content addSubview:close];
+    else [content bringSubviewToFront:close];
+    content.clipsToBounds = NO;
+    [close feedFrom:source];
+    if (source.alpha != 0) source.alpha = 0;
+    source.userInteractionEnabled = NO;
 }
 
 %ctor {
@@ -24,6 +44,14 @@ static void closeGlass(UIViewController *page) {
         __weak UIViewController *weakController = controller;
         UIView *content = SGRChildNamed(controller.navigationController.navigationBar, @"_UINavigationBarContentView");
         SGRWatchLayout(content, ^(UIView *v) { closeGlass(weakController); });
+    });
+    SGRPassControllerGoing(page, ^(UIViewController *controller) {
+        UIView *content = SGRChildNamed(controller.navigationController.navigationBar, @"_UINavigationBarContentView");
+        UIView *stack = SGRBarStackButton(content, NO);
+        UIView *source = SGRChildNamed(stack, @"_UIButtonBarButton");
+        source.alpha = 1;
+        source.userInteractionEnabled = YES;
+        [(UIView *)objc_getAssociatedObject(content, &kClosePinned) removeFromSuperview];
     });
 }
 
