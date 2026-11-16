@@ -97,3 +97,6 @@ void SGRDressBarPagesFound(SGRBarPageFind find, SGRBarStyle style);
 // behind the last response and the footer go, and any card, bubble or field the views' own passes have not met yet is dressed.
 // Cheap to call again; below iOS 26 only.
 void SGRAIPlaylistDressChat(UIView *page);
+
+// The chat composer follows the minimized now-playing/tab-bar row as toasts do.
+void SGRChatComposerFollowTabBar(void);
