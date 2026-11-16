@@ -4,7 +4,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 
-static char kShareSearch, kShareRow, kShareInvite;
+static char kShareSearch, kShareRow, kShareInvite, kGroupName;
 
 static void glassAction(UIView *row, const void *key) {
     if (!row) return;
@@ -30,6 +30,15 @@ static void shareGlass(UIViewController *c) {
     if (field && field.bounds.size.height > 1) {
         SGRGlassFlatBox(field, &kShareSearch, NO);
         SGRUnclipUpTo(field, ^BOOL(UIView *v) { return v == root; });
+    }
+    // The second step inserts a Group name Encore field between Search and the
+    // contacts list. Its rectangular grey backdrop becomes a search-like pill.
+    UIView *groupName = SGRFindByIdentifier(root, @"Components.UI.ChatGroupInputSharePage", &kGroupName);
+    if (groupName && groupName.bounds.size.height > 1) {
+        SGRGlassFlatBox(groupName, &kGroupName, NO);
+        SGRUnclipUpTo(groupName, ^BOOL(UIView *v) { return v == root; });
+        UIView *input = SGRChildNamed(groupName, @"EncoreTextField");
+        if (input && input.layer.backgroundColor) input.backgroundColor = UIColor.clearColor;
     }
     glassAction(SGRFindByIdentifier(root, @"CreateGroup.Row", &kShareRow), &kShareRow);
     glassAction(SGRFindByIdentifier(root, @"InviteLink.Row", &kShareInvite), &kShareInvite);
