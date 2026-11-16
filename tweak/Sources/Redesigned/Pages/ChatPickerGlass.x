@@ -28,8 +28,7 @@ static void entitySearch(UIView *search) {
     });
     if (cancel && cancel.bounds.size.width > 1 && !cancel.hidden) {
         SGRUnclipUpTo(cancel, ^BOOL(UIView *v) { return v == search; });
-        SGRGlassCapsuleInside(cancel, &kEntityCancel,
-                              CGSizeMake(cancel.bounds.size.width + 12, 40), NO);
+        SGRGlassFlatBox(cancel, &kEntityCancel, YES);
     }
 }
 
