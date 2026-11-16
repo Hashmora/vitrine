@@ -30,7 +30,7 @@ static void dress(UIViewController *page) {
         if (view.bounds.size.height > 96) return;
         SGForEachView(view, ^(UIView *label) {
             if (![NSStringFromClass(label.class) hasSuffix:@"EncoreLabel"] || label.bounds.size.height > 25) return;
-            UILabel *text = SGRChildNamed(label, @"UILabel");
+            UILabel *text = (UILabel *)SGRChildNamed(label, @"UILabel");
             if (![text.text isEqualToString:@"Genres"]) return;
             SGRGlassTitleCapsule(label, &kTitleGlass, SGRTitleWidth(text), label.bounds.size.width, ^BOOL(UIView *v) { return v == view; });
         });
