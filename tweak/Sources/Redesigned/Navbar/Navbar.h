@@ -51,6 +51,9 @@ BOOL SGRLegacyTabBarOn(void);
 // to them where SGRLegacyTabBarOn() says that bar is the one in place. SGRLegacyApplyTabBarMinimized makes the change
 // at once; SGRSetTabBarMinimized decides when it is made, for both bars.
 BOOL SGRLegacyTabBarMinimized(void);
+// LegacyNowPlayingTouch.x: a finger is still resting on the mini player,
+// even when a *second* finger scrolls a page. Only queried by the fallback.
+BOOL SGRLegacyNowPlayingHeld(void);
 void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated);
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height);
 
