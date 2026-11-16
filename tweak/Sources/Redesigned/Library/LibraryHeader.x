@@ -221,6 +221,17 @@ static NSArray<UIView *> *placeFolder(UIView *header) {
     if (!placed.count && !back) return placed;
 
     CGFloat trailingEdge = placed.count ? placeTrailing(header, placed) : header.bounds.size.width - kRowInset;
+    // The row can lay out again without the folder page laying out. Keep the
+    // two-button pane glued to More and + AFTER their transforms are updated;
+    // otherwise the empty folder's pane is left at the old third-button x.
+    if (SGBelowiOS26()) {
+        UIView *more = SGRFindByIdentifier(header, @"YourLibraryFolderHeader.contextMenu", &kMenuKey);
+        UIView *plus = SGRFindByIdentifier(header, @"YourLibraryFolderHeader.plus", &kFolderPlusKey);
+        if (more && plus && !more.hidden && !plus.hidden && more.superview == plus.superview &&
+            more.bounds.size.width > 1 && plus.bounds.size.width > 1) {
+            SGRGlassGroupPill(more.superview, @[more, plus], &kFolderGroupKey, 44, -2);
+        }
+    }
     if (back) [placed insertObject:back atIndex:0];
     CGRect rowFrame = SGFrameIn(placed.firstObject, header);
     CGFloat leading = back ? CGRectGetMaxX(rowFrame) + SGRGrid : SGRSideMargin;
