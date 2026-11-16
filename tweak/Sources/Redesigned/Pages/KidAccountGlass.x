@@ -6,9 +6,38 @@
 
 static char kClosePinned;
 
+// The nav bar's content view is reused across the whole wizard. A mirror
+// attached to it otherwise survives the push to the next step (and has no
+// action there), until another layout happens to remove it.
+static BOOL educationIsFrontPage(UIViewController *page) {
+    UINavigationController *navigation = page.navigationController;
+    UIViewController *top = navigation.topViewController;
+    if (!top || !page.viewIfLoaded.window) return NO;
+    // The navigation stack holds a Spotify hosting controller, which owns
+    // KidAccountCreationEducationViewController as a child.
+    for (UIViewController *owner = page; owner; owner = owner.parentViewController) {
+        if (owner == top) return YES;
+    }
+    return NO;
+}
+
+static void removeEducationClose(UIView *content) {
+    SGRMirrorButton *close = objc_getAssociatedObject(content, &kClosePinned);
+    if (!close) return;
+    UIView *source = close.source;
+    if (source && [source isDescendantOfView:content]) {
+        source.alpha = 1;
+        source.userInteractionEnabled = YES;
+    }
+    [close removeFromSuperview];
+}
+
 static void closeGlass(UIViewController *page) {
-    if (!page.viewIfLoaded.window) return;
     UIView *content = SGRChildNamed(page.navigationController.navigationBar, @"_UINavigationBarContentView");
+    if (!educationIsFrontPage(page)) {
+        removeEducationClose(content);
+        return;
+    }
     // In this particular wizard introduction UIKit compresses the Close
     // _UIModernBarButton to 0pt at x=391. Its 44pt inset glass then ends up
     // half outside the screen. Mirror the real bar control at x=330 instead.
@@ -48,12 +77,7 @@ static void closeGlass(UIViewController *page) {
     });
     SGRPassControllerGoing(page, ^(UIViewController *controller) {
         UIView *content = SGRChildNamed(controller.navigationController.navigationBar, @"_UINavigationBarContentView");
-        UIView *source = SGRBarStackButton(content, NO);
-        if (source) {
-            source.alpha = 1;
-            source.userInteractionEnabled = YES;
-        }
-        [(UIView *)objc_getAssociatedObject(content, &kClosePinned) removeFromSuperview];
+        removeEducationClose(content);
     });
 }
 
