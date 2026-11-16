@@ -51,6 +51,7 @@ static NSArray<NSString *> *contentMarkers(void) {
              @"MarqueeContextMenuViewController",
              @"DisclaimerSheetViewController",
              @"Campfire_ChatDisclaimerImpl",
+             @"Campfire_ChatSettingsPageImpl",
              @"ChatPhotoPickerViewController",
              @"Campfire_ChatGifPickerPageImpl",
              @"Campfire_ChatEntityPickerPageImpl",
