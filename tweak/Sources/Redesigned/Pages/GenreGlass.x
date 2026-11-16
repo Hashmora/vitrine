@@ -19,10 +19,14 @@ static void dress(UIViewController *page) {
     SGForEachView(page.viewIfLoaded, ^(UIView *view) {
         if (![NSStringFromClass(view.class) hasSuffix:@"HeaderView"] ||
             ![NSStringFromClass(view.class) containsString:@"Browse_GenrePageImpl"]) return;
-        if (view.backgroundColor && SGIsBaseSurface(view.layer.backgroundColor)) SGRHoldClear(view);
+        if (view.backgroundColor && SGIsBaseSurface(view.layer.backgroundColor)) {
+            view.backgroundColor = UIColor.clearColor;
+            view.layer.backgroundColor = NULL;
+            SGRHoldClear(view);
+        }
         for (UIView *sub in view.subviews) {
             if ([NSStringFromClass(sub.class) containsString:@"GradientFillView"]) {
-                if (!sub.layer.mask) sub.layer.mask = [CALayer layer];
+                SGRConceal(sub);
             }
         }
         // The compact 16pt heading is in the 91pt sticky header; the larger
