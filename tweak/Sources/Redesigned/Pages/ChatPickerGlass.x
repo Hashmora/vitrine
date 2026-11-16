@@ -3,7 +3,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 
-static char kEntityField;
+static char kEntityField, kEntityCancel;
 
 static void entitySearch(UIView *search) {
     if (!search.window) return;
@@ -15,6 +15,17 @@ static void entitySearch(UIView *search) {
     }
     if (!field || field.bounds.size.width < 30) return;
     SGRGlassFlatBox(field, &kEntityField, NO);
+    // Cancel is only laid out when the field becomes first responder.
+    __block UIView *cancel = nil;
+    SGForEachView(search, ^(UIView *v) {
+        if ([v.accessibilityLabel isEqualToString:@"Cancel"] &&
+            [v.accessibilityIdentifier isEqualToString:@"Encore.Button.Tertiary"]) cancel = v;
+    });
+    if (cancel && cancel.bounds.size.width > 1 && !cancel.hidden) {
+        SGRUnclipUpTo(cancel, ^BOOL(UIView *v) { return v == search; });
+        SGRGlassCapsuleInside(cancel, &kEntityCancel,
+                              CGSizeMake(cancel.bounds.size.width + 12, 40), NO);
+    }
 }
 
 %ctor {
