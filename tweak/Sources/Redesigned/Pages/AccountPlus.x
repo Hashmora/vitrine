@@ -34,7 +34,9 @@ static UIView *plusDisc(UIView *row) {
     SGForEachView(row, ^(UIView *view) {
         if (found || view == row || ![view isMemberOfClass:UIView.class] || view.subviews.count) return;
         CGSize size = view.bounds.size;
-        if (size.width < 40 || size.width > 80 || fabs(size.width - size.height) > 0.5) return;
+        // The drawer's current mini profile-card plus is 32pt. Keep the
+        // previous 48–64pt account-picker discs supported unchanged.
+        if (size.width < 30 || size.width > 80 || fabs(size.width - size.height) > 0.5) return;
         found = view;
     });
     if (found) objc_setAssociatedObject(row, &kDiscKey, found, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -48,6 +50,11 @@ static BOOL dressPlus(UIView *row) {
     if (!disc || disc.bounds.size.width < 1 || disc.bounds.size.height < 1) return NO;
     SGRHoldClear(disc);
     SGRGlassFlatBox(disc, &kGlassKey, YES);
+    if (disc.bounds.size.width < 40) {
+        // In the drawer the 32pt circle lies inside a clipping AccountListCollectionView.
+        // The glass must be able to grow on press and return without being cut square.
+        SGRUnclipUpTo(disc, ^BOOL(UIView *v) { return [v isKindOfClass:UICollectionView.class]; });
+    }
     return YES;
 }
 
