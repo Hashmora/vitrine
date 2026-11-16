@@ -6,7 +6,7 @@
 static char kNewRow, kPlusGlass, kHeader, kBack, kBackGlass;
 
 static void dressFolderRoot(UIView *root) {
-    if (!root.window) return;
+    if (!root) return;
     UIView *row = SGRFindByIdentifier(root, @"NewPlaylist.Row.AddToPlaylist", &kNewRow);
     __block UIView *box = nil;
     if (row) SGForEachView(row, ^(UIView *v) {
@@ -44,4 +44,11 @@ static void dressFolderRoot(UIView *root) {
     // not always cause another controller layout until the user drags it.
     Class main = SGRSwiftClass(@"PlaylistCuration_AddToPlaylistImpl", @"ATPMainView");
     if (main) SGRPassView(main, ^(UIView *v) { dressFolderRoot(v); });
+    // The title's real Swift StackView lays out before the owning page is in
+    // a window. Dress that first frame instead of waiting for a sheet drag.
+    Class header = NSClassFromString(@"_TtCE19Encore_StackViewKitO16EncoreFoundation6Encore9StackView");
+    if (header) SGRPassView(header, ^(UIView *v) {
+        if ([v.accessibilityIdentifier isEqualToString:@"Components.UI.SavedInHeaderAddToPlaylist"])
+            dressFolderRoot(v);
+    });
 }
