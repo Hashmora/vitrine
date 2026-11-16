@@ -47,6 +47,7 @@ static NSArray<NSString *> *contentMarkers(void) {
              @"Audiobook_SupplementaryContentBottomSheetImpl",
              @"DSA_MessagingImpl",
              @"DSA_InlineToggleImpl",
+             @"AdsPlatform_AdsContextMenuKit",
              @"MarqueeContextMenuViewController",
              @"DisclaimerSheetViewController",
              @"Campfire_ChatDisclaimerImpl",
