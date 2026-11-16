@@ -98,6 +98,23 @@ static NSArray<NSString *> *contentMarkers(void) {
              @"Blend_SocialPromptingImpl"];
 }
 
+// The reorder upsell is a SwiftUI hosting controller with no named module in its
+// runtime class. Recognise it only when a second sheet is presented over Queue.
+static BOOL containsController(UIViewController *root, NSString *marker, int depth) {
+    if (!root || depth > 10) return NO;
+    if ([NSStringFromClass(root.class) containsString:marker]) return YES;
+    for (UIViewController *child in root.childViewControllers) {
+        if (containsController(child, marker, depth + 1)) return YES;
+    }
+    return NO;
+}
+
+static BOOL queueReorderUpsell(UIViewController *sheet) {
+    UIViewController *presenter = sheet.presentingViewController;
+    if (!containsController(presenter, @"Queue_ViewImpl.QueueViewController", 0)) return NO;
+    return containsController(sheet, @"InstrumentedUIHostingController", 0);
+}
+
 static BOOL isContent(UIViewController *controller) {
     NSString *name = NSStringFromClass(controller.class);
     for (NSString *marker in contentMarkers()) {
@@ -237,6 +254,13 @@ static void chrome(UIViewController *sheet) {
     if (root) {
         SGRGlassSheetChrome(root);
         if ([NSStringFromClass(content.class) containsString:@"PlaylistCuration_AddToPlaylistImpl"]) clearSaveInPaint(root);
+        return;
+    }
+    // SwiftUI queue reorder upsell: the hosting controller has no stable module
+    // name, unlike the other popup contents. Its presenting Queue sheet is stable.
+    if (queueReorderUpsell(sheet)) {
+        UIView *pane = SGRFindByIdentifier(sheet.viewIfLoaded, @"sheet-view", &kPendingPaneKey);
+        if (pane) SGRGlassSheetChrome(pane);
         return;
     }
     // The content is not in yet: while a loading page is in the sheet the pane goes in anyway, so no grey shows.
