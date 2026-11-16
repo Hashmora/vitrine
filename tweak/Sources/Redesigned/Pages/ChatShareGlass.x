@@ -27,7 +27,9 @@ static void glassAction(UIView *row, const void *key) {
 
 static void shareGlass(UIViewController *c) {
     UIView *root = c.viewIfLoaded;
-    if (!root.window) return;
+    if (!root) return;
+    // The modal's view is available in viewWillAppear:, before the first
+    // visible frame. Dress it then; requiring window caused a grey flash.
     UIView *pane = c.navigationController.presentationController.presentedView;
     if (!pane) pane = c.navigationController.view.superview;
     if (pane && pane.bounds.size.width >= 300 && pane.bounds.size.height < UIScreen.mainScreen.bounds.size.height) {
@@ -40,6 +42,12 @@ static void shareGlass(UIViewController *c) {
     // hiding _UIBarBackground alone leaves that strip visible.
     UIView *blur = SGRBarBlurOf(c.navigationController);
     UINavigationBar *bar = c.navigationController.navigationBar;
+    // In these shallow sheets the navigation row hugs the very top curve.
+    // Move the WHOLE row (Cancel and centred heading together) below that
+    // curve; never extend Cancel's glass beyond the sheet's upper corner.
+    CGAffineTransform lower = CGAffineTransformMakeTranslation(0, 12);
+    if (bar && !CGAffineTransformEqualToTransform(bar.transform, lower))
+        bar.transform = lower;
     // In the modal's SPNavigationController the blur sometimes lives beside
     // the bar, deeper than the ordinary page-bar lookup searches.
     for (UIView *sibling in bar.superview.subviews) {
@@ -56,8 +64,11 @@ static void shareGlass(UIViewController *c) {
     }
     if (blur) {
         if (!blur.layer.mask) blur.layer.mask = [CALayer layer];
+        if (blur.alpha != 0) blur.alpha = 0;
         blur.userInteractionEnabled = NO;
     }
+    UIView *opaqueBar = SGRChildNamed(bar, @"_UIBarBackground");
+    if (opaqueBar && opaqueBar.alpha != 0) opaqueBar.alpha = 0;
     UIView *field = SGRFindByIdentifier(root, @"Components.ChatShareHeader.Private.SearchField", &kShareSearch);
     if (field && field.bounds.size.height > 1) {
         SGRGlassFillBox(field, &kShareSearch, YES);
