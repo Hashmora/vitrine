@@ -81,7 +81,11 @@ static void dress(UIViewController *page) {
     SGForEachView(view, ^(UIView *v) {
         if (![v isMemberOfClass:UIView.class] || fabs(v.bounds.size.height - 143) > 1 ||
             fabs(v.bounds.size.width - view.bounds.size.width) > 1) return;
-        if (SGIsBaseSurface(v.layer.backgroundColor)) SGRHoldClear(v);
+        if (SGIsBaseSurface(v.layer.backgroundColor)) {
+            v.backgroundColor = UIColor.clearColor;
+            v.layer.backgroundColor = NULL;
+            SGRHoldClear(v);
+        }
     });
     if (!view.window) return;
     UICollectionView *list = SGRPageListIn(view, &kListKey);
