@@ -4,7 +4,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 
-static char kShareSearch, kShareRow, kShareInvite, kGroupName;
+static char kShareSearch, kShareRow, kShareInvite, kGroupName, kCancel;
 
 static void glassAction(UIView *row, const void *key) {
     if (!row) return;
@@ -42,6 +42,15 @@ static void shareGlass(UIViewController *c) {
     }
     glassAction(SGRFindByIdentifier(root, @"CreateGroup.Row", &kShareRow), &kShareRow);
     glassAction(SGRFindByIdentifier(root, @"InviteLink.Row", &kShareInvite), &kShareInvite);
+    // In Add people the Cancel navigation action is an Encore tertiary text
+    // button, not the standard UIKit back control.
+    UINavigationBar *bar = c.navigationController.navigationBar;
+    UIView *content = SGRChildNamed(bar, @"_UINavigationBarContentView");
+    UIView *cancel = SGRBarStackButton(content, YES);
+    if ([cancel.accessibilityLabel isEqualToString:@"Cancel"] && cancel.bounds.size.height > 1) {
+        SGRUnclipUpTo(cancel, ^BOOL(UIView *v) { return v.superview == bar; });
+        SGRGlassCapsuleInside(cancel, &kCancel, CGSizeMake(MAX(60, cancel.bounds.size.width + 12), 44), NO);
+    }
 }
 
 %ctor {
