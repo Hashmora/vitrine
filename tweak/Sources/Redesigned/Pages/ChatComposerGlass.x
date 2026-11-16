@@ -7,6 +7,10 @@
 #import "Redesigned/NowPlayingBar/NowPlayingBar.h"
 
 static char kComposeField, kComposeDim;
+// A message containing a shared track expands vertically. The composer keeps
+// the same continuous corners as its one-line state, not a radius that grows
+// with its height and makes the attachment look like a giant circle.
+static const CGFloat kChatComposerRadius = 24;
 static __weak UIView *sg_chatComposer;
 
 // Called by the tab bar during its own minimize/expand animation, and by the
@@ -34,7 +38,12 @@ static void glassComposer(UIViewController *page) {
     UIView *field = SGRFindByIdentifier(root, @"Components.UI.MessageComposeView.inputField", &kComposeField);
     if (!field || field.bounds.size.width < 100) return;
     UIView *pane = SGRGlassFlatBox(field, &kComposeField, NO);
-    SGRDarkenGlass(pane, &kComposeDim, field.bounds.size.height / 2, SGRBarDim);
+    // Local to the chat composer: SGRGlassFlatBox is still a capsule for every
+    // other control. Re-shape this pane after it has updated to the new bounds.
+    if (field.layer.cornerRadius != kChatComposerRadius) field.layer.cornerRadius = kChatComposerRadius;
+    field.layer.cornerCurve = kCACornerCurveContinuous;
+    if (pane) SGShapeGlass(pane, kChatComposerRadius, NO);
+    SGRDarkenGlass(pane, &kComposeDim, kChatComposerRadius, SGRBarDim);
     UIView *element = field;
     for (UIView *v = field.superview; v && v != root; v = v.superview) {
         if ([NSStringFromClass(v.class) containsString:@"ChatMessageComposeElementProps"]) {
