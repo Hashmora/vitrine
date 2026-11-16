@@ -57,6 +57,7 @@ NSString *const SGRLibraryListIdentifier = @"YourLibraryContent.collectionView";
 // margin Home gives the avatar.
 static const CGFloat kRowInset = 8;
 static char kTitleKey, kRowWatchedKey, kGroupGlassKey, kFolderGroupKey;
+static char kHeaderFadeKey;
 static char kRecentsKey, kSearchKey, kPlusKey, kHeaderTitleKey;
 static char kRoundGlassKey;
 static char kBackKey, kMenuKey, kFolderPlusKey, kPlayKey, kPauseKey, kFolderTitleKey;
@@ -78,7 +79,40 @@ static UIView *childNamed(UIView *host, NSString *marker) {
 }
 
 void SGRLibraryClearScrim(UIView *header) {
-    vanish(childNamed(header, @"GradientView"));
+    UIView *scrim = childNamed(header, @"GradientView");
+    if (scrim) {
+        scrim.hidden = NO;
+        scrim.alpha = 1;
+        scrim.userInteractionEnabled = NO;
+        scrim.accessibilityElementsHidden = YES;
+        if ([scrim.layer isKindOfClass:CAGradientLayer.class]) {
+            CAGradientLayer *gradient = (CAGradientLayer *)scrim.layer;
+            gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0].CGColor,
+                                (id)[UIColor colorWithWhite:0 alpha:0.82].CGColor];
+            gradient.locations = @[@0, @1];
+            gradient.startPoint = CGPointMake(0.5, 1);
+            gradient.endPoint = CGPointMake(0.5, 0);
+        }
+        return;
+    }
+    UIView *fade = objc_getAssociatedObject(header, &kHeaderFadeKey);
+    if (!fade) {
+        fade = [UIView new];
+        fade.userInteractionEnabled = NO;
+        fade.accessibilityElementsHidden = YES;
+        CAGradientLayer *gradient = [CAGradientLayer layer];
+        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.82].CGColor];
+        gradient.locations = @[@0, @1];
+        gradient.startPoint = CGPointMake(0.5, 1);
+        gradient.endPoint = CGPointMake(0.5, 0);
+        [fade.layer addSublayer:gradient];
+        objc_setAssociatedObject(header, &kHeaderFadeKey, fade, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CGFloat height = MIN(MAX(header.bounds.size.height, 1), 124);
+    fade.frame = CGRectMake(0, 0, header.bounds.size.width, height);
+    ((CAGradientLayer *)fade.layer.sublayers.firstObject).frame = fade.bounds;
+    if (fade.superview != header) [header insertSubview:fade atIndex:0];
 }
 
 #pragma mark - the controls
