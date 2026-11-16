@@ -281,6 +281,15 @@ static void barHidden(UIView *bar, BOOL hidden) {
     %init;
     SGRPassView(NSClassFromString(@"_TtC14Queue_ViewImpl19EditModeToolbarView"), ^(UIView *v) { clearBar(v); });
     SGRPassView(NSClassFromString(@"_TtC14Queue_ViewImpl20SessionModifiersView"), ^(UIView *v) { clearBar(v); });
+    // Clear / Edit and the close cross are glassed by their own layout, the moment they have a size: the controller's
+    // passes only come once the sheet has stopped (viewDidAppear), so the glass showed a moment after it settled.
+    SGRPassView(NSClassFromString(kPillButtonClass), ^(UIView *v) {
+        SGRGlassFlatBox(v, &kPillGlassKey, NO);
+    });
+    SGRPassView(NSClassFromString(@"_TtCCE16Encore_ButtonKitO16EncoreFoundation6Encore6Button8Tertiary"), ^(UIView *v) {
+        if (![v.accessibilityIdentifier isEqualToString:@"queue-close-edit-button"]) return;
+        if (v.bounds.size.width >= 1) SGRGlassInside(v, &kCloseGlassKey, v.bounds.size.width);
+    });
     SGRPassControllersNamed(@[@"_TtC14Queue_ViewImpl19QueueViewController"], ^(UIViewController *c) { chrome(c); });
     SGRequireClasses(@[@"_TtC28EncoreConsumerMobile_BaseKit14PlayButtonView", kQueueCellClass]);
 }
