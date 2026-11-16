@@ -4,7 +4,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 
-static char kInviteGlass;
+static char kInviteGlass, kInvitePlus;
 
 static void dressInvite(UIView *host) {
     if (!host.window) return;
@@ -33,15 +33,32 @@ static void dressInvite(UIView *host) {
             [NSStringFromClass(sub.class) containsString:@"AvatarView"])
             SGRConceal(sub);
     }
-    // Spotify's 16pt plus is at {20, 16.67} in the 56pt avatar: its
-    // visual centre is three points too high, and too small for the glass.
-    // Set it after the carousel item lays out so recycled cells are correct.
+    // Spotify's 16pt Encore icon embeds its glyph in a 16pt drawing and
+    // repositions it on subsequent layouts. Changing the view's frame does
+    // not enlarge or centre the glyph. Hide that icon and draw a centred
+    // system symbol above the glass; leave the tap target and label intact.
     for (UIView *sub in disc.subviews) {
-        if (![NSStringFromClass(sub.class) isEqualToString:@"SPTEncoreIconView"]) continue;
-        CGRect centered = CGRectMake(16, 16, 24, 24);
-        if (!CGRectEqualToRect(sub.frame, centered)) sub.frame = centered;
+        if ([NSStringFromClass(sub.class) isEqualToString:@"SPTEncoreIconView"])
+            SGRConceal(sub);
     }
     SGRGlassFlatBox(disc, &kInviteGlass, YES);
+    UIImageView *plus = objc_getAssociatedObject(disc, &kInvitePlus);
+    if (!plus) {
+        UIImageSymbolConfiguration *configuration =
+            [UIImageSymbolConfiguration configurationWithPointSize:26 weight:UIImageSymbolWeightMedium];
+        plus = [[UIImageView alloc] initWithImage:[[UIImage systemImageNamed:@"plus" withConfiguration:configuration]
+                                              imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
+        plus.contentMode = UIViewContentModeCenter;
+        plus.userInteractionEnabled = NO;
+        plus.accessibilityElementsHidden = YES;
+        objc_setAssociatedObject(disc, &kInvitePlus, plus, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    plus.tintColor = SGRPrimary();
+    CGRect centered = CGRectMake(round((disc.bounds.size.width - 36) / 2),
+                                round((disc.bounds.size.height - 36) / 2), 36, 36);
+    if (!CGRectEqualToRect(plus.frame, centered)) plus.frame = centered;
+    if (plus.superview != disc) [disc addSubview:plus];
+    else [disc bringSubviewToFront:plus];
     disc.backgroundColor = UIColor.clearColor;
     disc.layer.backgroundColor = NULL;
     SGRHoldClear(disc);
