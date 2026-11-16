@@ -49,6 +49,9 @@ static const CGFloat kCardRadius = 16;
 // black, so the queue's plain body would read as a light grey slab with the secondary text (#B3B3B3) on it hard to make
 // out.
 static const CGFloat kMixDim = 0.2;
+// The full-width bar-count picker floats over the moving waveform and
+// needs a stronger scrim. Effect cards and the promo keep their old dim.
+static const CGFloat kMixBarPickerDim = 0.52;
 // How far the glass of Customize reaches past its label.
 static const CGFloat kCustomizePadX = 8, kCustomizePadY = 5;
 
@@ -234,7 +237,7 @@ static const CACornerMask kTopCorners = kCALayerMinXMinYCorner | kCALayerMaxXMin
 // The glass of a card or a sheet of the window: the queue's pane (SGRThickenSheetGlass) of the view's own corners behind
 // what the view holds, the view's own fill gone. Nothing inside the view is touched: the rows and the buttons keep their
 // own fills (the picked bar count is a solid white pill).
-static void glassBacking(UIView *view, const void *key, CGFloat radius, CACornerMask corners) {
+static void glassBacking(UIView *view, const void *key, CGFloat radius, CACornerMask corners, CGFloat dim) {
     if (@available(iOS 26.0, *)) return;
     CGSize size = view.bounds.size;
     if (size.width < 1 || size.height < 1) return;
@@ -246,7 +249,7 @@ static void glassBacking(UIView *view, const void *key, CGFloat radius, CACorner
     if (view.layer.cornerCurve != kCACornerCurveContinuous) view.layer.cornerCurve = kCACornerCurveContinuous;
     if (view.layer.maskedCorners != corners) view.layer.maskedCorners = corners;
     UIView *glass = SGRGlassPaneIn(view, key, radius);
-    if (!SGRReduceTransparency()) SGRDimSheetGlass(glass, kMixDim);
+    if (!SGRReduceTransparency()) SGRDimSheetGlass(glass, dim);
     // Spotify paints the grey again as the card is picked up or let go: it stays clear.
     SGRHoldClear(view);
 }
@@ -259,9 +262,9 @@ static void dressSheetCard(UIView *view) {
     CGFloat width = view.bounds.size.width;
     if (width < 1) return;
     if (width >= UIScreen.mainScreen.bounds.size.width - 1) {
-        glassBacking(view, &kCardGlassKey, SGRSheetCornerRadius(), kTopCorners);
+        glassBacking(view, &kCardGlassKey, SGRSheetCornerRadius(), kTopCorners, kMixBarPickerDim);
     } else {
-        glassBacking(view, &kCardGlassKey, kCardRadius, kAllCorners);
+        glassBacking(view, &kCardGlassKey, kCardRadius, kAllCorners, kMixDim);
     }
 }
 
@@ -277,7 +280,7 @@ static void dressCustomize(UIView *button) {
 
 // "New effects are here": the card the promo sits in, #1F1F1F r=16.
 static void dressPromoCard(UIView *card) {
-    glassBacking(card, &kPromoGlassKey, kCardRadius, kAllCorners);
+    glassBacking(card, &kPromoGlassKey, kCardRadius, kAllCorners, kMixDim);
 }
 
 %ctor {
