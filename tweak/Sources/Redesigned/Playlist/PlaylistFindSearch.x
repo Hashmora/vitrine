@@ -7,7 +7,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 
-static char kBoxKey, kGlassKey, kCancelGlassKey;
+static char kBoxKey, kGlassKey, kGlassDimKey, kCancelGlassKey, kCancelDimKey;
 
 // Room Cancel's capsule takes past its button on each side.
 static const CGFloat kCancelPadding = 6;
@@ -52,12 +52,15 @@ static void clearBackdrop(UIView *bar) {
     UIView *bar = (UIView *)self;
     if (![bar.accessibilityIdentifier isEqualToString:@"PL.SearchViewController.SearchBar"]) return;
     UIView *box = searchFieldBoxIn(bar);
-    SGRGlassFlatBox(box, &kGlassKey, NO);
+    UIView *lens = SGRGlassFlatBox(box, &kGlassKey, NO);
+    SGRDarkenGlass(lens, &kGlassDimKey, box.bounds.size.height / 2, SGRBarDim);
     clearBackdrop(bar);
     UIView *cancel = cancelIn(bar, box);
     if (cancel && box) {
         SGRUnclipUpTo(cancel, ^BOOL(UIView *v) { return v.superview == bar.superview; });
-        SGRGlassCapsuleInside(cancel, &kCancelGlassKey, CGSizeMake(cancel.bounds.size.width + 2 * kCancelPadding, box.bounds.size.height), NO);
+        UIView *cancelLens = SGRGlassCapsuleInside(cancel, &kCancelGlassKey,
+                                  CGSizeMake(cancel.bounds.size.width + 2 * kCancelPadding, box.bounds.size.height), NO);
+        SGRDarkenGlass(cancelLens, &kCancelDimKey, box.bounds.size.height / 2, SGRBarDim);
     }
     static BOOL logged;
     if (!logged && bar.window) {
