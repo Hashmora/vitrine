@@ -6,7 +6,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Pages.h"
 
-static char kTopKey, kTopDimKey, kTitleKey, kBottomKey, kBottomDimKey, kFooterKey;
+static char kTopKey, kTopDimKey, kTitleKey, kTitleDimKey, kBottomKey, kBottomDimKey;
 
 static void dressBrowser(UIViewController *controller) {
     if (!controller.viewIfLoaded.window) return;
@@ -36,7 +36,9 @@ static void dressBrowser(UIViewController *controller) {
     UIView *title = SGRChildNamed(content, @"_UINavigationBarTitleControl");
     if (title && title.bounds.size.width > 1) {
         SGRUnclipUpTo(title, ^BOOL(UIView *v) { return v.superview == bar; });
-        SGRGlassCapsuleInside(title, &kTitleKey, CGSizeMake(title.bounds.size.width, 44), NO);
+        UIView *lens = SGRGlassCapsuleInside(title, &kTitleKey,
+                                              CGSizeMake(title.bounds.size.width, 44), NO);
+        SGRDarkenGlass(lens, &kTitleDimKey, 22, 0.55);
     }
 
     UIView *toolbar = SGRChildNamed(nav.view, @"UIToolbar");
@@ -57,22 +59,37 @@ static void dressBrowser(UIViewController *controller) {
                             CGSizeMake(actions.bounds.size.width, 54), NO);
         SGRDarkenGlass(lens, &kBottomDimKey, 27, 0.45);
     }
-    // The advertising browser presents above the app's tabs. Its original
-    // opaque toolbar hid them; after clearing it the tabs shone through the
-    // footer. Cover only this browser's footer, behind the floating capsule.
-    if (toolbar.superview == nav.view) {
-        UIView *footer = objc_getAssociatedObject(nav.view, &kFooterKey);
-        if (!footer) {
-            footer = [UIView new];
-            footer.userInteractionEnabled = NO;
-            footer.backgroundColor = UIColor.blackColor;
-            objc_setAssociatedObject(nav.view, &kFooterKey, footer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // The original browser content ends at 761pt, while its 83pt black
+    // safe-area filler was hidden by the opaque toolbar. Let the actual web
+    // page extend under our floating control pill, not a solid black bar.
+    UIView *root = controller.viewIfLoaded;
+    __block UIView *web = nil;
+    SGForEachView(root, ^(UIView *candidate) {
+        if (!web && [NSStringFromClass(candidate.class) isEqualToString:@"WKWebView"])
+            web = candidate;
+    });
+    if (web && web.superview && root.bounds.size.height > 1) {
+        // WKWebView lives one level below a 761pt host, not directly under
+        // AdsInAppBrowserViewController's 844pt root. Enlarge both or the
+        // original host masks off the page in the new safe-area region.
+        UIView *host = web.superview;
+        CGRect hostFrame = host.frame;
+        hostFrame.size.height = root.bounds.size.height - hostFrame.origin.y;
+        if (!CGRectEqualToRect(host.frame, hostFrame)) host.frame = hostFrame;
+        CGRect full = web.frame;
+        full.size.height = host.bounds.size.height - full.origin.y;
+        if (!CGRectEqualToRect(web.frame, full)) web.frame = full;
+    }
+    for (UIView *v in nav.view.subviews) {
+        if (![v isMemberOfClass:UIView.class] || v == root ||
+            fabs(v.frame.origin.y - toolbar.frame.origin.y) > 2 ||
+            fabs(v.bounds.size.width - nav.view.bounds.size.width) > 2 ||
+            v.bounds.size.height < toolbar.bounds.size.height + 25) continue;
+        if (SGIsBaseSurface(v.layer.backgroundColor)) {
+            v.backgroundColor = UIColor.clearColor;
+            v.layer.backgroundColor = NULL;
+            SGRHoldClear(v);
         }
-        CGRect at = [nav.view convertRect:toolbar.bounds fromView:toolbar];
-        CGRect frame = CGRectMake(0, CGRectGetMinY(at), nav.view.bounds.size.width,
-                                  MAX(0, nav.view.bounds.size.height - CGRectGetMinY(at)));
-        if (!CGRectEqualToRect(footer.frame, frame)) footer.frame = frame;
-        if (footer.superview != nav.view) [nav.view insertSubview:footer belowSubview:toolbar];
     }
 }
 
