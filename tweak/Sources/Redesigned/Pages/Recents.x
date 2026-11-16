@@ -76,6 +76,13 @@ static void watchChips(UIView *chips) {
 static void dress(UIViewController *page) {
     SGRDressBarPage(page);
     UIView *view = page.viewIfLoaded;
+    // Spotify adds a 143pt solid-black underlay (91pt navigation + 52pt
+    // filter row). Let the list scroll underneath the floating glass chips.
+    SGForEachView(view, ^(UIView *v) {
+        if (![v isMemberOfClass:UIView.class] || fabs(v.bounds.size.height - 143) > 1 ||
+            fabs(v.bounds.size.width - view.bounds.size.width) > 1) return;
+        if (SGIsBaseSurface(v.layer.backgroundColor)) SGRHoldClear(v);
+    });
     if (!view.window) return;
     UICollectionView *list = SGRPageListIn(view, &kListKey);
     if (!list) return;
