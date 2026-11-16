@@ -33,6 +33,14 @@ static void dressInvite(UIView *host) {
             [NSStringFromClass(sub.class) containsString:@"AvatarView"])
             SGRConceal(sub);
     }
+    // Spotify's 16pt plus is at {20, 16.67} in the 56pt avatar: its
+    // visual centre is three points too high, and too small for the glass.
+    // Set it after the carousel item lays out so recycled cells are correct.
+    for (UIView *sub in disc.subviews) {
+        if (![NSStringFromClass(sub.class) isEqualToString:@"SPTEncoreIconView"]) continue;
+        CGRect centered = CGRectMake(16, 16, 24, 24);
+        if (!CGRectEqualToRect(sub.frame, centered)) sub.frame = centered;
+    }
     SGRGlassFlatBox(disc, &kInviteGlass, YES);
     disc.backgroundColor = UIColor.clearColor;
     disc.layer.backgroundColor = NULL;
