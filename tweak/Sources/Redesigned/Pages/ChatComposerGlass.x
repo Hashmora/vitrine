@@ -51,7 +51,11 @@ static void glassComposer(UIViewController *page) {
             sibling.bounds.size.height < element.bounds.size.height + 50 ||
             fabs(sibling.bounds.size.width - element.bounds.size.width) > 2 ||
             fabs(CGRectGetMinY(sibling.frame) - CGRectGetMinY(element.frame)) > 2) continue;
-        if (SGIsBaseSurface(sibling.layer.backgroundColor)) SGRHoldClear(sibling);
+        if (SGIsBaseSurface(sibling.layer.backgroundColor)) {
+            sibling.backgroundColor = UIColor.clearColor;
+            sibling.layer.backgroundColor = NULL;
+            SGRHoldClear(sibling);
+        }
     }
     SGRChatComposerFollowTabBar();
 

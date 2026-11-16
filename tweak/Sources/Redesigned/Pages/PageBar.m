@@ -273,6 +273,19 @@ static void glassTitle(UIView *title) {
             if (!label && [inner isKindOfClass:UILabel.class]) label = (UILabel *)inner;
         }
     }
+    // A one-to-one Campfire chat can carry only a facepile and an empty
+    // Encore label. Treat it as titleless: otherwise the picture fallback
+    // wraps the facepile in an empty capsule. Group chats with a real name
+    // retain their title capsule.
+    __block BOOL chatFaceTitle = NO, chatHasName = NO;
+    SGForEachView(title, ^(UIView *v) {
+        if ([v.accessibilityIdentifier isEqualToString:@"Components.UI.UserFaceButton"]) chatFaceTitle = YES;
+        if ([v isKindOfClass:UILabel.class] && ((UILabel *)v).text.length > 0) chatHasName = YES;
+    });
+    if (chatFaceTitle && !chatHasName) {
+        dropTitleGlass(title);
+        return;
+    }
     CGFloat content;
     if (label) {
         if (!label.text.length) return;
