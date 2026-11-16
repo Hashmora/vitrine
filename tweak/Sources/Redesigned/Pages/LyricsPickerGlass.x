@@ -9,7 +9,12 @@ static void lyricsSearch(UIView *view) {
     if (!view.window) return;
     UIView *stack = SGRChildNamed(view, @"_TtCE19Encore_StackViewKitO16EncoreFoundation6Encore9StackView");
     UIView *field = SGRChildNamed(stack, @"UITextField");
-    if (field && field.bounds.size.width > 30) SGRGlassFlatBox(field, &kLyricsSearch, NO);
+    if (field && field.bounds.size.width > 30) {
+        SGRGlassFillBox(field, &kLyricsSearch, YES);
+        if (field.backgroundColor && field.backgroundColor != UIColor.clearColor)
+            field.backgroundColor = UIColor.clearColor;
+        SGRHoldClear(field);
+    }
     __block UIView *cancel = nil;
     SGForEachView(view, ^(UIView *v) {
         if ([v.accessibilityIdentifier isEqualToString:@"Encore.Button.Tertiary"] &&
@@ -26,6 +31,27 @@ static void lyricsSearch(UIView *view) {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     Class field = SGRSwiftClass(@"Stickers_LyricsStickersPageImpl", @"LyricsStickerSearchElementUI");
     if (field) SGRPassView(field, ^(UIView *view) { lyricsSearch(view); });
+    // The sticker picker is a separate child of the content picker; the
+    // search and chips appear after the hosting navigation page has settled.
+    SGRPassSwiftController(@"Stickers_LyricsStickersPageImpl", @"LyricsStickersViewController", ^(UIViewController *c) {
+        UIView *root = c.viewIfLoaded;
+        if (!root.window) return;
+        SGRGlassChipsIn(root);
+        __block UIView *search = nil;
+        SGForEachView(root, ^(UIView *v) {
+            if (!search && [NSStringFromClass(v.class) containsString:@"Stickers_LyricsStickersPageImpl.LyricsStickerSearchElementUI"])
+                search = v;
+        });
+        if (search) lyricsSearch(search);
+    });
+    SGRPassView(UITextField.class, ^(UIView *v) {
+        for (UIView *up = v.superview; up && ![up isKindOfClass:UIWindow.class]; up = up.superview) {
+            if ([NSStringFromClass(up.class) containsString:@"Stickers_LyricsStickersPageImpl.LyricsStickerSearchElementUI"]) {
+                lyricsSearch(up);
+                return;
+            }
+        }
+    });
     Class chips = SGRSwiftClass(@"Stickers_LyricsStickersPageImpl", @"FilterChipsView");
     if (chips) SGRPassView(chips, ^(UIView *view) {
         if (view.window) SGRGlassChipsIn(view);
