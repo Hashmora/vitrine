@@ -6,7 +6,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Redesigned/NowPlayingBar/NowPlayingBar.h"
 
-static char kComposeField;
+static char kComposeField, kComposeDim;
 static __weak UIView *sg_chatComposer;
 
 // Called by the tab bar during its own minimize/expand animation, and by the
@@ -33,7 +33,8 @@ static void glassComposer(UIViewController *page) {
     if (!root.window) return;
     UIView *field = SGRFindByIdentifier(root, @"Components.UI.MessageComposeView.inputField", &kComposeField);
     if (!field || field.bounds.size.width < 100) return;
-    SGRGlassFlatBox(field, &kComposeField, NO);
+    UIView *pane = SGRGlassFlatBox(field, &kComposeField, NO);
+    SGRDarkenGlass(pane, &kComposeDim, field.bounds.size.height / 2, SGRBarDim);
     UIView *element = field;
     for (UIView *v = field.superview; v && v != root; v = v.superview) {
         if ([NSStringFromClass(v.class) containsString:@"ChatMessageComposeElementProps"]) {
