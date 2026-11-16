@@ -16,7 +16,12 @@ static void glassAction(UIView *row, const void *key) {
         if (SGRChildNamed(v, @"SPTEncoreIconView")) box = v;
     });
     if (!box) return;
-    SGRGlassFlatBox(box, key, NO);
+    // Prepare the actual 48pt icon plate before the list cell first appears.
+    // Its #2A2A2A paint otherwise flashes on the first presentation frame.
+    SGRGlassFlatBox(box, key, YES);
+    box.backgroundColor = UIColor.clearColor;
+    box.layer.backgroundColor = NULL;
+    SGRHoldClear(box);
     SGRUnclipUpTo(box, ^BOOL(UIView *v) { return [v isKindOfClass:UICollectionView.class]; });
 }
 
@@ -25,11 +30,25 @@ static void shareGlass(UIViewController *c) {
     if (!root.window) return;
     UIView *pane = c.navigationController.presentationController.presentedView;
     if (!pane) pane = c.navigationController.view.superview;
-    if (pane && pane.bounds.size.width >= 300 && pane.bounds.size.height < UIScreen.mainScreen.bounds.size.height)
-        SGRGlassSheetView(pane);
+    if (pane && pane.bounds.size.width >= 300 && pane.bounds.size.height < UIScreen.mainScreen.bounds.size.height) {
+        UIView *sheetGlass = SGRGlassSheetView(pane);
+        // Undimmed panels over the conversation are washed out on light art.
+        // Keep the same queue sheet but give it a readable dark material.
+        if (sheetGlass) SGRDimSheetGlass(sheetGlass, 0.52);
+    }
+    // This modal owns an SPNavigationBar and a separate blurred backing strip;
+    // hiding _UIBarBackground alone leaves that strip visible.
+    UIView *blur = SGRBarBlurOf(c.navigationController);
+    if (blur) {
+        if (!blur.layer.mask) blur.layer.mask = [CALayer layer];
+        blur.userInteractionEnabled = NO;
+    }
     UIView *field = SGRFindByIdentifier(root, @"Components.ChatShareHeader.Private.SearchField", &kShareSearch);
     if (field && field.bounds.size.height > 1) {
-        SGRGlassFlatBox(field, &kShareSearch, NO);
+        SGRGlassFillBox(field, &kShareSearch, YES);
+        field.backgroundColor = UIColor.clearColor;
+        field.layer.backgroundColor = NULL;
+        SGRHoldClear(field);
         SGRUnclipUpTo(field, ^BOOL(UIView *v) { return v == root; });
     }
     // The second step inserts a Group name Encore field between Search and the
@@ -54,7 +73,19 @@ static void shareGlass(UIViewController *c) {
     }
 }
 
+// The share actions are reused list cells. Dress their actual backing buttons on
+// the first layout, not after the share controller eventually lays out again.
+static void dressEarlyShareAction(UIView *view) {
+    NSString *identifier = view.accessibilityIdentifier;
+    if ([identifier isEqualToString:@"CreateGroup.Row"])
+        glassAction(view, &kShareRow);
+    else if ([identifier isEqualToString:@"InviteLink.Row"])
+        glassAction(view, &kShareInvite);
+}
+
 %ctor {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
+    Class row = SGRSwiftClass(@"LegacyUI_ECMCoreKit", @"InteractableLayoutBackingButton");
+    if (row) SGRPassView(row, ^(UIView *view) { dressEarlyShareAction(view); });
     SGRPassSwiftController(@"Campfire_SharePageImpl", @"ChatSharePageViewController", ^(UIViewController *c) { shareGlass(c); });
 }
