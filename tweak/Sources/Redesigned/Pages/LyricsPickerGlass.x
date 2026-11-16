@@ -22,8 +22,7 @@ static void lyricsSearch(UIView *view) {
     });
     if (cancel && cancel.bounds.size.width > 1 && !cancel.hidden) {
         SGRUnclipUpTo(cancel, ^BOOL(UIView *v) { return v == view; });
-        SGRGlassCapsuleInside(cancel, &kLyricsCancel,
-                              CGSizeMake(cancel.bounds.size.width + 12, 40), NO);
+        SGRGlassFlatBox(cancel, &kLyricsCancel, YES);
     }
 }
 
