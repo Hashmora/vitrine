@@ -21,16 +21,38 @@ static BOOL isCardGray(CGColorRef color) {
 
 static char kAboutCardKey, kButtonGlassKey;
 
+static CGFloat desiredButtonWidth(UIView *button) {
+    UILabel *label = innerLabel(button);
+    if (!label.text.length) return button.bounds.size.width;
+    CGSize fit = [label sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)];
+    return MAX(72, ceil(fit.width) + 32);
+}
+
+
 // An Encore secondary button in the card (Follow): a ring drawn as a shape layer the size of its first subview. The
 // ring goes and the button stands on a glass capsule, as Spotify's other outlined buttons do (Kit/SGRCallToAction.x).
 static void dressButton(UIView *button) {
     UIView *face = button.subviews.firstObject;
     CGRect bounds = face.layer.bounds;
     if (!face || bounds.size.width < 1) return;
+    if (button.backgroundColor != UIColor.clearColor) button.backgroundColor = UIColor.clearColor;
+    if (button.layer.backgroundColor) button.layer.backgroundColor = NULL;
+    if (face.backgroundColor != UIColor.clearColor) face.backgroundColor = UIColor.clearColor;
+    if (face.layer.backgroundColor) face.layer.backgroundColor = NULL;
     for (CALayer *layer in face.layer.sublayers) {
         if (![layer isKindOfClass:CAShapeLayer.class] || !CGRectEqualToRect(layer.frame, bounds)) continue;
         CAShapeLayer *ring = (CAShapeLayer *)layer;
         if (ring.strokeColor && CGColorGetAlpha(ring.strokeColor) > 0) ring.strokeColor = UIColor.clearColor.CGColor;
+        if (ring.fillColor && CGColorGetAlpha(ring.fillColor) > 0) ring.fillColor = UIColor.clearColor.CGColor;
+    }
+    CGFloat wanted = desiredButtonWidth(button);
+    if (fabs(button.bounds.size.width - wanted) > 0.5) {
+        CGRect frame = button.frame;
+        frame.size.width = wanted;
+        button.frame = frame;
+        frame = face.frame;
+        frame.size.width = wanted;
+        face.frame = frame;
     }
     SGRGlassChip(button, face, NO, &kButtonGlassKey);
 }
