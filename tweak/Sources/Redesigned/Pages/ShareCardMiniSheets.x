@@ -14,4 +14,5 @@ static void editSheet(UIViewController *controller) {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     SGRPassSwiftController(@"Stickers_EnhancedShareCardPageImpl", @"ColorPickerViewController", ^(UIViewController *c) { editSheet(c); });
     SGRPassSwiftController(@"Stickers_EnhancedShareCardPageImpl", @"ImagePickerViewController", ^(UIViewController *c) { editSheet(c); });
+    SGRPassSwiftController(@"Stickers_EnhancedShareCardPageImpl", @"FontPickerViewController", ^(UIViewController *c) { editSheet(c); });
 }
