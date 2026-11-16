@@ -12,6 +12,7 @@
 // layout pass that styled it: both are then invisible on the glass until the next pass, a second or
 // so later. So the two setters are refused for as long as the field is a capsule.
 #import "Core/SGCore.h"
+#import "Redesigned/Kit/SGRKit.h"
 #import "Diagnostics/Diagnostics.h"
 
 // Spotify's glyph view, resolved at runtime; declared on UIView so the call and the hook below
@@ -20,7 +21,7 @@
 - (void)setForegroundColor:(UIColor *)color;
 @end
 
-static char kStyledKey;
+static char kStyledKey, kMainSearchDim;
 static __weak UIView *sg_searchField;
 
 static BOOL isSearchField(UIView *button) {
@@ -114,6 +115,8 @@ static void styleSearchField(UIView *button) {
     if (glass.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     glass.frame = button.bounds;
     SGShapeGlass(glass, size.height / 2, YES);
+    // Match the playlist Find pill's shading only in the pre-26 fallback.
+    if (SGBelowiOS26()) SGRDarkenGlass(glass, &kMainSearchDim, size.height / 2, SGRBarDim);
     SGGlassInteractive(button, glass);
 
     SGForEachView(button, ^(UIView *v) { whiten(v); });
