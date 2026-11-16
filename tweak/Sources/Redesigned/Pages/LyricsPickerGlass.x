@@ -53,6 +53,20 @@ static void lyricsSearch(UIView *view) {
     });
     Class chips = SGRSwiftClass(@"Stickers_LyricsStickersPageImpl", @"FilterChipsView");
     if (chips) SGRPassView(chips, ^(UIView *view) {
-        if (view.window) SGRGlassChipsIn(view);
+        // The first layout happens before presentation. Do not wait for
+        // didMoveToWindow or for the user to scroll the horizontal strip.
+        SGRGlassChipsIn(view);
+    });
+    // Spotify creates and updates individual filters after FilterChipsView's
+    // own layout. Dress every newly inserted chip immediately, including its
+    // selected (green) pill, so SGRRepaint can follow later color changes.
+    Class chip = NSClassFromString(@"_TtCE15Encore_ChipsKitO16EncoreFoundation6Encore8ChipView");
+    if (chip) SGRPassView(chip, ^(UIView *view) {
+        for (UIView *parent = view.superview; parent && ![parent isKindOfClass:UIWindow.class]; parent = parent.superview) {
+            if ([NSStringFromClass(parent.class) containsString:@"Stickers_LyricsStickersPageImpl.FilterChipsView"]) {
+                SGRGlassChipsIn(view);
+                break;
+            }
+        }
     });
 }
