@@ -396,6 +396,7 @@ static void abandon(UIWindow *window) {
 // The view that carries the card: the white ScrollView itself, or for the location dialog the element view that holds the card and Cancel.
 static UIView *hostOf(UIView *view) {
     NSString *ident = view.accessibilityIdentifier;
+    if ([ident isEqualToString:@"GenAlpha.KidAccountCreation.CloseConfirmationDialog"]) return view;
     if ([ident isEqualToString:@"PopUp.Dialog"] || [ident isEqualToString:@"PlaylistsProfileVisibility.MakePublicDialog"]) return view;
     if ([ident isEqualToString:@"PopUpConfirmationDialog"]) {
         UIView *parent = view.superview;
