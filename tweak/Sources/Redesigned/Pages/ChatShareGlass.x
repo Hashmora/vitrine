@@ -39,6 +39,21 @@ static void shareGlass(UIViewController *c) {
     // This modal owns an SPNavigationBar and a separate blurred backing strip;
     // hiding _UIBarBackground alone leaves that strip visible.
     UIView *blur = SGRBarBlurOf(c.navigationController);
+    UINavigationBar *bar = c.navigationController.navigationBar;
+    // In the modal's SPNavigationController the blur sometimes lives beside
+    // the bar, deeper than the ordinary page-bar lookup searches.
+    for (UIView *sibling in bar.superview.subviews) {
+        if (![sibling isMemberOfClass:UIView.class] ||
+            sibling.bounds.size.height < 44 || sibling.bounds.size.height > 100 ||
+            fabs(sibling.bounds.size.width - bar.bounds.size.width) > 2) continue;
+        for (UIView *inner in sibling.subviews) {
+            if ([inner isKindOfClass:UIVisualEffectView.class]) {
+                blur = sibling;
+                break;
+            }
+        }
+        if (blur == sibling) break;
+    }
     if (blur) {
         if (!blur.layer.mask) blur.layer.mask = [CALayer layer];
         blur.userInteractionEnabled = NO;
@@ -84,12 +99,16 @@ static void shareGlass(UIViewController *c) {
     glassAction(SGRFindByIdentifier(root, @"InviteLink.Row", &kShareInvite), &kShareInvite);
     // In Add people the Cancel navigation action is an Encore tertiary text
     // button, not the standard UIKit back control.
-    UINavigationBar *bar = c.navigationController.navigationBar;
     UIView *content = SGRChildNamed(bar, @"_UINavigationBarContentView");
     UIView *cancel = SGRBarStackButton(content, YES);
     if ([cancel.accessibilityLabel isEqualToString:@"Cancel"] && cancel.bounds.size.height > 1) {
         SGRUnclipUpTo(cancel, ^BOOL(UIView *v) { return v.superview == bar; });
-        SGRGlassCapsuleInside(cancel, &kCancel, CGSizeMake(MAX(60, cancel.bounds.size.width + 12), 44), NO);
+        cancel.backgroundColor = UIColor.clearColor;
+        cancel.layer.backgroundColor = NULL;
+        SGRHoldClear(cancel);
+        UIView *glass = SGRGlassCapsuleInside(cancel, &kCancel,
+            CGSizeMake(MAX(64, cancel.bounds.size.width + 16), 44), NO);
+        if (glass) SGRGlassSetFilm(glass, YES, 22);
     }
 }
 
