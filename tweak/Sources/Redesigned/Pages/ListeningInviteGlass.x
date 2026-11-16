@@ -6,21 +6,16 @@
 
 static char kInviteGlass;
 
-static void dressInvite(UIView *cell) {
-    if (!cell.window) return;
-    UIView *inviteElement = nil;
-    for (UIView *sub in cell.subviews) {
-        if ([NSStringFromClass(sub.class) containsString:@"ListeningActivity_ElementsKit25InviteCarouselItemElement"]) {
-            inviteElement = sub;
-            break;
-        }
-    }
-    if (!inviteElement) return;
-
+static void dressInvite(UIView *host) {
+    if (!host.window) return;
+    // The cell and the generic ElementView have different immediate children.
+    // Search only their small subtree for the named 72pt Invite Friends item.
     __block UIView *button = nil;
-    SGForEachView(inviteElement, ^(UIView *v) {
+    SGForEachView(host, ^(UIView *v) {
         if (!button && [v.accessibilityLabel isEqualToString:@"Invite Friends"] &&
-            [v isMemberOfClass:UIView.class]) button = v;
+            [v isMemberOfClass:UIView.class] && v.bounds.size.width >= 70 &&
+            v.bounds.size.width <= 74 && v.bounds.size.height >= 75 &&
+            v.bounds.size.height <= 83) button = v;
     });
     UIView *disc = nil;
     for (UIView *v in button.subviews) {
@@ -38,12 +33,19 @@ static void dressInvite(UIView *cell) {
             [NSStringFromClass(sub.class) containsString:@"AvatarView"])
             SGRConceal(sub);
     }
-    SGRGlassFlatBox(disc, &kInviteGlass, NO);
-    SGRUnclipUpTo(disc, ^BOOL(UIView *v) { return v == cell; });
+    SGRGlassFlatBox(disc, &kInviteGlass, YES);
+    disc.backgroundColor = UIColor.clearColor;
+    disc.layer.backgroundColor = NULL;
+    SGRHoldClear(disc);
+    SGRUnclipUpTo(disc, ^BOOL(UIView *v) { return [v isKindOfClass:UICollectionView.class]; });
 }
 
 %ctor {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     Class cell = SGRSwiftClass(@"Element_List", @"CollectionViewCell");
     if (cell) SGRPassView(cell, ^(UIView *view) { dressInvite(view); });
+    // The Invite carousel item can become visible when the horizontal list
+    // scrolls, without causing the outer collection cell another layout pass.
+    Class item = NSClassFromString(@"_TtGC13Element_UIKit11ElementViewVV29ListeningActivity_ElementsKit25InviteCarouselItemElement5PropsVS2_5StateOS2_5Event_");
+    if (item) SGRPassView(item, ^(UIView *view) { dressInvite(view); });
 }
