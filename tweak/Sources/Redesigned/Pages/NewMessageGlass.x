@@ -3,10 +3,10 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 
-static char kNewMessageGlass;
+static char kNewMessageGlass, kRowKey;
 
 static void dressRow(UIView *row) {
-    if (!row.window || row.bounds.size.height < 60 || row.bounds.size.height > 68) return;
+    if (!row.window || ![row.accessibilityIdentifier isEqualToString:@"Components.UI.ChatNewMessageRow"]) return;
     __block BOOL newMessage = NO;
     __block UIView *disc = nil;
     SGForEachView(row, ^(UIView *v) {
@@ -15,7 +15,7 @@ static void dressRow(UIView *row) {
             fabs(v.bounds.size.height-48)<0.5 && SGRChildNamed(v, @"SPTEncoreIconView")) disc = v;
     });
     if (!newMessage || !disc) return;
-    SGRGlassFlatBox(disc, &kNewMessageGlass, NO);
+    SGRGlassFlatBox(disc, &kNewMessageGlass, YES);
     SGRUnclipUpTo(disc, ^BOOL(UIView *v) { return v == row; });
 }
 
@@ -23,4 +23,11 @@ static void dressRow(UIView *row) {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     Class row = NSClassFromString(@"_TtCE16Encore_LayoutKitO16EncoreFoundation6Encore7ListRow");
     if (row) SGRPassView(row, ^(UIView *v) { dressRow(v); });
+    // The row is often inserted without its own layoutSubviews being called.
+    // The collection cell always lays out as it appears or is recycled.
+    Class cell = SGRSwiftClass(@"Element_List", @"CollectionViewCell");
+    if (cell) SGRPassView(cell, ^(UIView *v) {
+        UIView *found = SGRFindByIdentifier(v, @"Components.UI.ChatNewMessageRow", &kRowKey);
+        if (found) dressRow(found);
+    });
 }
