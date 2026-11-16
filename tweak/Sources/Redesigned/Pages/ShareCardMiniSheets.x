@@ -15,4 +15,5 @@ static void editSheet(UIViewController *controller) {
     SGRPassSwiftController(@"Stickers_EnhancedShareCardPageImpl", @"ColorPickerViewController", ^(UIViewController *c) { editSheet(c); });
     SGRPassSwiftController(@"Stickers_EnhancedShareCardPageImpl", @"ImagePickerViewController", ^(UIViewController *c) { editSheet(c); });
     SGRPassSwiftController(@"Stickers_EnhancedShareCardPageImpl", @"FontPickerViewController", ^(UIViewController *c) { editSheet(c); });
+    SGRPassSwiftController(@"Stickers_EnhancedShareCardPageImpl", @"StickerPickerViewController", ^(UIViewController *c) { editSheet(c); });
 }
