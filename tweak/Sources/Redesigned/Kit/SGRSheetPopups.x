@@ -81,6 +81,7 @@ static NSArray<NSString *> *contentMarkers(void) {
              @"DevicePredictability_",
              @"YourLibrary_YourLibraryXImpl25BottomSheetViewController",
              @"AIPlaylist_PlaylistCreationPageImpl25BottomSheetViewController",
+             @"ReinventFree_DownloadUpsellPageImpl",
              @"ContextualShuffle_UpsellImpl",
              @"Upsells_SheetPageImpl",
              @"EReader_EReaderPageImpl",
