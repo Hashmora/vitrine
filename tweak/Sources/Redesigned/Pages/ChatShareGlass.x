@@ -55,10 +55,30 @@ static void shareGlass(UIViewController *c) {
     // contacts list. Its rectangular grey backdrop becomes a search-like pill.
     UIView *groupName = SGRFindByIdentifier(root, @"Components.UI.ChatGroupInputSharePage", &kGroupName);
     if (groupName && groupName.bounds.size.height > 1) {
-        SGRGlassFlatBox(groupName, &kGroupName, NO);
+        SGRGlassFillBox(groupName, &kGroupName, YES);
+        groupName.backgroundColor = UIColor.clearColor;
+        groupName.layer.backgroundColor = NULL;
+        SGRHoldClear(groupName);
         SGRUnclipUpTo(groupName, ^BOOL(UIView *v) { return v == root; });
-        UIView *input = SGRChildNamed(groupName, @"EncoreTextField");
-        if (input && input.layer.backgroundColor) input.backgroundColor = UIColor.clearColor;
+        // The real EncoreTextField is a private mangled Swift subclass, not
+        // named "EncoreTextField" exactly. Clear its inset background too.
+        SGForEachView(groupName, ^(UIView *sub) {
+            if ([NSStringFromClass(sub.class) hasSuffix:@"EncoreTextField"]) {
+                sub.backgroundColor = UIColor.clearColor;
+                sub.layer.backgroundColor = NULL;
+                SGRHoldClear(sub);
+            }
+        });
+        // Unlike the field, this is a 48pt solid band spanning the whole
+        // modal. It otherwise shows as a dark rectangle behind the capsule.
+        UIView *band = groupName.superview.superview;
+        if ([band isMemberOfClass:UIView.class] &&
+            fabs(band.bounds.size.width - root.bounds.size.width) < 2 &&
+            band.bounds.size.height >= 40 && band.bounds.size.height <= 56) {
+            band.backgroundColor = UIColor.clearColor;
+            band.layer.backgroundColor = NULL;
+            SGRHoldClear(band);
+        }
     }
     glassAction(SGRFindByIdentifier(root, @"CreateGroup.Row", &kShareRow), &kShareRow);
     glassAction(SGRFindByIdentifier(root, @"InviteLink.Row", &kShareInvite), &kShareInvite);
