@@ -34,6 +34,10 @@ static void maskAway(UIView *view) {
 }
 
 static BOOL isDressedPage(UIView *bar);
+static BOOL isPremiumBar(UIView *bar) {
+    return [bar.accessibilityIdentifier isEqualToString:@"PremiumDestinationPage.HeaderNavigationBar"];
+}
+
 
 static BOOL isLikedSongs(UIViewController *headerVC) {
     SEL controllerSel = NSSelectorFromString(@"headerController"), modelSel = NSSelectorFromString(@"defaultHeaderViewModel"),
@@ -85,11 +89,20 @@ static BOOL isDressedPage(UIView *bar) {
 // Whether this bar is one the redesign dresses: a playlist's (Liked Songs apart), a dressed album's or artist's.
 static BOOL handles(UIView *bar) {
     UIViewController *headerVC = SGRPlaylistHeaderOf(bar);
-    return headerVC ? !isLikedSongs(headerVC) : isDressedPage(bar);
+    return isPremiumBar(bar) || (headerVC ? !isLikedSongs(headerVC) : isDressedPage(bar));
 }
 
 static void apply(UIView *bar) {
     if (!handles(bar)) return;
+    if (isPremiumBar(bar)) {
+        // The premium destination is an Element page, not an FTP playlist controller.
+        // Its header has the same Back identifier, title label and gradient.
+        UIView *back = SGRFindByIdentifier(bar, @"Components.Header.UI.BackButton", NULL);
+        if (back) {
+            SGRPinnedBackOf(bar, back);
+            SGRUnclipUpTo(bar, ^BOOL(UIView *v) { return v.superview == bar.window; });
+        }
+    }
 
     for (UIView *sub in bar.subviews) {
         if ([NSStringFromClass(sub.class) containsString:@"GradientView"]) maskAway(sub);
