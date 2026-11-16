@@ -3,6 +3,7 @@
 // the searchable field and actions without changing their event targets.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
+#import "Pages.h"
 
 static char kShareSearch, kShareRow, kShareInvite, kGroupName, kCancel;
 
