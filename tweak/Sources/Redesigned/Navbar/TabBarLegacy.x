@@ -1614,6 +1614,21 @@ static void itemDidLayOut(UIView *item) {
 
 %end
 
+// Spotify 9.1.90 adds its own full-width gradient below every tab bar.
+// The iOS 26 bar clears it in TabBar.x; the pre-26 custom bar needs the
+// equivalent independently of the Legacy Liquid Glass appearance switch.
+%group SGRLegacyTabBarGradient
+%hook _TtC23NavigationUI_TabBarImpl18TabBarGradientView
+- (void)didMoveToWindow {
+    %orig;
+    ((UIView *)self).alpha = 0;
+}
+- (void)setAlpha:(CGFloat)alpha {
+    %orig(0);
+}
+%end
+%end
+
 BOOL SGRLegacyTabBarOn(void) {
     static BOOL on;
     static dispatch_once_t once;
@@ -1629,6 +1644,9 @@ BOOL SGRLegacyTabBarOn(void) {
 %ctor {
     if (!SGRLegacyTabBarOn()) return;
     %init(LegacyTabBar);
+    Class gradient = objc_getClass("_TtC23NavigationUI_TabBarImpl18TabBarGradientView");
+    if (!gradient) gradient = NSClassFromString(@"NavigationUI_TabBarImpl.TabBarGradientView");
+    if (gradient) %init(SGRLegacyTabBarGradient, _TtC23NavigationUI_TabBarImpl18TabBarGradientView = gradient);
     SGRequireClasses(@[
         @"_TtC23NavigationUI_TabBarImpl10TabBarView",
         @"_TtC23NavigationUI_TabBarImpl21TabBarItemElementView",
