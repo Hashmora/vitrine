@@ -1222,6 +1222,22 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
     bar.userInteractionEnabled = !compact;
 }
 
+static void settleMinimizedBar(UIView *stockBar, UIView *host) {
+    if (!stockBar || !host || !host.window) return;
+    void (^settle)(void) = ^{
+        syncBar(stockBar);
+        [host layoutIfNeeded];
+        SGRNowPlayingBarFollowTabBar();
+    };
+    settle();
+    for (NSNumber *delay in @[@0.0, @0.18]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (!host.window) return;
+            [UIView performWithoutAnimation:settle];
+        });
+    }
+}
+
 static void setMinimized(BOOL minimized, BOOL animated) {
     UIView *stockBar = sg_stockBar;
     if (minimized == sg_minimized) return;
@@ -1239,17 +1255,18 @@ static void setMinimized(BOOL minimized, BOOL animated) {
     };
     if (!animated) {
         [UIView performWithoutAnimation:apply];
+        settleMinimizedBar(stockBar, host);
         return;
     }
     // Minimizing is SGRMotionBar's spring with no overshoot. The full bar coming back has a little: the capsule
     // grows out of the circle and settles, the card goes back above it on the same spring.
     if (minimized || SGRReduceMotion()) {
-        SGRAnimate(SGRMotionBar, apply, nil);
+        SGRAnimate(SGRMotionBar, apply, ^(BOOL finished) { settleMinimizedBar(stockBar, host); });
         return;
     }
     [UIView animateWithDuration:0.5 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0
         options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState
-        animations:apply completion:nil];
+        animations:apply completion:^(__unused BOOL finished) { settleMinimizedBar(stockBar, host); }];
 }
 
 BOOL SGRLegacyTabBarMinimized(void) {
