@@ -46,7 +46,13 @@ static void wizardChrome(UIViewController *page) {
     SGForEachView(page.viewIfLoaded, ^(UIView *v) {
         if (fabs(v.bounds.size.width - width) > 1 || fabs(v.bounds.size.height - 91) > 1) return;
         if (fabs(v.frame.origin.y) > 1 || !v.clipsToBounds) return;
-        if (v.backgroundColor && SGIsBaseSurface(v.layer.backgroundColor)) SGRHoldClear(v);
+        if (v.backgroundColor && SGIsBaseSurface(v.layer.backgroundColor)) {
+            // HoldClear protects later repaints; it does not clear the color
+            // already in the layer at the time the page first opens.
+            v.backgroundColor = UIColor.clearColor;
+            v.layer.backgroundColor = NULL;
+            SGRHoldClear(v);
+        }
     });
 }
 
