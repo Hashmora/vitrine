@@ -15,7 +15,17 @@ static void dressChatHeader(UIViewController *page) {
     UIView *adapter = [NSStringFromClass(leading.class) isEqualToString:@"_UITAMICAdaptorView"] ? leading : nil;
     UIView *back = SGRChildNamed(adapter, @"UIButton");
     if (back && back.bounds.size.width > 1) {
-        SGRPinnedBackOf(root, back);
+        SGRMirrorButton *mirror = SGRPinnedBackOf(root, back);
+        // The adaptor's source glyph is only 12pt. Give the mirror a real
+        // navigation-sized chevron without changing the original Back action.
+        if (mirror) {
+            mirror.ownGlyph = YES;
+            mirror.fallbackGlyph = [[UIImage systemImageNamed:@"chevron.left"
+                withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:22
+                                                                                  weight:UIImageSymbolWeightSemibold]]
+                imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+            [mirror feedFrom:back];
+        }
         // The mirror is above the shared bar; its original adaptor must not
         // paint an opaque system button underneath the new circle.
         SGRConceal(adapter);
