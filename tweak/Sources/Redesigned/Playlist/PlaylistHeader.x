@@ -463,6 +463,7 @@ static void glassUp(UIView *box, const void *key) {
 
 static void applyToolbar(UIView *headerRoot) {
     static char kFieldKey, kSortBoxKey, kFieldGlassKey, kSortGlassKey;
+    static char kFieldDimKey, kSortDimKey;
     SGRPinnedBack(SGRPlaylistPageOf(headerRoot), headerRoot);
     // A playlist's field and its Sort button share Components.Header.UI.Toolbar.Content. Your Episodes has the
     // field alone, straight in the header.
@@ -470,8 +471,10 @@ static void applyToolbar(UIView *headerRoot) {
     UIView *field = SGRFindByIdentifier(toolbar ?: headerRoot, @"Components.Header.UI.Toolbar.SearchField", &kFieldKey);
     UIView *sort = toolbar ? SGRFindByIdentifier(toolbar, @"Components.Header.UI.Toolbar.ButtonContainer", &kSortBoxKey) : nil;
     if (SGBelowiOS26()) {
-        SGRGlassFlatBox(field, &kFieldGlassKey, NO);
-        SGRGlassFlatBox(sort, &kSortGlassKey, NO);
+        UIView *searchGlass = SGRGlassFlatBox(field, &kFieldGlassKey, NO);
+        UIView *sortGlass = SGRGlassFlatBox(sort, &kSortGlassKey, NO);
+        SGRDarkenGlass(searchGlass, &kFieldDimKey, field.bounds.size.height / 2, SGRBarDim);
+        SGRDarkenGlass(sortGlass, &kSortDimKey, sort.bounds.size.height / 2, SGRBarDim);
     } else if (toolbar) {
         // iOS 26: the system's glass in the boxes, as before the legacy glass.
         glassUp(field, &kFieldGlassKey);
