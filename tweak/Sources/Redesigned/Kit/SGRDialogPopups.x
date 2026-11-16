@@ -35,7 +35,7 @@
 // view, and a moment after it is shown, as Spotify fills it in; its taking down is seen as the window is hidden or no
 // longer holds the dialog. On iOS 26 none of this runs, and Spotify's dialogs are its own, as on main.
 //
-// Create cover art > Cancel > "Are you sure" is a web page, not a view of Spotify's: nothing to replace.
+// Share-card editor > Cancel > "Are you sure" is an Encore dialog in its own UIWindow and can be replaced.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Settings/SGPageStyle.h"
@@ -397,6 +397,15 @@ static void abandon(UIWindow *window) {
 static UIView *hostOf(UIView *view) {
     NSString *ident = view.accessibilityIdentifier;
     if ([ident isEqualToString:@"GenAlpha.KidAccountCreation.CloseConfirmationDialog"]) return view;
+    // Only the edit-card confirmation gets this Encore Dialog treatment; other
+    // Encore alerts may use different button layouts or actions.
+    if ([ident isEqualToString:@"Encore.Dialog"]) {
+        __block BOOL discarding = NO;
+        SGForEachView(view, ^(UIView *sub) {
+            if ([sub isKindOfClass:UILabel.class] && [((UILabel *)sub).text isEqualToString:@"Are you sure?"]) discarding = YES;
+        });
+        return discarding ? view : nil;
+    }
     if ([ident isEqualToString:@"PopUp.Dialog"] || [ident isEqualToString:@"PlaylistsProfileVisibility.MakePublicDialog"]) return view;
     if ([ident isEqualToString:@"PopUpConfirmationDialog"]) {
         UIView *parent = view.superview;
