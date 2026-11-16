@@ -9,7 +9,10 @@ static void glassGifSearch(UIView *view) {
     if (!view.window) return;
     UIView *field = SGRChildNamed(view, @"UITextField");
     if (!field || field.bounds.size.height < 20) return;
-    SGRGlassFlatBox(field, &kGifField, NO);
+    SGRGlassFillBox(field, &kGifField, YES);
+    if (field.backgroundColor && field.backgroundColor != UIColor.clearColor)
+        field.backgroundColor = UIColor.clearColor;
+    SGRHoldClear(field);
     __block UIView *clear = nil;
     SGForEachView(field, ^(UIView *v) {
         if ([v.accessibilityLabel isEqualToString:@"Clear search text"] &&
@@ -25,4 +28,12 @@ static void glassGifSearch(UIView *view) {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     Class search = SGRSwiftClass(@"Campfire_ChatGifPickerPageImpl", @"ChatGifSearchElementUI");
     if (search) SGRPassView(search, ^(UIView *view) { glassGifSearch(view); });
+    SGRPassView(UITextField.class, ^(UIView *v) {
+        for (UIView *up = v.superview; up && ![up isKindOfClass:UIWindow.class]; up = up.superview) {
+            if ([NSStringFromClass(up.class) containsString:@"Campfire_ChatGifPickerPageImpl.ChatGifSearchElementUI"]) {
+                glassGifSearch(up);
+                return;
+            }
+        }
+    });
 }
