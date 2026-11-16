@@ -3,13 +3,23 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 
-static char kLyricsSearch;
+static char kLyricsSearch, kLyricsCancel;
 
 static void lyricsSearch(UIView *view) {
     if (!view.window) return;
     UIView *stack = SGRChildNamed(view, @"_TtCE19Encore_StackViewKitO16EncoreFoundation6Encore9StackView");
     UIView *field = SGRChildNamed(stack, @"UITextField");
     if (field && field.bounds.size.width > 30) SGRGlassFlatBox(field, &kLyricsSearch, NO);
+    __block UIView *cancel = nil;
+    SGForEachView(view, ^(UIView *v) {
+        if ([v.accessibilityIdentifier isEqualToString:@"Encore.Button.Tertiary"] &&
+            [v.accessibilityLabel isEqualToString:@"Cancel"]) cancel = v;
+    });
+    if (cancel && cancel.bounds.size.width > 1 && !cancel.hidden) {
+        SGRUnclipUpTo(cancel, ^BOOL(UIView *v) { return v == view; });
+        SGRGlassCapsuleInside(cancel, &kLyricsCancel,
+                              CGSizeMake(cancel.bounds.size.width + 12, 40), NO);
+    }
 }
 
 %ctor {
