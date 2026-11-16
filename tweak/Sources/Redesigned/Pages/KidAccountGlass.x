@@ -9,11 +9,12 @@ static char kClosePinned;
 static void closeGlass(UIViewController *page) {
     if (!page.viewIfLoaded.window) return;
     UIView *content = SGRChildNamed(page.navigationController.navigationBar, @"_UINavigationBarContentView");
-    UIView *stack = SGRBarStackButton(content, NO);
     // In this particular wizard introduction UIKit compresses the Close
     // _UIModernBarButton to 0pt at x=391. Its 44pt inset glass then ends up
     // half outside the screen. Mirror the real bar control at x=330 instead.
-    UIView *source = SGRChildNamed(stack, @"_UIButtonBarButton");
+    // SGRBarStackButton already returns the _UIButtonBarButton, *not* its
+    // stack. Looking for another button inside it made this always nil.
+    UIView *source = SGRBarStackButton(content, NO);
     if (!source) return;
     // Pin inside the navigation content itself (44pt high), rather than the
     // page below the interactive navigation bar, which would eat its taps.
@@ -47,10 +48,11 @@ static void closeGlass(UIViewController *page) {
     });
     SGRPassControllerGoing(page, ^(UIViewController *controller) {
         UIView *content = SGRChildNamed(controller.navigationController.navigationBar, @"_UINavigationBarContentView");
-        UIView *stack = SGRBarStackButton(content, NO);
-        UIView *source = SGRChildNamed(stack, @"_UIButtonBarButton");
-        source.alpha = 1;
-        source.userInteractionEnabled = YES;
+        UIView *source = SGRBarStackButton(content, NO);
+        if (source) {
+            source.alpha = 1;
+            source.userInteractionEnabled = YES;
+        }
         [(UIView *)objc_getAssociatedObject(content, &kClosePinned) removeFromSuperview];
     });
 }
