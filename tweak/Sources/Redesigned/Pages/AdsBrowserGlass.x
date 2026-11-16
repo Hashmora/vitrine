@@ -24,7 +24,7 @@ static void dressBrowser(UIViewController *controller) {
         if (![NSStringFromClass(stack.class) isEqualToString:@"_UIButtonBarStackView"]) continue;
         for (UIView *adaptor in stack.subviews) {
             if (![NSStringFromClass(adaptor.class) isEqualToString:@"_UITAMICAdaptorView"]) continue;
-            UIButton *button = SGRChildNamed(adaptor, @"UIButton");
+            UIView *button = SGRChildNamed(adaptor, @"UIButton");
             if (!button || button.bounds.size.width < 1) continue;
             SGRUnclipUpTo(button, ^BOOL(UIView *v) { return v.superview == bar; });
             SGRGlassInside(button, &kTopKey, 44);
