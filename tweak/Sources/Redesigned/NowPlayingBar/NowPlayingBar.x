@@ -30,6 +30,7 @@
 #import "Settings/SGMarquee.h"
 #import "NowPlayingBar.h"
 #import "Redesigned/Navbar/Navbar.h"
+#import "Redesigned/Pages/Pages.h"
 
 static const CGFloat kCardRadius = 24;
 // The strip's pane is this much smaller than the strip at each end, so a gap parts it from the card's glass.
@@ -527,6 +528,7 @@ void SGRNowPlayingBarFollowTabBar(void) {
     [container.view layoutIfNeeded];
     SGRSnackbarFollowNowPlayingBar();
     SGRTooltipFollowNowPlayingBar();
+    SGRChatComposerFollowTabBar();
 }
 
 CGFloat SGRNowPlayingBarInlineShift(void) {
