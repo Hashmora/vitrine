@@ -26,6 +26,25 @@ static void dressInvite(UIView *host) {
         }
     }
     if (!disc) return;
+    // The ordinary activity/friend avatars sit four points below the top of
+    // their cells, and their captions start at y=68. Spotify places Invite
+    // Friends at y=0/y=64 instead. Align *both* pieces to the same baseline,
+    // using absolute coordinates so repeated layout passes cannot drift.
+    if (fabs(disc.frame.origin.y - 4) > 0.5) {
+        CGRect frame = disc.frame;
+        frame.origin.y = 4;
+        disc.frame = frame;
+    }
+    for (UIView *sub in button.subviews) {
+        if (![NSStringFromClass(sub.class) isEqualToString:@"SPTEncoreLabel"] ||
+            ![sub.accessibilityLabel isEqualToString:@"Invite Friends"]) continue;
+        if (fabs(sub.frame.origin.y - 68) > 0.5) {
+            CGRect frame = sub.frame;
+            frame.origin.y = 68;
+            sub.frame = frame;
+        }
+    }
+    SGRUnclipUpTo(button, ^BOOL(UIView *v) { return [v isKindOfClass:UICollectionView.class]; });
     // The empty avatar's background covers the glass. The plus glyph is a
     // sibling of the avatar, so concealing the empty plate keeps the glyph.
     for (UIView *sub in disc.subviews) {
