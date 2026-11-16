@@ -60,7 +60,7 @@ static void dressInvite(UIView *host) {
         if ([NSStringFromClass(sub.class) isEqualToString:@"SPTEncoreIconView"])
             SGRConceal(sub);
     }
-    SGRGlassFlatBox(disc, &kInviteGlass, YES);
+    SGRGlassFlatBox(disc, &kInviteGlass, NO);
     UIImageView *plus = objc_getAssociatedObject(disc, &kInvitePlus);
     if (!plus) {
         UIImageSymbolConfiguration *configuration =

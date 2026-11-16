@@ -119,15 +119,19 @@ static BOOL settleQueueLabel(UIView *content) {
     NSString *word = [text.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSString *actionWord = [actionText.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (![actionWord isEqualToString:@"Open"] ||
-        (![word isEqualToString:@"Added to"] && ![word isEqualToString:@"Added to queue"])) return NO;
-    if ([word isEqualToString:@"Added to"]) text.text = @"Added to queue";
+        (![word isEqualToString:@"Added to"] && ![word isEqualToString:@"Added to queue"] && ![word isEqualToString:@"Added to Queue"])) return NO;
+    if ([word isEqualToString:@"Added to"]) text.text = @"Added to Queue";
     // Spotify also slides this text in independently of the snackbar's
     // entrance. That slide starts above the capsule and is visible through
     // glass; the completed queue label should be still from its first frame.
     [label.layer removeAllAnimations];
     [text.layer removeAllAnimations];
+    [action.layer removeAllAnimations];
+    [actionText.layer removeAllAnimations];
     if (!CGAffineTransformIsIdentity(label.transform)) label.transform = CGAffineTransformIdentity;
     if (!CGAffineTransformIsIdentity(text.transform)) text.transform = CGAffineTransformIdentity;
+    if (!CGAffineTransformIsIdentity(action.transform)) action.transform = CGAffineTransformIdentity;
+    if (!CGAffineTransformIsIdentity(actionText.transform)) actionText.transform = CGAffineTransformIdentity;
     return YES;
 }
 
@@ -406,7 +410,9 @@ static CGRect heldToCard(UIView *content, CGRect frame) {
 }
 
 - (void)layoutSubviews {
+    settleQueueLabel((UIView *)self);
     %orig;
+    settleQueueLabel((UIView *)self);
     relayoutContent((UIView *)self);
 }
 %end
