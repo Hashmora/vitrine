@@ -30,8 +30,12 @@ static char kListKey, kHeaderKey;
 
 // What shares the stack with the list: the row of chips.
 static UIView *chipsBesides(UIView *list) {
+    // The revised Recents page has THREE children beside its list: a plain
+    // 143pt header placeholder and the real FilterChipsElement. Taking the
+    // first sibling glazes the empty placeholder, leaving Music/Podcasts grey.
     for (UIView *sub in list.superview.subviews) {
-        if (sub != list) return sub;
+        if (sub != list && [NSStringFromClass(sub.class) containsString:@"FilterChipsElement"])
+            return sub;
     }
     return nil;
 }
