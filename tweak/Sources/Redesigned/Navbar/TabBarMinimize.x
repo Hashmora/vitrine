@@ -58,7 +58,13 @@ static void scrolled(UIScrollView *scrollView, CGFloat before) {
     BOOL minimized = SGRMinimizeStepEx(&sg_track, offset, top, bottom, expandsOnUp);
     if (minimized == SGRTabBarMinimized() || (minimized && !SGEnabled(SGRKeyNavbarMinimize))) return;
     if (minimized && sg_waitForTouch) return;
-    SGRSetTabBarMinimized(minimized, YES);
+    // While the mini player is held with one finger, a second finger can
+    // scroll the page. An animation inherited from the held interaction can
+    // retain the tab bar's old snapshot until that first finger lifts. Move
+    // the fallback bar and its mini player *now*, independently of the held
+    // interaction, rather than exposing a suddenly changed bar on release.
+    BOOL interactiveHold = SGRLegacyTabBarOn() && SGRLegacyNowPlayingHeld();
+    SGRSetTabBarMinimized(minimized, !interactiveHold);
 }
 
 %hook UIScrollView
