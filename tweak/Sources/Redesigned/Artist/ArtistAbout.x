@@ -21,44 +21,40 @@ static BOOL isCardGray(CGColorRef color) {
 
 static char kAboutCardKey, kButtonGlassKey;
 
-static CGFloat desiredButtonWidth(UIView *button) {
-    __block UILabel *label = nil;
-    SGForEachView(button, ^(UIView *view) {
-        if (!label && [view isKindOfClass:UILabel.class] && ((UILabel *)view).text.length)
-            label = (UILabel *)view;
-    });
-    if (!label.text.length) return button.bounds.size.width;
-    CGSize fit = [label sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)];
-    return MAX(72, ceil(fit.width) + 32);
-}
-
-
 // An Encore secondary button in the card (Follow): a ring drawn as a shape layer the size of its first subview. The
 // ring goes and the button stands on a glass capsule, as Spotify's other outlined buttons do (Kit/SGRCallToAction.x).
 static void dressButton(UIView *button) {
     UIView *face = button.subviews.firstObject;
-    CGRect bounds = face.layer.bounds;
-    if (!face || bounds.size.width < 1) return;
-    if (button.backgroundColor != UIColor.clearColor) button.backgroundColor = UIColor.clearColor;
-    if (button.layer.backgroundColor) button.layer.backgroundColor = NULL;
-    if (face.backgroundColor != UIColor.clearColor) face.backgroundColor = UIColor.clearColor;
-    if (face.layer.backgroundColor) face.layer.backgroundColor = NULL;
+    if (!face || face.bounds.size.width < 1 || button.bounds.size.width < 1) return;
+    // Spotify changes Follow to Following through Auto Layout. Never force a
+    // width on this button: the old manual resize left the original border at
+    // its previous width after another click.
+    button.backgroundColor = UIColor.clearColor;
+    button.layer.backgroundColor = NULL;
+    face.backgroundColor = UIColor.clearColor;
+    face.layer.backgroundColor = NULL;
+    button.layer.borderWidth = 0;
+    face.layer.borderWidth = 0;
     for (CALayer *layer in face.layer.sublayers) {
-        if (![layer isKindOfClass:CAShapeLayer.class] || !CGRectEqualToRect(layer.frame, bounds)) continue;
+        if (![layer isKindOfClass:CAShapeLayer.class]) continue;
         CAShapeLayer *ring = (CAShapeLayer *)layer;
-        if (ring.strokeColor && CGColorGetAlpha(ring.strokeColor) > 0) ring.strokeColor = UIColor.clearColor.CGColor;
-        if (ring.fillColor && CGColorGetAlpha(ring.fillColor) > 0) ring.fillColor = UIColor.clearColor.CGColor;
-    }
-    CGFloat wanted = desiredButtonWidth(button);
-    if (fabs(button.bounds.size.width - wanted) > 0.5) {
-        CGRect frame = button.frame;
-        frame.size.width = wanted;
-        button.frame = frame;
-        frame = face.frame;
-        frame.size.width = wanted;
-        face.frame = frame;
+        if (ring.bounds.size.width < face.bounds.size.width * 0.65 ||
+            ring.bounds.size.height < face.bounds.size.height * 0.65) continue;
+        if (ring.strokeColor) ring.strokeColor = UIColor.clearColor.CGColor;
+        if (ring.fillColor) ring.fillColor = UIColor.clearColor.CGColor;
     }
     SGRGlassChip(button, face, NO, &kButtonGlassKey);
+    SGRUnclipUpTo(button, ^BOOL(UIView *v) {
+        return [NSStringFromClass(v.class) hasSuffix:@"CreatorBiographyCardLayout"];
+    });
+}
+
+static BOOL onArtistCard(UIView *button) {
+    for (UIView *v = button.superview; v; v = v.superview) {
+        if ([NSStringFromClass(v.class) hasSuffix:@"CreatorBiographyCardLayout"]) return YES;
+        if ([v isKindOfClass:UICollectionView.class]) break;
+    }
+    return NO;
 }
 
 static void dressAbout(UIView *card) {
@@ -91,4 +87,14 @@ void SGRArtistDressAbout(UIView *cell) {
         objc_setAssociatedObject(cell, &kAboutCardKey, card, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (card) dressAbout(card);
+}
+
+// The Follow control can repaint its ring without laying out the enclosing
+// About cell. Reapply on the button's own pass, immediately on each toggle.
+%ctor {
+    if (!SGRedesignedUI() || !SGBelowiOS26()) return;
+    Class secondary = NSClassFromString(@"_TtCCE16Encore_ButtonKitO16EncoreFoundation6Encore6Button9Secondary");
+    if (secondary) SGRPassView(secondary, ^(UIView *v) {
+        if (onArtistCard(v)) dressButton(v);
+    });
 }
