@@ -25,7 +25,6 @@
 #import "Settings/SGPage.h"
 #import "Shared/Navigation/TabItems.h"
 #import "Headers/SPTEncoreIconView.h"
-#import "Shared/Player/PlayerEvents.h"
 #import <objc/message.h>
 
 static char kBarKey, kHostKey, kNavGlassKey, kNavTintKey, kSelPillKey, kRetriesKey, kGlyphOverlayKey, kOutlineLiveKey, kFilledLiveKey, kCreateDiscKey, kGlyphsTakenKey;
@@ -1223,22 +1222,6 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
     bar.userInteractionEnabled = !compact;
 }
 
-static void settleMinimizedBar(UIView *stockBar, UIView *host) {
-    if (!stockBar || !host || !host.window) return;
-    void (^settle)(void) = ^{
-        syncBar(stockBar);
-        [host layoutIfNeeded];
-        SGRNowPlayingBarFollowTabBar();
-    };
-    settle();
-    for (NSNumber *delay in @[@0.0, @0.18]) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (!host.window) return;
-            [UIView performWithoutAnimation:settle];
-        });
-    }
-}
-
 static void setMinimized(BOOL minimized, BOOL animated) {
     UIView *stockBar = sg_stockBar;
     if (minimized == sg_minimized) return;
@@ -1256,32 +1239,17 @@ static void setMinimized(BOOL minimized, BOOL animated) {
     };
     if (!animated) {
         [UIView performWithoutAnimation:apply];
-        settleMinimizedBar(stockBar, host);
         return;
     }
     // Minimizing is SGRMotionBar's spring with no overshoot. The full bar coming back has a little: the capsule
     // grows out of the circle and settles, the card goes back above it on the same spring.
     if (minimized || SGRReduceMotion()) {
-        SGRAnimate(SGRMotionBar, apply, ^(BOOL finished) { settleMinimizedBar(stockBar, host); });
+        SGRAnimate(SGRMotionBar, apply, nil);
         return;
     }
     [UIView animateWithDuration:0.5 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0
         options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState
-        animations:apply completion:^(__unused BOOL finished) { settleMinimizedBar(stockBar, host); }];
-}
-
-// Called as NPV closes, including during an interactive hold. Do not wait
-// for Spotify to relayout the tab bar after the hand leaves the screen.
-void SGRLegacyRefreshPlayerDock(void) {
-    if (!sg_minimized || !sg_stockBar || !sg_stockBar.window) return;
-    static BOOL busy;
-    if (busy) return;
-    busy = YES;
-    [UIView performWithoutAnimation:^{
-        syncBar(sg_stockBar);
-        SGRNowPlayingBarFollowTabBar();
-    }];
-    busy = NO;
+        animations:apply completion:nil];
 }
 
 BOOL SGRLegacyTabBarMinimized(void) {
@@ -1294,19 +1262,10 @@ void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated) {
 }
 
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height) {
-    static __weak UIView *lastHost;
-    static CGRect lastSlot;
     UIView *stockBar = sg_stockBar;
-    // Spotify temporarily hides the stock bar during the fullscreen-player
-    // close. Keep the previous compact slot until its live bar is back.
-    CGRect saved = sg_minimized && !SGPlayerIsOpen() && lastHost == host ? lastSlot : CGRectNull;
-    if (!sg_minimized) {
-        lastHost = nil;
-        lastSlot = CGRectNull;
-    }
     UIView *barHost = stockBar ? objc_getAssociatedObject(stockBar, &kHostKey) : nil;
     UIView *bar = stockBar ? objc_getAssociatedObject(stockBar, &kBarKey) : nil;
-    if (!sg_minimized || !host || !barHost || !bar.window || stockBar.hidden || stockBar.alpha < 0.01 || CGRectIsEmpty(sg_leadFrame)) return saved;
+    if (!sg_minimized || !host || !barHost || !bar.window || stockBar.hidden || stockBar.alpha < 0.01 || CGRectIsEmpty(sg_leadFrame)) return CGRectNull;
     // The circles' places, not what is on screen mid-spring.
     CGRect lead = [barHost convertRect:sg_leadFrame toView:host];
     CGFloat left = CGRectGetMaxX(lead) + SGRGrid;
@@ -1320,9 +1279,7 @@ CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height) {
     CGRect slot = CGRectMake(left, CGRectGetMidY(lead) - height / 2, right - left, height);
     // A bar Spotify has slid away for a page takes the slot off the screen with it.
     CGRect inWindow = [host convertRect:slot toView:nil];
-    if (slot.size.width < 100 || CGRectGetMaxY(inWindow) > CGRectGetMaxY(bar.window.bounds)) return saved;
-    lastHost = host;
-    lastSlot = slot;
+    if (slot.size.width < 100 || CGRectGetMaxY(inWindow) > CGRectGetMaxY(bar.window.bounds)) return CGRectNull;
     return slot;
 }
 
