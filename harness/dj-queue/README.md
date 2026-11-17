@@ -25,3 +25,15 @@ The lossless handoff app completed on the isolated simulator with `RESULT failur
 Its player-observer stub was updated for the current SpeedPitch subscription, and
 its recovery assertion now waits for the recovery callback rather than overtaking
 it on a busy simulator.
+
+`historyFutureRows` projects the entries after the current logical history position
+back into both the queue page and the now-playing lens. The checks include a
+queued copy as the current track, rows passed by a tap, removed rows and the end
+of the history. Already played tracks are restored only as visible upcoming rows;
+the bookkeeping used to avoid repeats is retained.
+
+Follow-up UI check on the same simulator: after tapping Mad Love past BLOCKKIDS
+and LOCKED IN FREESTYLE, Previous returned to LOCKED IN FREESTYLE and then
+BLOCKKIDS. The queue then displayed LOCKED IN FREESTYLE → Mad Love → Job's Not
+Done, restoring the passed row before the tapped track. Ordinary Next/Previous
+also restored BLOCKKIDS after returning to Rottweiler.
