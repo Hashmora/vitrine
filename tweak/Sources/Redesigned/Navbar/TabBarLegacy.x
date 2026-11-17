@@ -1569,7 +1569,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     // it, it stands over the bar so its glass bends and magnifies the icons (TabBarLens.m).
     // The offline message bar reduces the stock safe area. Give selected
     // tab captions extra room inside their highlight at that height.
-    UIView *message = SGRFindByIdentifier(stockBar.window, @"LimitedExperienceIndicatorBar", &kMessageBarKey);
+    UIView *message = SGFindIdentifier(stockBar.window, @"LimitedExperienceIndicatorBar", &kMessageBarKey);
     BOOL messageVisible = message.window == stockBar.window && !message.hidden && message.alpha > 0.01 &&
                           CGRectGetHeight(message.bounds) > 20;
     CGFloat lensInset = messageVisible ? 1 : kSelPillInset;
