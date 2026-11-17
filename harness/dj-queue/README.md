@@ -57,3 +57,11 @@ KRYPTONITE finish automatically. The internal Favorite Lie anchor retained
 KRYPTONITE on screen; the main play button stayed Pause in all sampled handover
 states. YOSEMITE started automatically with the next segment's introduction and
 five songs already present in the core future.
+
+New DJ set button (Spotify 9.1.90, Vitrine DJ simulator): the queue header action was
+visually checked beside Edit, including its 44 pt touch area and hiding in Edit.
+Native “Let DJ pick” invokes CompositeJumpable.jumpWithCompletion: with
+`void (^)(NSError *)`; the queue action uses the same native object and receives
+success. A baseline run with DJ queue disabled also acknowledged the native request
+without immediately changing the current song, so this simulator run proves parity
+and service acceptance, not a reliable immediate segment change from the backend.

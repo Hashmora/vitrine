@@ -827,6 +827,11 @@ Spotify's own through.
   active when future/order updates arrive after the track callback, so an empty transient snapshot does not
   disable automatic advancement. The player retains its full pre-handover state through the internal pause
   acknowledgement, then the queue and player are refreshed with the confirmed destination.
+- **New DJ set:** a compact action beside Edit on the DJ queue header duplicates the request sheet's
+  “Let DJ pick”. It uses Spotify's own `AIDJService` / `CompositeJumpable` and `jumpWithCompletion:`;
+  the 9.1.90 classes, factory selector and NSError completion were checked against its binary and native tap.
+  Repeated taps and reorder enforcement wait for the reply. Success drops only this feature's queued copy
+  and custom order; an error preserves the order and shows a notice. The action hides during Edit.
 - **Artwork:** Home and Recents use the DJ's public cover (the DJ card's recorded `image_url`), cached locally.
   Each look owns its drawing hooks. Reused Library cells are never a source of another item's artwork.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its

@@ -58,6 +58,7 @@
 #import "PlayerState.h"
 #import "DJQueue.h"
 #import "SpeedPitch.h"
+#import "Shared/AlbumQueue/AlbumQueue.h"
 
 static BOOL sameTrack(SPTPlayerTrack *a, SPTPlayerTrack *b) {
     return [a.URI isEqual:b.URI] && [a.provider isEqualToString:b.provider];
@@ -92,6 +93,25 @@ static id sLastPlayer, sLastQueue;
 static id queuePlayer(void) {
     return sLastPlayer ?: SGPlayer();
 }
+
+// Spotify 9.1.90: AIDJService provides the same CompositeJumpable used by
+// the request sheet's “Let DJ pick”. Refer weakly to its native service/jumper,
+// rather than holding a request view or reaching into a Swift event closure.
+static __weak id sDJService, sDJJumpable;
+static BOOL sPickingSegment;
+
+%hook _TtC16Endless_AIDJImpl11AIDJService
+- (void)_injectDependenciesWithProvider:(id)provider {
+    %orig;
+    sDJService = self;
+}
+- (id)provideJumpableWithControlling:(id)player {
+    id result = %orig;
+    sDJService = self;
+    sDJJumpable = result;
+    return result;
+}
+%end
 
 // The DJ's segment (five tracks, a voice before the first and one after the last) with room for the hand-queued.
 static const int64_t kFutureCap = 16;
@@ -1036,7 +1056,7 @@ static BOOL cardUnheard(SPTPlayerState *state, SPTPlayerTrack *track) {
 
 static void queueAhead(void) {
     SPTPlayerState *state = SGPlayerState();
-    if (!sDJActive || sAdvancing || sQueueWaiting || sTapPending || sHandingOver || !isDJSession(state)) return;
+    if (!sDJActive || sPickingSegment || sAdvancing || sQueueWaiting || sTapPending || sHandingOver || !isDJSession(state)) return;
     SPTPlayerTrack *current = state.track, *want = nil;
     // On a voice (the DJ's words after a track, or a card's), a track about to be skipped or a moved one about to play,
     // what is put in stays as it is: the core may be on its way to it already (a copy taken out as the voice began
@@ -1229,7 +1249,7 @@ static id advanceTo(SPTPlayerTrack *target, BOOL voiceFirst) {
 static BOOL enforceOrder(SPTPlayerState *state, BOOL arrived, BOOL walking) {
     SPTPlayerTrack *current = state.track;
     NSString *uid = baseUID(current.UID);
-    if (!sOrdered || !uid.length || !inDJ(current)) return NO;
+    if (sPickingSegment || !sOrdered || !uid.length || !inDJ(current)) return NO;
     BOOL steppedBack = sBackAsked && -sBackAsked.timeIntervalSinceNow < 4;
     // A walk over the history (a step back, the next after it, a track going on to the one that played after it) is the
     // user's, not the core coming back to tracks it was skipped past.
@@ -1676,6 +1696,93 @@ static CGRect sHandleFrame = {{-1, 0}, {0, 0}};
 static __weak UIView *sUIKitHandle;
 static __weak UIView *sQueuePageView;
 static void alignHeaderPlay(UIView *page);
+static char kNewSegmentButton;
+static void drawNewSegmentButton(UIView *page) {
+    UIButton *button = objc_getAssociatedObject(page, &kNewSegmentButton);
+    UIView *edit = descendant(page, ^BOOL(UIView *view) {
+        return [view.accessibilityIdentifier isEqualToString:@"queue-edit-button"];
+    });
+    UIView *host = page;
+    BOOL visible = sDJActive && isDJSession(SGPlayerState()) && edit;
+    for (UIView *v = edit; v && v != page; v = v.superview) {
+        if (v.hidden || v.alpha <= 0.01) { visible = NO; break; }
+    }
+    if (!visible || !host || host.bounds.size.width < 200) { button.hidden = YES; return; }
+    if (!button) {
+        button = [UIButton buttonWithType:UIButtonTypeSystem];
+        button.accessibilityIdentifier = @"vitrine-dj-new-segment";
+        button.accessibilityLabel = @"New DJ set";
+        button.accessibilityHint = @"Let DJ pick a new set of tracks";
+        button.titleLabel.adjustsFontForContentSizeCategory = YES;
+        [button addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+            if (sPickingSegment || sHandingOver || !isDJSession(SGPlayerState())) return;
+            id service = sDJService;
+            SEL provide = NSSelectorFromString(@"provideJumpableWithControlling:");
+            SEL jump = NSSelectorFromString(@"jumpWithCompletion:");
+            id jumper = sDJJumpable;
+            if (!jumper && [service respondsToSelector:provide]) jumper = ((id (*)(id, SEL, id))objc_msgSend)(service, provide, queuePlayer());
+            if (![jumper respondsToSelector:jump]) return;
+            sPickingSegment = YES;
+            drawNewSegmentButton(sQueuePageView);
+            SGLog(@"queue: New DJ set uses %@ jumpWithCompletion:", NSStringFromClass([jumper class]));
+            // 9.1.90's native completion is void (^)(NSError *). Spotify owns
+            // fetching and playback; only discard our old order after it accepts the jump.
+            void (^complete)(NSError *) = ^(NSError *error) {
+                SGLog(@"queue: New DJ set result: %@", error ?: @"success");
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    sPickingSegment = NO;
+                    if (!error && isDJSession(SGPlayerState())) {
+                        if (sAheadQueued) dropQueued(SGURIString(sAheadQueued.URI), @"new DJ set requested");
+                        sAheadQueued = nil;
+                        forgetOrder();
+                    } else if (error) {
+                        [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Couldn't change DJ set"
+                                           detail:error.localizedDescription symbol:@"exclamationmark.circle"];
+                    }
+                    sSignature = nil;
+                    refreshReaders();
+                    drawNewSegmentButton(sQueuePageView);
+                });
+            };
+            ((void (*)(id, SEL, id))objc_msgSend)(jumper, jump, complete);
+        }] forControlEvents:UIControlEventTouchUpInside];
+        objc_setAssociatedObject(page, &kNewSegmentButton, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
+    config.title = sPickingSegment ? @"Picking…" : @"New DJ set";
+    config.image = [UIImage systemImageNamed:@"forward.end.fill"];
+    config.imagePadding = 6;
+    config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold];
+    config.baseForegroundColor = UIColor.whiteColor;
+    config.background.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
+    config.background.cornerRadius = 16;
+    config.background.backgroundInsets = NSDirectionalEdgeInsetsMake(6, 0, 6, 0);
+    config.contentInsets = NSDirectionalEdgeInsetsMake(6, 12, 6, 12);
+    UIFont *font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    config.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
+        NSMutableDictionary *result = [attributes mutableCopy];
+        result[NSFontAttributeName] = font;
+        return result;
+    };
+    button.configuration = config;
+    button.enabled = !sPickingSegment && !sHandingOver && (sDJJumpable != nil || sDJService != nil);
+    CGRect editFrame = [edit convertRect:edit.bounds toView:host];
+    CGSize size = [button sizeThatFits:CGSizeMake(200, 44)];
+    CGFloat available = CGRectGetMinX(editFrame) - 108;
+    if (available < 100 || CGRectGetMinY(editFrame) < 0 || CGRectGetMaxY(editFrame) > page.bounds.size.height) {
+        button.hidden = YES;
+        return;
+    }
+    CGFloat width = MIN(size.width, available);
+    button.titleLabel.numberOfLines = 1;
+    button.titleLabel.adjustsFontSizeToFitWidth = YES;
+    button.titleLabel.minimumScaleFactor = 0.8;
+    button.frame = CGRectMake(CGRectGetMinX(editFrame) - width - 8, CGRectGetMidY(editFrame) - 22, width, 44);
+    if (button.superview != host) [host addSubview:button];
+    [host bringSubviewToFront:button];
+    button.hidden = NO;
+}
+
 static void placeReorderHandle(UITableViewCell *cell) {
     UIView *control = nil;
     for (UIView *view in cell.subviews) {
@@ -2490,7 +2597,7 @@ static void scheduleHandOver(void) {
     sHandOverTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *timer) {
         SPTPlayerState *now = SGPlayerState();
         if (!sDJActive || !isDJSession(now)) { [timer invalidate]; if (sHandOverTimer == timer) sHandOverTimer = nil; return; }
-        if (sHandingOver || now.isPaused || now.duration <= 0) return;
+        if (sPickingSegment || sHandingOver || now.isPaused || now.duration <= 0) return;
         double speed = now.playbackSpeed > 0 ? now.playbackSpeed : 1;
         if ((now.duration - now.position) / speed > kHandOverLead) return;
         if (needsHandOver(now)) handOver();
@@ -2830,6 +2937,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
     %orig;
     drawHeaderAvatar(((UIViewController *)(id)self).view);
     sQueuePageView = ((UIViewController *)(id)self).view;
+    drawNewSegmentButton(sQueuePageView);
     if (sDJActive) alignHeaderPlay(((UIViewController *)(id)self).view);
 }
 - (void)viewDidAppear:(BOOL)animated {
@@ -2845,6 +2953,7 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
         if (!strong || !sDJActive) { [timer invalidate]; return; }
         drawHeaderAvatar(strong.view);
         alignHeaderPlay(strong.view);
+        drawNewSegmentButton(strong.view);
     }];
 }
 - (void)viewDidDisappear:(BOOL)animated {
