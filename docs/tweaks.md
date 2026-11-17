@@ -813,6 +813,12 @@ Spotify's own through.
   A paused landing used to load the next segment is not a listened-to track. A step back is not overridden
   by reorder enforcement; after it, Next walks forwards through the same history. Past the first three seconds,
   Spotify's restart-current-track behavior is retained. Checked by `harness/dj-queue/check.py`.
+- **Segment transitions:** a spent context track is skipped before its audio starts, including when the next
+  segment's card is already available in the user's order. When the core must land on the segment's last item
+  to load more, the local music output is gated independently of the sleep timer's gain. The pause and final
+  destination are acknowledged before the gate opens; Spotify's skip itself can resume playback. The anchor
+  is not put in the logical history. `harness/dj-queue/check.py` exercises delayed command acknowledgements,
+  Spotify's automatic resume on skip, and zeroing/releasing the independent output gate.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
   future as it was), so the order is kept here and the player is held to it. A track the core would come to first is
   skipped to. Any other is queued (the core's own copy) and played from the queue, so the core keeps its place before
