@@ -135,6 +135,19 @@ static CGFloat cardWidth(UIView *content, CGFloat maxWidth) {
     CGFloat padRight = trailingPad(action);
     CGFloat room = maxWidth - kPadLeft - padRight - actionWidth;
     CGFloat labelWidth = label ? labelSize(label, MAX(room, 1)).width : 0;
+    // Spotify fills the queue toast asynchronously: its first pass contains
+    // "Added to", then the queue suffix arrives after the toast is already
+    // animating in. Reserve the final localized suffix's room up front so the
+    // capsule does not grow in flight. Keep the label itself live and localized.
+    if (label) {
+        UILabel *text = innerLabel(label);
+        NSString *value = text.text.lowercaseString ?: @"";
+        if ([value containsString:@"added"] || [value containsString:@"queue"] || [value containsString:@"добав"]) {
+            UIFont *font = text.font ?: [UIFont systemFontOfSize:13];
+            CGFloat finalLine = ceil([@"Added to Queue" sizeWithAttributes:@{NSFontAttributeName: font}].width);
+            labelWidth = MAX(labelWidth, MIN(finalLine, MAX(room, 1)));
+        }
+    }
     return MIN(kPadLeft + labelWidth + actionWidth + padRight, maxWidth);
 }
 
