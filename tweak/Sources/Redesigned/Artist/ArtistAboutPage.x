@@ -3,7 +3,7 @@
 // white title in a glass pill, and the rank / listeners / biography / facts blocks on glass.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
-#import "Redesigned/Pages/PageBar.h"
+#import "Redesigned/Pages/Pages.h"
 
 static char kAboutPageCardKey;
 

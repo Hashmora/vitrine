@@ -22,7 +22,11 @@ static BOOL isCardGray(CGColorRef color) {
 static char kAboutCardKey, kButtonGlassKey;
 
 static CGFloat desiredButtonWidth(UIView *button) {
-    UILabel *label = innerLabel(button);
+    __block UILabel *label = nil;
+    SGForEachView(button, ^(UIView *view) {
+        if (!label && [view isKindOfClass:UILabel.class] && ((UILabel *)view).text.length)
+            label = (UILabel *)view;
+    });
     if (!label.text.length) return button.bounds.size.width;
     CGSize fit = [label sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)];
     return MAX(72, ceil(fit.width) + 32);
