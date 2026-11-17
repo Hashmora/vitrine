@@ -47,6 +47,7 @@ static void SGDJDraw(UIView *holder) {
     if (!overlay) {
         overlay = [UIImageView new];
         overlay.tag = SGDJCoverTag;
+        overlay.accessibilityIdentifier = @"SG.DJArtwork";
         overlay.userInteractionEnabled = NO;
         overlay.accessibilityElementsHidden = YES;
         overlay.contentMode = UIViewContentModeScaleAspectFill;
@@ -56,7 +57,10 @@ static void SGDJDraw(UIView *holder) {
     }
     overlay.frame = holder.bounds;
     overlay.image = SGDJCover;
-    overlay.layer.cornerRadius = holder.layer.cornerRadius;
+    // Recents' other covers bake their small rounding into the loaded artwork.
+    // The DJ's plain bitmap needs the same 4pt cut even when its placeholder holder has radius zero.
+    BOOL recents = [row.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"];
+    overlay.layer.cornerRadius = recents ? MAX(4, holder.layer.cornerRadius) : holder.layer.cornerRadius;
     [holder bringSubviewToFront:overlay];
 }
 %hook SGDJCardImage
