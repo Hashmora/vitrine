@@ -1752,7 +1752,12 @@ static void drawNewSegmentButton(UIView *page) {
     config.background.cornerRadius = 16;
     config.background.backgroundInsets = NSDirectionalEdgeInsetsMake(6, 0, 6, 0);
     config.contentInsets = NSDirectionalEdgeInsetsMake(6, 12, 6, 12);
-    UIFont *font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    // Match Spotify's own queue controls instead of UIKit's San Francisco subheadline.
+    // Asking by font name also respects Vitrine's app-wide font replacement setting.
+    UIFont *spotifyFont = [UIFont fontWithName:@"SpotifyMixUI-Bold" size:14];
+    UIFont *font = spotifyFont
+        ? [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline] scaledFontForFont:spotifyFont]
+        : [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     config.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
         NSMutableDictionary *result = [attributes mutableCopy];
         result[NSFontAttributeName] = font;
