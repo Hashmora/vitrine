@@ -2278,6 +2278,9 @@ static NSString *sNextSegmentContext, *sNextSegmentPage;
 static NSSet<NSString *> *sNextSegmentOldUIDs;
 static SPTPlayerTrack *sNextSegmentAnchor;
 static BOOL sNextSegmentWasPaused, sNextSegmentAnchorSent, sNextSegmentJumpSent;
+static NSUInteger sNextSegmentPhysicalAdvances;
+static NSString *sNextSegmentObservedKey;
+static NSTimeInterval sNextSegmentLastProgress;
 static NSTimeInterval sNextSegmentStarted;
 static const NSTimeInterval kNextSegmentTimeout = 22;
 
@@ -2286,8 +2289,11 @@ static BOOL isNewSegmentItem(SPTPlayerTrack *track) {
     NSString *uri = SGURIString(track.URI);
     if (!isDJTrack(track) && ![uri hasPrefix:@"spotify:media:"]) return NO;
     NSString *page = track.metadata[@"page_instance_id"];
-    if ([page isKindOfClass:NSString.class] && page.length && sNextSegmentPage.length)
-        return ![page isEqualToString:sNextSegmentPage];
+    // Page IDs can remain stable when the core appends a fresh DJ segment.
+    // A different page is decisive (even if Spotify reused an intro UID), but
+    // an unchanged page is not proof that a previously unseen UID is old.
+    if ([page isKindOfClass:NSString.class] && page.length && sNextSegmentPage.length &&
+        ![page isEqualToString:sNextSegmentPage]) return YES;
     NSString *uid = baseUID(track.UID);
     return uid.length && ![sNextSegmentOldUIDs containsObject:uid];
 }
@@ -2301,6 +2307,9 @@ static void endNextSegmentSkip(BOOL changed, NSString *problem, BOOL contextChan
     sNextSegmentAnchor = nil;
     sNextSegmentAnchorSent = NO;
     sNextSegmentJumpSent = NO;
+    sNextSegmentPhysicalAdvances = 0;
+    sNextSegmentObservedKey = nil;
+    sNextSegmentLastProgress = 0;
     sHandingOver = NO;
     sHandOverAnchorUID = nil;
     sHandOverDisplayState = nil;
@@ -2361,6 +2370,13 @@ static void pollNextSegmentSkip(NSTimer *timer) {
         endNextSegmentSkip(YES, nil, NO);
         return;
     }
+    // Once the anchor is confirmed, reset the stall clock whenever the core
+    // moves to another physical item (song -> closing voice, for example).
+    NSString *observed = trackKey(state.track);
+    if (![observed isEqualToString:sNextSegmentObservedKey]) {
+        sNextSegmentObservedKey = [observed copy];
+        sNextSegmentLastProgress = CACurrentMediaTime();
+    }
     if (sNextSegmentJumpSent) return;
     for (SPTPlayerTrack *next in state.future) {
         if ([SGURIString(next.URI) isEqualToString:@"spotify:delimiter"]) break;
@@ -2370,6 +2386,18 @@ static void pollNextSegmentSkip(NSTimer *timer) {
         skipForward(next);
         return;
     }
+    // Spotify does not always expose the following page just because the
+    // targeted skip reached the old segment's last song. If no new page was
+    // published, give the core a bounded *physical* Next to leave that song
+    // (and, when present, its closing voice). Never consume a hand queue.
+    if (sNextSegmentPhysicalAdvances >= 2 ||
+        CACurrentMediaTime() - sNextSegmentLastProgress < 2.5) return;
+    for (SPTPlayerTrack *next in state.future) if (isCoreQueued(next)) return;
+    sNextSegmentPhysicalAdvances++;
+    sNextSegmentLastProgress = CACurrentMediaTime();
+    SGLog(@"queue: next DJ page still absent; advancing one physical item (%lu/2), on %@ [%@]",
+          (unsigned long)sNextSegmentPhysicalAdvances, SGURIString(state.track.URI), state.track.UID);
+    skipForward(nil);
 }
 
 static void skipToNextDJSegment(void) {
@@ -2407,7 +2435,10 @@ static void skipToNextDJSegment(void) {
     sNextSegmentWasPaused = state.isPaused;
     sNextSegmentAnchorSent = NO;
     sNextSegmentJumpSent = NO;
+    sNextSegmentPhysicalAdvances = 0;
+    sNextSegmentObservedKey = nil;
     sNextSegmentStarted = CACurrentMediaTime();
+    sNextSegmentLastProgress = sNextSegmentStarted;
     SGDJQueueBeginPick(); // hold the queue order and drop our prefetched old copy
     sHandOverDisplayState = state;
     sHandOverDisplayTrack = asDJTrack(state.track) ?: state.track;
