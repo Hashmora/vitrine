@@ -27,6 +27,7 @@
 #import "Headers/SPTEncoreIconView.h"
 #import <objc/message.h>
 
+static char kMessageBarKey;
 static char kBarKey, kHostKey, kNavGlassKey, kNavTintKey, kSelPillKey, kRetriesKey, kGlyphOverlayKey, kOutlineLiveKey, kFilledLiveKey, kCreateDiscKey, kGlyphsTakenKey;
 static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, kTemplateKey;
 // The bar is a floating capsule, not a full-width slab.
@@ -1269,6 +1270,21 @@ static void setMinimized(BOOL minimized, BOOL animated) {
         animations:apply completion:^(__unused BOOL finished) { settleMinimizedBar(stockBar, host); }];
 }
 
+void SGRLegacyRefreshForMessageBar(void) {
+    UIView *stock = sg_stockBar;
+    if (!stock.window) return;
+    static BOOL busy;
+    if (busy) return;
+    busy = YES;
+    [UIView performWithoutAnimation:^{
+        [stock setNeedsLayout];
+        [stock layoutIfNeeded];
+        syncBar(stock);
+        SGRNowPlayingBarFollowTabBar();
+    }];
+    busy = NO;
+}
+
 BOOL SGRLegacyTabBarMinimized(void) {
     return sg_minimized;
 }
@@ -1525,18 +1541,24 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
 
     // The selection bubble, above the tint and below the transparent bar so the icon draws on top; while a finger holds
     // it, it stands over the bar so its glass bends and magnifies the icons (TabBarLens.m).
+    // The offline message bar reduces the stock safe area. Give selected
+    // tab captions extra room inside their highlight at that height.
+    UIView *message = SGRFindByIdentifier(stockBar.window, @"LimitedExperienceIndicatorBar", &kMessageBarKey);
+    BOOL messageVisible = message.window == stockBar.window && !message.hidden && message.alpha > 0.01 &&
+                          CGRectGetHeight(message.bounds) > 20;
+    CGFloat lensInset = messageVisible ? 1 : kSelPillInset;
     SGRLegacyLens *selPill = (SGRLegacyLens *)SGLazyChild(host, &kSelPillKey, ^UIView *{ return [SGRLegacyLens new]; });
     if (selPill.superview != host) [host insertSubview:selPill aboveSubview:navTint];
-    selPill.heldOutset = kSelPillInset + kLensOverhang;
+    selPill.heldOutset = lensInset + kLensOverhang;
     // The pill follows bar.selectedItem, not Spotify's labels, which repaint late. syncBar is its only writer.
     NSUInteger selIndex = [bar.items indexOfObject:bar.selectedItem];
     if (selIndex != NSNotFound && selIndex < sources.count) {
-        CGFloat pillWidth = itemWidth - kSelPillInset * 2;
+        CGFloat pillWidth = itemWidth - lensInset * 2;
         CGFloat centerX = [bar renderedCenterXForItem:bar.selectedItem];
         CGFloat slotX = isnan(centerX)
-            ? bar.frame.origin.x + selIndex * (itemWidth + kNavItemSpacing) + kSelPillInset
+            ? bar.frame.origin.x + selIndex * (itemWidth + kNavItemSpacing) + lensInset
             : bar.frame.origin.x + centerX - pillWidth / 2;
-        CGRect pillFrame = CGRectMake(slotX, bar.frame.origin.y + kSelPillInset, pillWidth, bar.frame.size.height - kSelPillInset * 2);
+        CGRect pillFrame = CGRectMake(slotX, bar.frame.origin.y + lensInset, pillWidth, bar.frame.size.height - lensInset * 2);
         BOOL wasVisible = !selPill.hidden;
         selPill.hidden = NO;
         // The lens moves the pill: a tap, a tab picked on release and a layout pass slide it to the new slot on the
