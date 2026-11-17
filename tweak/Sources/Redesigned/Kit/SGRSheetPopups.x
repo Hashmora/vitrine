@@ -334,12 +334,36 @@ static UIView *backingInShareRow(UIView *row, const void *key, CGRect frame) {
     }
     backing.frame = frame;
     if (backing.superview != row) [row insertSubview:backing atIndex:0];
-    else if (row.subviews.firstObject != backing) [row sendSubviewToBack:backing];
+    else if (key != &kShareMore && row.subviews.firstObject != backing)
+        [row sendSubviewToBack:backing];
     // A backing belongs only to its own button, stays inside the 390pt
     // viewport and can never multiply during repeated SwiftUI layout passes.
     UIView *glass = SGRGlassFlatBox(backing, key, NO);
     if (glass) SGRDarkenGlass(glass, &kNativeShareActionDim, frame.size.height / 2, 0.38);
     return backing;
+}
+
+// SwiftUI draws the last lower-row More/DJ action as a graphics image at
+// x=336, not as a tappable UIKit or _UIShapeHitTestingView. Its own image is
+// added after the action row's first layout. Attach one backdrop directly
+// BELOW that image, not at the bottom of the entire (1171pt) carousel.
+static void shareMoreGraphicsGlass(UIView *image) {
+    UIView *row = image.superview;
+    if (!isShareActionRow(row) || !inNativeShareSection(row, NO) ||
+        ![NSStringFromClass(image.class) containsString:@"_UIGraphicsView"] ||
+        fabs(CGRectGetMinX(image.frame) - 336) > 3 ||
+        fabs(CGRectGetMinY(image.frame) - 8) > 3 ||
+        fabs(image.bounds.size.width - 56) > 3 ||
+        fabs(image.bounds.size.height - 56) > 3) return;
+    // x334..390 stays entirely inside the visible 390pt viewport. The
+    // drawing at x336 remains in front, so its glyph is never blurred.
+    UIView *backing = backingInShareRow(row, &kShareMore, CGRectMake(334, 8, 56, 56));
+    if (backing && backing.superview == row) {
+        NSUInteger backingIndex = [row.subviews indexOfObject:backing];
+        NSUInteger imageIndex = [row.subviews indexOfObject:image];
+        if (imageIndex != NSNotFound && backingIndex + 1 != imageIndex)
+            [row insertSubview:backing belowSubview:image];
+    }
 }
 
 static void shareActionGlass(UIView *circle) {
@@ -376,7 +400,20 @@ static void shareRowChrome(UIView *row) {
         // shortcut is the last visible item at x336, not the second at x96.
         // Both underlays stay inside the 390pt visible viewport.
         backingInShareRow(row, &kShareCopyLink, CGRectMake(16, 8, 56, 56));
-        backingInShareRow(row, &kShareMore, CGRectMake(334, 8, 56, 56));
+        // The graphics for More can be installed after the first row pass.
+        // When present, put the backdrop immediately below that glyph.
+        BOOL foundMore = NO;
+        // Reordering the lens changes row.subviews; iterate a snapshot.
+        for (UIView *sub in [row.subviews copy]) {
+            if ([NSStringFromClass(sub.class) containsString:@"_UIGraphicsView"] &&
+                fabs(CGRectGetMinX(sub.frame) - 336) < 3 &&
+                fabs(CGRectGetMinY(sub.frame) - 8) < 3) {
+                shareMoreGraphicsGlass(sub);
+                foundMore = YES;
+                break;
+            }
+        }
+        if (!foundMore) backingInShareRow(row, &kShareMore, CGRectMake(334, 8, 56, 56));
     }
 }
 
@@ -650,6 +687,10 @@ static void connectMenuChrome(UIViewController *controller) {
     if (actionCircle) SGRPassView(actionCircle, ^(UIView *v) { shareActionGlass(v); });
     Class actionRow = NSClassFromString(@"_TtCC7SwiftUI17HostingScrollView22PlatformGroupContainer");
     if (actionRow) SGRPassView(actionRow, ^(UIView *v) { shareRowChrome(v); });
+    // The off-platform More icon is created independently by SwiftUI. Watch
+    // its actual graphics view, so its lens is positioned on that first pass.
+    Class graphics = SGRSwiftClass(@"SwiftUI", @"_UIGraphicsView");
+    if (graphics) SGRPassView(graphics, ^(UIView *v) { shareMoreGraphicsGlass(v); });
     SGRPassView(SGRSwiftClass(@"Share_MenuImpl", @"BottomAutoScrollingScrollView"), ^(UIView *view) { shareScrollChrome(view); });
     Class saveIn = SGRSwiftClass(@"PlaylistCuration_AddToPlaylistImpl", @"ATPContainerViewController");
     if (saveIn) {
