@@ -13,7 +13,7 @@ prelude = r'''
 #define SGLog(...) do {} while (0)
 #define SGKeyDJPickFallback @"spotifyglass.djpick.fallback"
 static BOOL fallbackEnabled = YES;
-static BOOL SGEnabled(NSString *key) { return fallbackEnabled; }
+static BOOL SGFlag(NSString *key, BOOL defaultOn) { return fallbackEnabled; }
 @interface SPTPlayerTrack : NSObject
 @property NSString *URI, *UID, *provider;
 @property NSDictionary *metadata;

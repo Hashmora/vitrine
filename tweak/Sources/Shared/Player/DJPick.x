@@ -56,7 +56,7 @@ static BOOL sDJPickSendingPrompt;
     if (self.finished) return;
     // Disabling the setting cancels an unsent retry. A request already sent
     // still needs its landing tracked so the old custom order is cleared.
-    if (!self.prompted && !SGEnabled(SGKeyDJPickFallback)) { [self finish:nil changed:NO]; return; }
+    if (!self.prompted && !SGFlag(SGKeyDJPickFallback, NO)) { [self finish:nil changed:NO]; return; }
     SPTPlayerState *state = [(id<SPTPlayer>)self.player state];
     if (![DJPickContext(state) isEqualToString:self.context]) {
         [self finish:[NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError userInfo:nil] changed:NO];
@@ -107,7 +107,7 @@ static void DJPickWillSkip(id player) {
 
 %hook _TtC16Endless_AIDJImpl17CompositeJumpable
 - (void)jumpWithCompletion:(void (^)(NSError *))completion {
-    if (!SGEnabled(SGKeyDJPickFallback)) { %orig; return; }
+    if (!SGFlag(SGKeyDJPickFallback, NO)) { %orig; return; }
     // These are 9.1.90's native ivar and selector. Older implementations and
     // sessions without prompt support retain their original behavior.
     Ivar fallbackField = class_getInstanceVariable(object_getClass(self), "fallback");
