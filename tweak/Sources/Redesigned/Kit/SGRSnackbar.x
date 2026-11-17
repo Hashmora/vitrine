@@ -68,7 +68,7 @@ static const CGFloat kActionInset = 9;
 // The space between the label and the glass round the action.
 static const CGFloat kLabelGap = 16;
 
-static char kGlassKey, kFilmKey, kDimKey, kActionGlassKey, kDressedKey;
+static char kGlassKey, kFilmKey, kDimKey, kActionGlassKey, kDressedKey, kQueueLoggedWidthKey;
 // The toast on screen, for the tab bar's minimize to move.
 static __weak UIView *sg_snackbar;
 
@@ -107,33 +107,38 @@ static UILabel *innerLabel(UIView *label) {
     return found;
 }
 
-// Spotify briefly supplies just "Added to" for the Queue snackbar, then animates
-// the missing word into its Encore label. Complete that native label before
-// measuring the capsule; do not reserve extra width or draw a second title.
-// Only the English Queue prefix of the action snackbar is affected. The
-// completed native string, including a localized one, is otherwise untouched.
-static void settleQueueText(UIView *content) {
-    if (![NSStringFromClass(content.class) containsString:@"SnackbarWithActionView"]) return;
+// Encore exposes the complete spoken title before its inner UILabel has been
+// sized for a single line. Use that title as the source of truth on the very
+// first layout pass: a wrapped 56pt label must not decide the capsule width.
+static NSString *queueTitle(UIView *label) {
+    if (!label) return nil;
+    NSString *spoken = [label.accessibilityLabel stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (spoken.length && [spoken caseInsensitiveCompare:@"Added to Queue"] == NSOrderedSame) return spoken;
+    UILabel *text = innerLabel(label);
+    NSString *current = [text.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (current.length && [current caseInsensitiveCompare:@"Added to Queue"] == NSOrderedSame) return current;
+    // In some Spotify builds the UILabel temporarily has only the prefix.
+    if ([current isEqualToString:@"Added to"]) return @"Added to Queue";
+    return nil;
+}
+
+static BOOL settleQueueText(UIView *content) {
+    if (![NSStringFromClass(content.class) containsString:@"SnackbarWithActionView"]) return NO;
     UIView *label = nil, *action = nil;
     contentParts(content, &label, &action);
+    NSString *title = queueTitle(label);
     UILabel *text = label ? innerLabel(label) : nil;
-    NSString *value = [text.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    BOOL partial = [value isEqualToString:@"Added to"];
-    BOOL complete = value.length > 0 && [value caseInsensitiveCompare:@"Added to queue"] == NSOrderedSame;
-    if (!partial && !complete) return;
-
-    if (partial) {
-        // Spotify may run its text update inside an active UIView animation.
-        [UIView performWithoutAnimation:^{ text.text = @"Added to queue"; }];
-    }
-    // Stop only the Encore title's independent slide/fade. The snackbar
-    // container keeps Spotify's normal entrance and exit animations.
+    if (!title || !text) return NO;
     [UIView performWithoutAnimation:^{
+        // The accessibility title can be complete even while the inner UILabel
+        // is still holding the animated, wrapped prefix. Replace it in place.
+        if (![text.text isEqualToString:title]) text.text = title;
         SGForEachView(label, ^(UIView *view) {
             [view.layer removeAllAnimations];
             if (!CGAffineTransformIsIdentity(view.transform)) view.transform = CGAffineTransformIdentity;
         });
     }];
+    return YES;
 }
 
 // The action's size: its frame once Spotify has laid it out, its word's until then.
@@ -146,18 +151,14 @@ static CGSize actionSize(UIView *action) {
 // How wide the label wants to be within maxWidth (a long one takes all of it and wraps).
 static CGSize labelSize(UIView *label, CGFloat maxWidth) {
     UILabel *text = innerLabel(label);
-    // The Queue toast is already "Added to Queue" in the first captured frame,
-    // but Encore initially measures it as *two* lines (56x36). The capsule is
-    // consequently born at 164pt and grows to 198pt on Spotify's next pass.
-    // Measure the actual, complete text independently of its temporary UILabel
-    // wrapping width, and use that same result for both the card and the label.
-    // This is not a fixed capsule width; it follows the font and text in use.
-    NSString *value = [text.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (value.length && [value caseInsensitiveCompare:@"Added to queue"] == NSOrderedSame) {
+    // Use Encore's completed accessibility label, not its transient wrapped
+    // UILabel frame. Both the capsule and the title use this same measurement.
+    NSString *title = queueTitle(label);
+    if (title) {
         UIFont *font = text.font ?: [UIFont systemFontOfSize:13];
-        CGSize unwrapped = [text.text sizeWithAttributes:@{NSFontAttributeName: font}];
-        if (unwrapped.width <= maxWidth) {
-            return CGSizeMake(ceil(unwrapped.width), ceil(unwrapped.height));
+        CGSize singleLine = [title sizeWithAttributes:@{NSFontAttributeName: font}];
+        if (singleLine.width <= maxWidth) {
+            return CGSizeMake(ceil(singleLine.width), ceil(MAX(singleLine.height, font.lineHeight)));
         }
     }
     CGSize size = text ? [text sizeThatFits:CGSizeMake(maxWidth, CGFLOAT_MAX)] : label.bounds.size;
@@ -264,14 +265,26 @@ static void dressSnackbar(UIView *snackbar) {
     sg_snackbar = snackbar;
     CGFloat maxWidth = snackbar.bounds.size.width - kSideInset * 2;
     BOOL hosted = content && isHostingView(content);
-    if (content && !hosted) settleQueueText(content);
+    BOOL queue = content && !hosted && settleQueueText(content);
     CGFloat width = !content ? maxWidth : hosted ? hostedCardWidth(content, maxWidth) : cardWidth(content, maxWidth);
     // By bounds and centre: the card carries a transform below (the minimized tab bar), and a frame set under one is undefined.
     CGRect bounds = CGRectMake(0, 0, width, snackbar.bounds.size.height);
     CGPoint center = CGPointMake(round((snackbar.bounds.size.width - width) / 2) + width / 2, snackbar.bounds.size.height / 2);
-    if (!CGRectEqualToRect(card.bounds, bounds)) card.bounds = bounds;
-    if (!CGPointEqualToPoint(card.center, center)) card.center = center;
+    // Spotify can invoke this pass within its entrance animation. The whole
+    // snackbar is allowed to move, but never animate a late capsule resize.
+    void (^placeCard)(void) = ^{
+        if (!CGRectEqualToRect(card.bounds, bounds)) card.bounds = bounds;
+        if (!CGPointEqualToPoint(card.center, center)) card.center = center;
+    };
+    if (queue) [UIView performWithoutAnimation:placeCard];
+    else placeCard();
     followNowPlayingBar(snackbar);
+    // The floating glass and action glass must not inherit Spotify's
+    // entrance animation when this first, final Queue geometry is applied.
+    if (queue) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+    }
     UIView *glass = SGRGlassFloatingCard(card, &kGlassKey, &kFilmKey, kMaxRadius);
     // Dimmed as the tab bar's glass is, so its text stands out over a bright page.
     SGRDarkenGlass(glass, &kDimKey, MIN(kMaxRadius, bounds.size.height / 2), SGRBarDim);
@@ -287,13 +300,27 @@ static void dressSnackbar(UIView *snackbar) {
         SGRClearHostedFill(content);
         SGRLightenDrawnText(content);
     } else if (content) {
-        layoutContent(content);
+        if (queue) [UIView performWithoutAnimation:^{ layoutContent(content); }];
+        else layoutContent(content);
     }
     SGRLightenLabels(card, nil);
     SGForEachView(card, ^(UIView *view) {
         if (isActionButton(view)) dressAction(view);
     });
 
+    if (queue) [CATransaction commit];
+
+    if (queue) {
+        NSNumber *previous = objc_getAssociatedObject(snackbar, &kQueueLoggedWidthKey);
+        if (!previous || fabs(previous.doubleValue - width) > 0.5) {
+            UIView *label = nil, *action = nil;
+            contentParts(content, &label, &action);
+            SGLog(@"toast: queue width %.1f title '%@' inner '%@' label %@ action %@", width,
+                  label.accessibilityLabel, innerLabel(label).text,
+                  NSStringFromCGRect(label.frame), NSStringFromCGRect(action.frame));
+            objc_setAssociatedObject(snackbar, &kQueueLoggedWidthKey, @(width), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
     static dispatch_once_t once;
     dispatch_once(&once, ^{ SGLog(@"toast: glass over a card of %@", NSStringFromCGRect(card.bounds)); });
 }
