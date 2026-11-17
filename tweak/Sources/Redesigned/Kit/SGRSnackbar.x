@@ -146,6 +146,20 @@ static CGSize actionSize(UIView *action) {
 // How wide the label wants to be within maxWidth (a long one takes all of it and wraps).
 static CGSize labelSize(UIView *label, CGFloat maxWidth) {
     UILabel *text = innerLabel(label);
+    // The Queue toast is already "Added to Queue" in the first captured frame,
+    // but Encore initially measures it as *two* lines (56x36). The capsule is
+    // consequently born at 164pt and grows to 198pt on Spotify's next pass.
+    // Measure the actual, complete text independently of its temporary UILabel
+    // wrapping width, and use that same result for both the card and the label.
+    // This is not a fixed capsule width; it follows the font and text in use.
+    NSString *value = [text.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (value.length && [value caseInsensitiveCompare:@"Added to queue"] == NSOrderedSame) {
+        UIFont *font = text.font ?: [UIFont systemFontOfSize:13];
+        CGSize unwrapped = [text.text sizeWithAttributes:@{NSFontAttributeName: font}];
+        if (unwrapped.width <= maxWidth) {
+            return CGSizeMake(ceil(unwrapped.width), ceil(unwrapped.height));
+        }
+    }
     CGSize size = text ? [text sizeThatFits:CGSizeMake(maxWidth, CGFLOAT_MAX)] : label.bounds.size;
     return CGSizeMake(MIN(ceil(size.width), maxWidth), ceil(size.height));
 }
