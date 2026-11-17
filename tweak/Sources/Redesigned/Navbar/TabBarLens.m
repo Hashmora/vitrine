@@ -5,21 +5,20 @@
 
 static char kLensPaneKey, kLensFilmKey;
 
-// The held bubble magnifies the tabs under it, as the system's does (about 1.2 across and down: adaptive_liquid_glass's
-// measure of iOS 26.4's tab bar, lib/src/tab_bar/tab_bar_metrics.dart, magnifyX 1.21 and magnifyY 1.19).
-static const CGFloat kLensMagnification = 1.2;
+// Slightly less central magnification exposes more of each neighboring tab inside the held lens. This lets
+// the refraction pick up adjacent glyphs in the gaps without needing a wide horizontal bulge.
+static const CGFloat kLensMagnification = 1.10;
 // The held bubble does not blur what it shows: the panes' 2 pt blur, magnified with the icons, left them a smear.
 static const CGFloat kLensHeldBlur = 0, kLensRestBlur = 2;
-// ... and takes 40% of the lens's bend at its rim, which under the whole of it smeared the icons into its edge.
-static const CGFloat kLensHeldBend = 0.4;
+// Moderate edge bend draws nearby glyphs into the lens without smearing their centers.
+static const CGFloat kLensHeldBend = 0.46;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
 static const CGFloat kLensGrow = 18, kLensOverscroll = 14;
-// At the middle of two 92pt-spaced tabs a 101pt-wide bubble at 1.2x samples only ~84pt of
-// the backdrop: neither icon center is in its field of view. Widen just in that gap,
-// enough to include the neighboring 24pt glyphs without widening the pill at rest.
-static const CGFloat kLensGlyphSide = 24, kLensMaxGapGrow = 48;
+// A modest gap-only widening works with the gentler magnification rather than trying to cover both
+// 24pt glyphs by stretching the glass. Keep the lens nearly round between the tabs.
+static const CGFloat kLensGlyphSide = 24, kLensMaxGapGrow = 14;
 // The bubble's shape is one deformation, d: wider and shorter for d > 0, narrower and taller for d < 0, the height
 // giving way by kLensVolume of what the width gains so the bubble keeps its volume, and d held to kLensMaxDeform either
 // way, so a flick never swells it. Its size does not grow with speed. d is the squash spring below (the bubble's body
@@ -204,9 +203,9 @@ static BOOL bubbles(void) {
     CGFloat center = rubber(x, _minCenter, _maxCenter);
     CGFloat width = _restFrame.size.width + (bubbles() ? kLensGrow : 0);
     if (bubbles()) {
-        // The lens magnifies about its own center, so a narrow lens can sample
-        // nothing between two widely spaced glyphs. Grow smoothly between their
-        // real rendered centers; at each center retain the original bubble size.
+        // Prefer capturing the adjacent glyphs by refraction, and add only a
+        // small smooth width allowance midway through a real inter-tab gap.
+        // At each glyph center the held lens keeps its original width.
         for (NSUInteger i = 1; i < _tabCenters.count; i++) {
             CGFloat left = _tabCenters[i - 1].doubleValue, right = _tabCenters[i].doubleValue;
             CGFloat gap = right - left;
@@ -284,7 +283,7 @@ static BOOL bubbles(void) {
 // pill's); the look is a transform, so no frame of glass is laid out again while it moves.
 - (void)getPose:(SGLensSample)st center:(CGPoint *)center sx:(CGFloat *)sx sy:(CGFloat *)sy {
     CGFloat baseWidth = MAX(1, self.bounds.size.width), baseHeight = MAX(1, self.bounds.size.height);
-    // The spring is allowed to reach the gap width before drawing its pose.
+    // The spring can reach the small extra gap allowance before drawing its pose.
     CGFloat nominal = MAX(1, _restFrame.size.width + (kLensGrow + kLensMaxGapGrow) * st.lift);
     CGFloat width = MIN(MAX(baseHeight * 0.8, st.R - st.L), nominal * (1 + kLensMaxLag));
     CGFloat speed = fabs(st.vL + st.vR) / 2;

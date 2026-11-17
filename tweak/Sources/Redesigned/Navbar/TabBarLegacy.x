@@ -33,17 +33,14 @@ static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, k
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
 // The capsule itself, never the safe-area room under it: SGRTabBarGlassHeight() can be 83pt on a Face ID phone
-// (harness/tabbar/README.md) because it includes the home-indicator strip. 64pt is Telegram's pill (a 56pt
-// item row with 4pt inside, TabBarComponent.swift). Without labels it is shorter, and UIKit still lays the
-// icon out as if one sat below it, so the icon is nudged down by kNavIconOnlyImageShift (the two are tuned
-// together).
-static const CGFloat kNavPlatterHeight = 64;
-// UIKit normally gives each tab a 56pt button. When Spotify shows its 52pt
-// connection indicator, UIKit gives it 63pt instead, pushing the title below
-// the 58pt selection lens even though our capsule itself stays 64pt high.
-static const CGFloat kNavButtonHeight = 56;
-static const CGFloat kNavPlatterHeightIconOnly = 52;
-static const CGFloat kNavIconOnlyImageShift = 6;
+// (harness/tabbar/README.md) because it includes the home-indicator strip. Keep the capsule 56pt tall,
+// like the glass mini-player above it (measured on iOS 18.6), whether tab captions are on or off.
+// UIKit leaves a little space under its tab labels; the buttons need a shorter 52pt row so both captions
+// and icons stay within the 50pt selection pill even when the connection banner changes the safe area.
+static const CGFloat kNavPlatterHeight = 56;
+static const CGFloat kNavButtonHeight = 52;
+static const CGFloat kNavPlatterHeightIconOnly = 56;
+static const CGFloat kNavIconOnlyImageShift = 4;
 static const CGFloat kNavItemSpacing = 4;
 static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before the now playing card has a radius to follow
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
@@ -583,11 +580,9 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    // The Offline / Slow connection message consumes Spotify's bottom safe area.
-    // UIKit then stretches UITabBarButton from 56 to 63pt inside our unchanged
-    // 64pt capsule, dropping titles below the selection lens. Keep only the
-    // *buttons* at the ordinary row height, leaving the capsule, lens and
-    // Spotify's necessary upward move above the message untouched.
+    // UIKit can stretch UITabBarButton when Spotify shows a connection banner.
+    // Cap its internal row at 52pt: a 56pt capsule leaves only a 50pt lens,
+    // so titles must not keep UIKit's old 56/63pt positions and spill out.
     for (UIView *button in tabButtons(self)) {
         CGRect frame = button.frame;
         if (frame.size.height <= kNavButtonHeight + 0.5) continue;
