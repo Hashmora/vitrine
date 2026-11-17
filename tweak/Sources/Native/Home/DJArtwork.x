@@ -57,10 +57,10 @@ static void SGDJDraw(UIView *holder) {
     }
     overlay.frame = holder.bounds;
     overlay.image = SGDJCover;
-    // Recents' other covers bake their small rounding into the loaded artwork.
-    // The DJ's plain bitmap needs the same 4pt cut even when its placeholder holder has radius zero.
-    BOOL recents = [row.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"];
-    overlay.layer.cornerRadius = recents ? MAX(4, holder.layer.cornerRadius) : holder.layer.cornerRadius;
+    // Spotify's Home holders can have radius zero until their card is first tapped.
+    // Other covers already have 4pt corners baked into their artwork; the DJ bitmap does not.
+    // Keep the corner radius from Spotify when it is larger, but never draw a square DJ cover.
+    overlay.layer.cornerRadius = MAX(4, holder.layer.cornerRadius);
     [holder bringSubviewToFront:overlay];
 }
 %hook SGDJCardImage

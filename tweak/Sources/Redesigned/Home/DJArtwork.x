@@ -2,6 +2,8 @@
 // Verified on 9.1.90: Artwork.Row.Library > EncoreImageView; HomeCard and
 // RecentsListRow > Encore.ImageView > UIImageView + PlaceholderView.
 #import "Core/SGCore.h"
+#import "Redesigned/Kit/SGRKit.h"
+#import "Home.h"
 
 static UIImage *SGRDJCover;
 static NSHashTable<UIView *> *SGRDJHolders;
@@ -57,10 +59,15 @@ static void SGRDJDraw(UIView *holder) {
     }
     overlay.frame = holder.bounds;
     overlay.image = SGRDJCover;
-    // Recents' other covers bake their small rounding into the loaded artwork.
-    // The DJ's plain bitmap needs the same 4pt cut even when its placeholder holder has radius zero.
-    BOOL recents = [row.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"];
-    overlay.layer.cornerRadius = recents ? MAX(4, holder.layer.cornerRadius) : holder.layer.cornerRadius;
+    // Spotify's Home image holder starts square and often gets its radius only after a tap.
+    // Match Home's cover/tile radius on the very first draw instead of inheriting that zero.
+    NSString *kind = row.accessibilityIdentifier;
+    CGFloat radius = 4;  // Recents uses the 4pt rounding baked into ordinary artwork.
+    if ([kind isEqualToString:@"Components.UI.HomeCard"]) radius = SGRRadiusCover;
+    else if ([kind isEqualToString:@"Shortcut.Card.Home"])
+        radius = SGRHomeLook() ? SGRHomeTileRadius : SGRRadiusCover;
+    overlay.layer.cornerRadius = MAX(radius, holder.layer.cornerRadius);
+    overlay.layer.cornerCurve = kCACornerCurveContinuous;
     [holder bringSubviewToFront:overlay];
 }
 %hook SGRDJCardImage
