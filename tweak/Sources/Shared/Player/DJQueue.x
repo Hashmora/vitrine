@@ -1376,14 +1376,12 @@ static SPTPlayerTrack *asDJTrack(SPTPlayerTrack *playing) {
 // The context anchor is an internal fetch step. Keep the last real song on screen
 // while its replacement is inaudible; a voice is always shown as the voice itself.
 static SPTPlayerTrack *shownDJTrack(SPTPlayerTrack *playing) {
-    if (sHandingOver && sHandOverDisplayTrack && isDJTrack(playing) &&
-        [historyUID(playing) isEqualToString:sHandOverAnchorUID]) return sHandOverDisplayTrack;
+    if (sHandingOver && sHandOverDisplayTrack) return sHandOverDisplayTrack;
     return asDJTrack(playing);
 }
 
 static SPTPlayerState *shownDJStateBase(SPTPlayerState *state) {
-    if (sHandingOver && sHandOverDisplayState && isDJTrack(state.track) &&
-        [historyUID(state.track) isEqualToString:sHandOverAnchorUID]) return sHandOverDisplayState;
+    if (sHandingOver && sHandOverDisplayState) return sHandOverDisplayState;
     return state;
 }
 
@@ -2229,6 +2227,8 @@ static void finishDJLanding(id<SPTPlayer> player, SPTPlayerTrack *target, NSStri
         sHandingOver = NO;
         sHandOverAnchorUID = nil; sHandOverDisplayTrack = nil; sHandOverDisplayState = nil;
         SGPlayerSetDJTransitionMuted(NO);
+        sSignature = nil;
+        refreshReaders();
         if (landed) {
             SGLog(@"queue: the next destination is confirmed, %@", resume ? @"resumed" : @"kept paused");
             if (resume) [player resume:nil];
