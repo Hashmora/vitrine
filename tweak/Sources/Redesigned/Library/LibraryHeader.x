@@ -63,7 +63,6 @@ static char kRecentsKey, kSearchKey, kPlusKey, kHeaderTitleKey;
 static char kRoundGlassKey;
 static char kBackKey, kMenuKey, kFolderPlusKey, kPlayKey, kPauseKey, kFolderTitleKey;
 static char kChipsKey, kChipGlassKey;
-static char kContentKey, kListKey, kInsetKey;
 
 static void vanish(UIView *view) {
     if (!view) return;
@@ -421,33 +420,9 @@ static void clearBacking(UIView *header) {
 // The list's page view moved up to the chips row and made taller by as much, and the list's top inset
 // raised by the same: Spotify's own is read off the list and kept, and put back on whenever Spotify sets
 // the inset again (told by the value not being the one written here). A list at its top stays at its top.
-static void raiseList(UIView *page, UIView *header, UIView *filters) {
-    CGFloat edge = CGRectGetMinY(filters.frame);
-    CGFloat extra = header.bounds.size.height;
-    if (edge < 1 || extra < edge) return;
-    UIView *content = SGRFindByIdentifier(page, @"YourLibraryContent.collectionView", &kContentKey).superview;
-    if (!content || ![NSStringFromClass(content.class) hasSuffix:@"YourLibraryContentView"]) return;
-
-    CGRect frame = CGRectMake(0, 0, page.bounds.size.width, page.bounds.size.height);
-    if (!CGRectEqualToRect(content.frame, frame)) content.frame = frame;
-
-    UIView *found = SGRFindByIdentifier(content, SGRLibraryListIdentifier, &kListKey);
-    if (![found isKindOfClass:UIScrollView.class]) return;
-    UIScrollView *list = (UIScrollView *)found;
-    NSNumber *written = objc_getAssociatedObject(list, &kInsetKey);
-    UIEdgeInsets inset = list.contentInset;
-    if (written && fabs(inset.top - written.doubleValue) < 0.5) return;
-
-    BOOL atTop = list.contentOffset.y <= -list.adjustedContentInset.top + 1;
-    inset.top += extra;
-    // Noted before it is written, so that a pass inside the write reads the inset as ours.
-    objc_setAssociatedObject(list, &kInsetKey, @(inset.top), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    list.contentInset = inset;
-    UIEdgeInsets bar = list.verticalScrollIndicatorInsets;
-    if (bar.top < extra) { bar.top += extra; list.verticalScrollIndicatorInsets = bar; }
-    if (atTop) list.contentOffset = CGPointMake(list.contentOffset.x, -list.adjustedContentInset.top);
-    SGLog(@"redesign library: list raised under the chips by %.0fpt, top inset %.1f", extra, inset.top);
-}
+// Keep Spotify's own list origin/inset for the first supplementary sort row.
+// Moving the entire collection under the glass header also pulled "Recents"
+// and the view-toggle beneath the filter chips when the collection relaid out.
 
 // How far a group's capsule reaches past its first and last control: the 48pt buttons hold their glyphs well inside.
 static const CGFloat kGroupPad = -2;
@@ -462,7 +437,8 @@ static void layoutRoot(UIView *page) {
         UIView *filters = childNamed(header, @"YourLibraryHeaderContentFiltersView");
         if (filters && header.bounds.size.height > 1) {
             clearBacking(header);
-            raiseList(page, header, filters);
+            // Leave the collection position and content inset under Spotify's
+            // control; the sort row must stay beneath the filter chip strip.
         }
     }
 
@@ -517,7 +493,8 @@ static void layoutFolder(UIView *page) {
         UIView *filters = childNamed(header, @"YourLibraryHeaderContentFiltersView");
         if (filters && header.bounds.size.height > 1) {
             clearBacking(header);
-            raiseList(page, header, filters);
+            // Leave the collection position and content inset under Spotify's
+            // control; the sort row must stay beneath the filter chip strip.
         }
     }
 
