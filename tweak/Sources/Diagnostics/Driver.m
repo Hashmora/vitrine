@@ -23,6 +23,7 @@
 #import "Core/SGCore.h"
 #import "Diagnostics.h"
 #import "Headers/SPTPlayer.h"
+#import "Core/SGDJDiagnostics.h"
 #import <dlfcn.h>
 #import <mach/mach_time.h>
 #import <objc/message.h>
@@ -743,6 +744,7 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         all = @{
+            @"dj.state" : ^NSDictionary *(NSDictionary *p) { return onMain(^id { return SGDJQueueDiagnostics(); }); },
             @"tap" : ^NSDictionary *(NSDictionary *p) {
                 return touchAt(target(p), 0.08);
             },

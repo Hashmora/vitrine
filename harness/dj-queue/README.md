@@ -37,3 +37,11 @@ and LOCKED IN FREESTYLE, Previous returned to LOCKED IN FREESTYLE and then
 BLOCKKIDS. The queue then displayed LOCKED IN FREESTYLE → Mad Love → Job's Not
 Done, restoring the passed row before the tapped track. Ordinary Next/Previous
 also restored BLOCKKIDS after returning to Rottweiler.
+
+Shared-UID outro regression: the core may land on a spent song before a
+`spotify:media:` item with the same UID. Confirmation now checks the physical URI,
+and the muted bridge advances over a context original and its known queue copy
+before releasing the voice. The checks assert that the gate stays closed while
+those songs are current and that the displayed song/clock remain the held snapshot.
+`dj.state` in driver builds exposes raw/shown items and the render gate's muted
+buffer count for simulator diagnosis.

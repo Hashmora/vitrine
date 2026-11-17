@@ -27,6 +27,7 @@ prelude = r'''
 @property NSArray<SPTPlayerTrack *> *future, *reverse;
 @property NSString *contextURI;
 @property BOOL isPaused;
+@property double position;
 @end
 @implementation SPTPlayerState @end
 static NSString *SGURIString(id value) { return value; }
@@ -40,7 +41,7 @@ static BOOL isDJSession(SPTPlayerState *state) { return YES; }
 static SPTPlayerTrack *wantedNext(void) { return wanted; }
 static SPTPlayerTrack *originalOf(SPTPlayerTrack *track) { return track; }
 '''
-names = ['baseUID','historyUID','sameGroup','isDJTrack','inDJ','isHidden','wasPlayed','staysHidden','playedIndex','playedBefore','playedAfter','historyFutureRows','isCoreQueued','coreNextUnplayed','isUnspent','reachableInFuture','skipPastSpent']
+names = ['baseUID','historyUID','sameGroup','isDJTrack','inDJ','isHidden','wasPlayed','staysHidden','playedIndex','playedBefore','playedAfter','historyFutureRows','isCoreQueued','coreNextUnplayed','isUnspent','reachableInFuture','skipPastSpent','repeatedCurrentOutro']
 tests = r'''
 static SPTPlayerTrack *song(NSString *uid) {
     SPTPlayerTrack *t = [SPTPlayerTrack new]; t.UID = uid;
@@ -74,10 +75,17 @@ int main(void) { @autoreleasepool {
     // Last reordered track: its stale context next must be skipped before it sounds.
     state.track = five; SPTPlayerTrack *fresh = song(@"6"); state.future = @[three,fresh];
     sOrdered = YES; assert(skipPastSpent(state) == fresh);
+    // Same-uid outro after a duplicate is a different physical item, not the current song.
+    SPTPlayerTrack *outro = song(@"5"); outro.URI = @"spotify:media:5";
+    state.future = @[five,outro,fresh]; assert(repeatedCurrentOutro(state) == outro);
+    state.future = @[outro,fresh]; assert(repeatedCurrentOutro(state) == nil);
+    state.track = three; state.future = @[three,outro,fresh]; assert(repeatedCurrentOutro(state) == nil);
+    state.track = five; state.future = @[three,fresh];
     // Same decision when the last track itself is a queue copy.
     SPTPlayerTrack *copyFive = song(@"q5"); copyFive.URI = five.URI; copyFive.provider = @"queue";
     sCopyOf[@"q5"] = @{@"uid":@"5", @"uri":five.URI}; state.track = copyFive;
     assert(skipPastSpent(state) == fresh);
+    state.track = five; state.future = @[copyFive,outro,fresh]; assert(repeatedCurrentOutro(state) == outro); state.future = @[three,fresh];
     // Preserve an intentional walk forwards through history and tracks queued by hand.
     state.track = copy; assert(skipPastSpent(state) == nil);
     state.track = five; wanted = fresh; assert(skipPastSpent(state) == fresh); wanted = song(@"not-reachable"); assert(skipPastSpent(state) == nil); wanted = nil;
@@ -97,6 +105,7 @@ typedef struct { uint32_t mNumberChannels, mDataByteSize; void *mData; } AudioBu
 typedef struct { uint32_t mNumberBuffers; AudioBuffer mBuffers[2]; } AudioBufferList;
 #define kAudioUnitRenderAction_OutputIsSilence 1
 static atomic_bool sg_djTransitionMuted;
+static atomic_uint_fast64_t sg_djMutedBuffers;
 ''' + function('muteDJTransition') + function('SGPlayerSetDJTransitionMuted')
     source = saved_source
     handover = mute_code + r'''
@@ -106,8 +115,12 @@ static atomic_bool sg_djTransitionMuted;
 @end
 static SPTPlayerState *testState;
 static SPTPlayerTrack *landingTarget;
+static SPTPlayerTrack *nextPhysicalSong;
 static NSMutableArray *commands;
 static NSString *sHandOverAnchorUID;
+static SPTPlayerTrack *sHandOverDisplayTrack;
+static SPTPlayerState *sHandOverDisplayState;
+static SPTPlayerTrack *asDJTrack(SPTPlayerTrack *t) { return t; }
 static double kSegmentWait = .5;
 
 #define SGLog(...) ((void)0)
@@ -133,12 +146,14 @@ static void hideTrack(id t, id reason) {}
 static void refreshReaders(void) {}
 static void noteCopy(id a, id b) {}
 static id skipForward(SPTPlayerTrack *t) {
-    assert(atomic_load(&sg_djTransitionMuted)); if (commands.count == 2) assert(testState.isPaused); [commands addObject:t == landingTarget ? @"skip destination" : @"skip anchor"];
+    assert(atomic_load(&sg_djTransitionMuted)); if (commands.count == 2) assert(testState.isPaused);
+    if (!t) { [commands addObject:@"advance into voice"]; t = nextPhysicalSong ?: landingTarget; nextPhysicalSong = nil; }
+    else [commands addObject:t == landingTarget ? @"skip destination" : @"skip anchor"];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, .08 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         testState.track = t; testState.future = @[landingTarget]; testState.isPaused = NO;
     }); return @YES;
 }
-''' + function('lastOfSegment') + function('finishDJLanding') + function('landAtSegmentEnd')
+''' + function('shownDJTrack') + function('shownDJStateBase') + function('lastOfSegment') + function('finishDJLanding') + function('landAtSegmentEnd')
     tests = tests.replace('    puts("DJ history and spent-track decisions: PASS");', r'''
     float left[8], right[8]; for (int i=0;i<8;i++) left[i]=right[i]=.25;
     AudioBufferList buffers = {2, {{1,sizeof left,left},{1,sizeof right,right}}};
@@ -158,7 +173,28 @@ static id skipForward(SPTPlayerTrack *t) {
     assert(!sHandingOver && !atomic_load(&sg_djTransitionMuted) && !state.isPaused && state.track == landingTarget);
     NSArray *expected = @[@"pause requested", @"pause acknowledged", @"skip anchor", @"skip destination", @"resume"];
     assert([commands isEqual:expected]);
-    puts("DJ history, spent-track decisions and asynchronous handover: PASS");''')
+    // UID confirmation alone would open the gate on the song before the shared-UID voice.
+    sHandingOver = YES; sHandOverAnchorUID = five.UID; sHandOverDisplayTrack = four;
+    assert(shownDJTrack(five) == four); assert(shownDJTrack(outro) == outro);
+    sHandOverDisplayState = [SPTPlayerState new]; sHandOverDisplayState.track = four; sHandOverDisplayState.position = 99;
+    state.track = five; state.position = 0;
+    assert(shownDJStateBase(state).position == 99);
+    state.track = outro; assert(shownDJStateBase(state) == state);
+    landingTarget = outro; commands = [NSMutableArray array];
+    state.track = copyFive; state.position = 100; nextPhysicalSong = copyFive; sHandingOver = YES; SGPlayerSetDJTransitionMuted(YES);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, .02 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        state.track = five; state.position = 0;
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, .07 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        assert(atomic_load(&sg_djTransitionMuted)); assert(state.track != landingTarget);
+    });
+    finishDJLanding(queuePlayer(), outro, copyFive.UID, YES, YES);
+    limit = [NSDate dateWithTimeIntervalSinceNow:3];
+    while (sHandingOver && limit.timeIntervalSinceNow > 0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    assert(state.track == outro && !sHandingOver && !atomic_load(&sg_djTransitionMuted));
+    assert(([commands isEqualToArray:@[@"advance into voice",@"advance into voice",@"resume"]]));
+    puts("DJ history, duplicate outro and asynchronous handover: PASS");''')
     path.write_text(prelude + '\n'.join(function(n) for n in names) + handover + tests)
     subprocess.run(['xcrun','clang','-fobjc-arc','-Werror','-Wno-unused-function','-framework','Foundation',str(path),'-o',str(Path(tmp)/'check')],check=True)
     subprocess.run([str(Path(tmp)/'check')],check=True)

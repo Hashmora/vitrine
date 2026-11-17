@@ -53,6 +53,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import "Core/SGCore.h"
+#import "Core/SGDJDiagnostics.h"
 #import "Core/SGLog.h"
 #import "PlayerState.h"
 #import "DJQueue.h"
@@ -1016,6 +1017,8 @@ static BOOL isUnspent(SPTPlayerTrack *t);
 // Set from the pause before a hand-over to the next segment until the player resumes.
 static BOOL sHandingOver;
 static NSString *sHandOverAnchorUID;
+static SPTPlayerTrack *sHandOverDisplayTrack;
+static SPTPlayerState *sHandOverDisplayState;
 static BOOL onlyThisLeft(SPTPlayerState *state, SPTPlayerTrack *target);
 
 // `track` has an "Up next" card before it in the core's future that has not been heard (the DJ's words after a track
@@ -1370,10 +1373,24 @@ static SPTPlayerTrack *asDJTrack(SPTPlayerTrack *playing) {
     }
 }
 
+// The context anchor is an internal fetch step. Keep the last real song on screen
+// while its replacement is inaudible; a voice is always shown as the voice itself.
+static SPTPlayerTrack *shownDJTrack(SPTPlayerTrack *playing) {
+    if (sHandingOver && sHandOverDisplayTrack && isDJTrack(playing) &&
+        [historyUID(playing) isEqualToString:sHandOverAnchorUID]) return sHandOverDisplayTrack;
+    return asDJTrack(playing);
+}
+
+static SPTPlayerState *shownDJStateBase(SPTPlayerState *state) {
+    if (sHandingOver && sHandOverDisplayState && isDJTrack(state.track) &&
+        [historyUID(state.track) isEqualToString:sHandOverAnchorUID]) return sHandOverDisplayState;
+    return state;
+}
+
 // The queue the readers are given: `rows` to come when there are any, and its playing track as the DJ's when it is a
 // copy (the page draws its now playing row from the queue, not from the player's state: the badge stayed there).
 static id queueWith(id queue, NSArray<SPTPlayerTrack *> *rows) {
-    SPTPlayerTrack *asDJ = asDJTrack([queue valueForKey:@"track"]);
+    SPTPlayerTrack *asDJ = shownDJTrack([queue valueForKey:@"track"]);
     if (!rows && !asDJ) return queue;
     id copy = [queue copy];
     if (!copy) { SGLog(@"queue: the queue cannot be copied, the page gets the core's"); return queue; }
@@ -2183,20 +2200,34 @@ static BOOL onlyThisLeft(SPTPlayerState *state, SPTPlayerTrack *target) {
 // nothing that played or was removed sounds. Nil when it could not be done.
 // Pause, skip and resume are asynchronous core commands. Audio stays paused until the
 // destination is acknowledged, so the context anchor can never sound for a moment.
-static void finishDJLanding(id<SPTPlayer> player, SPTPlayerTrack *target, NSString *from, BOOL resume) {
+static void finishDJLanding(id<SPTPlayer> player, SPTPlayerTrack *target, NSString *from, BOOL resume, BOOL outro) {
     __block int tries = 0;
     __block void (^poll)(void);
+    __block NSString *advancedFromKey;
+    __block NSUInteger physicalAdvances = 0;
     poll = ^{
         SPTPlayerState *now = SGPlayerState();
         if (!isDJSession(now)) { poll = nil; sHandingOver = NO; SGPlayerSetDJTransitionMuted(NO); return; }
-        BOOL landed = target ? sameGroup(now.track, target) : ![trackKey(now.track) isEqualToString:from];
+        BOOL sameItem = target && sameGroup(now.track, target) && [SGURIString(now.track.URI) isEqualToString:SGURIString(target.URI)];
+        BOOL landed = target ? sameItem : ![trackKey(now.track) isEqualToString:from];
+        if (outro && physicalAdvances && [SGURIString(now.track.URI) hasPrefix:@"spotify:media:"]) landed = YES;
+        // A targeted skip uses the uid, which the outro shares with its song. It can
+        // land on that song first. Stay muted and advance one physical item into the voice.
+        if (outro && physicalAdvances < 8 && isDJTrack(now.track) && sameGroup(now.track, target) && !sameItem &&
+            ![trackKey(now.track) isEqualToString:advancedFromKey] &&
+            (![trackKey(now.track) isEqualToString:from] || now.position < 1)) {
+            advancedFromKey = trackKey(now.track);
+            physicalAdvances++;
+            SGLog(@"queue: the outro uid landed on its song; still muted, advancing into the voice");
+            skipForward(nil);
+        }
         if (!landed && ++tries < 40) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), poll);
             return;
         }
         poll = nil;
         sHandingOver = NO;
-        sHandOverAnchorUID = nil;
+        sHandOverAnchorUID = nil; sHandOverDisplayTrack = nil; sHandOverDisplayState = nil;
         SGPlayerSetDJTransitionMuted(NO);
         if (landed) {
             SGLog(@"queue: the next destination is confirmed, %@", resume ? @"resumed" : @"kept paused");
@@ -2212,11 +2243,13 @@ static id landAtSegmentEnd(SPTPlayerTrack *play) {
     SPTPlayerState *state = SGPlayerState();
     SPTPlayerTrack *last = lastOfSegment(state);
     if (sHandingOver || !last || sameGroup(last, state.track)) return nil;
+    sHandOverDisplayState = SGPlayerState();
+    sHandOverDisplayTrack = asDJTrack(sHandOverDisplayState.track) ?: sHandOverDisplayState.track;
     sHandingOver = YES;
     sHandOverAnchorUID = historyUID(last);
     SGPlayerSetDJTransitionMuted(YES);
     if (play) {
-        if (!queueInCore(play)) { sHandingOver = NO; sHandOverAnchorUID = nil; SGPlayerSetDJTransitionMuted(NO); return nil; }
+        if (!queueInCore(play)) { sHandingOver = NO; sHandOverAnchorUID = nil; sHandOverDisplayTrack = nil; sHandOverDisplayState = nil; SGPlayerSetDJTransitionMuted(NO); return nil; }
         hideTrack(play, @"played through the queue");
         refreshReaders();
     }
@@ -2231,7 +2264,7 @@ static id landAtSegmentEnd(SPTPlayerTrack *play) {
     poll = ^{
         SPTPlayerState *now = SGPlayerState();
         if (!isDJSession(now) || ![now.contextURI isEqual:state.contextURI]) {
-            poll = nil; sHandingOver = NO; sHandOverAnchorUID = nil; SGPlayerSetDJTransitionMuted(NO); return;
+            poll = nil; sHandingOver = NO; sHandOverAnchorUID = nil; sHandOverDisplayTrack = nil; sHandOverDisplayState = nil; SGPlayerSetDJTransitionMuted(NO); return;
         }
         if (!sent) {
             if (!now.isPaused) {
@@ -2239,7 +2272,7 @@ static id landAtSegmentEnd(SPTPlayerTrack *play) {
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), poll);
                     return;
                 }
-                poll = nil; sHandingOver = NO; sHandOverAnchorUID = nil; SGPlayerSetDJTransitionMuted(NO);
+                poll = nil; sHandingOver = NO; sHandOverAnchorUID = nil; sHandOverDisplayTrack = nil; sHandOverDisplayState = nil; SGPlayerSetDJTransitionMuted(NO);
                 SGLog(@"queue: pause was not confirmed; no segment anchor skip sent");
                 return;
             }
@@ -2264,7 +2297,7 @@ static id landAtSegmentEnd(SPTPlayerTrack *play) {
         SGLog(@"queue: the next segment %@; skipping while paused", to ? @"came" : @"has not arrived yet");
         NSString *anchor = trackKey(now.track);
         skipForward(destination);
-        finishDJLanding(player, destination, anchor, resume);
+        finishDJLanding(player, destination, anchor, resume, NO);
     };
     dispatch_async(dispatch_get_main_queue(), poll);
     return @YES;
@@ -2292,7 +2325,10 @@ static BOOL atSegmentEnd(SPTPlayerState *state) {
 static void holdAtEnd(void) {
     SPTPlayerState *state = SGPlayerState();
     if (sHandingOver || !atSegmentEnd(state)) return;
+    sHandOverDisplayState = SGPlayerState();
+    sHandOverDisplayTrack = asDJTrack(sHandOverDisplayState.track) ?: sHandOverDisplayState.track;
     sHandingOver = YES;
+    sHandOverAnchorUID = historyUID(state.track);
     SGPlayerSetDJTransitionMuted(YES);
     id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
     NSString *from = trackKey(state.track);
@@ -2320,7 +2356,7 @@ static void holdAtEnd(void) {
             SGPlayerSetDJTransitionMuted(NO);
             [player resume:nil];
         } else {
-            finishDJLanding(player, to, from, YES);
+            finishDJLanding(player, to, from, YES, NO);
         }
     };
     poll = check;
@@ -2356,13 +2392,59 @@ static SPTPlayerTrack *skipPastSpent(SPTPlayerState *state) {
     return next && !sameGroup(next, coming) ? next : nil;
 }
 
+// The core may put the context original of the song playing from a queue copy
+// before that song's outro. Group equality must not hide this physical duplicate.
+static SPTPlayerTrack *repeatedCurrentOutro(SPTPlayerState *state) {
+    SPTPlayerTrack *current = state.track;
+    if (!sDJActive || sHandingOver || sAdvancing || sPlayingMoved || !isDJSession(state) ||
+        !isDJTrack(current) || playedAfter(current)) return nil;
+    BOOL duplicate = NO;
+    for (SPTPlayerTrack *t in state.future) {
+        if ([SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) return nil;
+        if (isCoreQueued(t) && !sCopyOf[t.UID]) return nil; // preserve tracks queued by the user
+        if (!sameGroup(t, current)) return nil;
+        if (isDJTrack(t)) { duplicate = YES; continue; }
+        if ([SGURIString(t.URI) hasPrefix:@"spotify:media:"]) return duplicate ? t : nil;
+    }
+    return nil;
+}
+
+static void skipRepeatedCurrentIntoOutro(SPTPlayerTrack *voice) {
+    if (sHandingOver) return;
+    sHandOverDisplayState = SGPlayerState();
+    sHandOverDisplayTrack = asDJTrack(sHandOverDisplayState.track) ?: sHandOverDisplayState.track;
+    sHandingOver = YES;
+    sHandOverAnchorUID = historyUID(voice);
+    SGPlayerSetDJTransitionMuted(YES);
+    id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
+    NSString *from = trackKey(SGPlayerState().track);
+    [player pause:nil];
+    __block int tries = 0;
+    __block void (^poll)(void);
+    poll = ^{
+        SPTPlayerState *now = SGPlayerState();
+        if (!isDJSession(now)) { poll = nil; sHandingOver = NO; SGPlayerSetDJTransitionMuted(NO); return; }
+        if (!now.isPaused && ++tries < 40) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), poll);
+            return;
+        }
+        poll = nil;
+        SGLog(@"queue: the context repeats the current song before its outro; crossing it muted");
+        skipForward(voice);
+        finishDJLanding(player, voice, from, YES, YES);
+    };
+    dispatch_async(dispatch_get_main_queue(), poll);
+}
+
 static BOOL needsHandOver(SPTPlayerState *state) {
-    return segmentSpent(state) || atSegmentEnd(state) || skipPastSpent(state) != nil;
+    return repeatedCurrentOutro(state) != nil || segmentSpent(state) || atSegmentEnd(state) || skipPastSpent(state) != nil;
 }
 
 static void handOver(void) {
     if (sHandingOver) return;
     SPTPlayerState *state = SGPlayerState();
+    SPTPlayerTrack *outro = repeatedCurrentOutro(state);
+    if (outro) { skipRepeatedCurrentIntoOutro(outro); return; }
     if (segmentSpent(state)) { landAtSegmentEnd(nil); return; }
     if (atSegmentEnd(state)) { holdAtEnd(); return; }
     SPTPlayerTrack *to = skipPastSpent(state);
@@ -2616,7 +2698,7 @@ static SPTPlayerState *djLens(SPTPlayerState *state) {
     }
     // A DJ track playing from the core's queue is shown as the DJ's: its uid and provider, without the queue's marks
     // (is_queued, queued_by), so the player draws no queue badge and keeps the DJ's header and footer.
-    SPTPlayerTrack *asDJ = asDJTrack(state.track);
+    SPTPlayerTrack *asDJ = shownDJTrack(state.track);
     if (!asDJ && [future isEqualToArray:raw]) return state;
     static BOOL told;
     if (!told) { told = YES; SGLog(@"queue: the now playing screens are shown the user's order (%lu to come)", (unsigned long)future.count); }
@@ -2627,7 +2709,7 @@ static SPTPlayerState *djLens(SPTPlayerState *state) {
         return state;
     }
     @try {
-        SPTPlayerState *shown = [(id<NSCopying>)state copyWithZone:nil];
+        SPTPlayerState *shown = [(id<NSCopying>)shownDJStateBase(state) copyWithZone:nil];
         [shown setValue:future forKey:@"future"];
         if (asDJ) [shown setValue:asDJ forKey:@"track"];
         return shown;
@@ -2861,6 +2943,23 @@ static BOOL canMoveRow(id self, SEL _cmd, UITableView *table, NSIndexPath *path)
     SPTPlayerTrack *row = place >= 0 && place < (NSInteger)sQueue.count ? sQueue[place] : nil;
     return !(row && indexIn(sInjected, row) != NSNotFound && isCardRow(row));
 }
+
+#if SG_DRIVER
+NSDictionary *SGDJQueueDiagnostics(void) {
+    SPTPlayerState *state = SGPlayerState();
+    if (!state) return @{@"note": @"no player state"};
+    NSDictionary *(^item)(SPTPlayerTrack *) = ^NSDictionary *(SPTPlayerTrack *t) {
+        if (!t) return @{};
+        return @{@"uri": SGURIString(t.URI) ?: @"", @"uid": t.UID ?: @"", @"logicalUID": historyUID(t) ?: @"",
+                 @"title": t.trackTitle ?: @"", @"queued": @(isCoreQueued(t)), @"played": @(wasPlayed(historyUID(t))),
+                 @"hidden": @(isHidden(t))};
+    };
+    NSMutableArray *future = [NSMutableArray array];
+    for (SPTPlayerTrack *t in state.future) [future addObject:item(t)];
+    return @{@"context": SGURIString(state.contextURI) ?: @"", @"active": @(sDJActive), @"current": item(state.track), @"shown": item(shownDJTrack(state.track) ?: state.track), @"displayPosition": @(shownDJStateBase(state).position), @"future": future, @"position": @(state.position), @"duration": @(state.duration),
+             @"ordered": @(sOrdered), @"handover": @(sHandingOver), @"muted": @(SGPlayerDJTransitionMuted()), @"mutedBuffers": @(SGPlayerDJTransitionMutedBuffers()), @"paused": @(state.isPaused), @"duplicateBeforeOutro": @(repeatedCurrentOutro(state) != nil)};
+}
+#endif
 
 %ctor {
     if (!SGEnabled(SGKeyDJQueue)) return;

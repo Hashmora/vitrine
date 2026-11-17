@@ -817,7 +817,9 @@ Spotify's own through.
   segment's card is already available in the user's order. When the core must land on the segment's last item
   to load more, the local music output is gated independently of the sleep timer's gain. The pause and final
   destination are acknowledged before the gate opens; Spotify's skip itself can resume playback. The anchor
-  is not put in the logical history. `harness/dj-queue/check.py` exercises delayed command acknowledgements,
+  is not put in the logical history. A song and its outro can share a UID: confirmation checks the physical URI,
+  so a song cannot open the output gate as if it were its voice. The player's song and clock retain the last
+  real snapshot while the core visits an internal anchor. `harness/dj-queue/check.py` exercises delayed command acknowledgements,
   Spotify's automatic resume on skip, and zeroing/releasing the independent output gate.
 - **Artwork:** Home and Recents use the DJ's public cover (the DJ card's recorded `image_url`), cached locally.
   Each look owns its drawing hooks. Reused Library cells are never a source of another item's artwork.
