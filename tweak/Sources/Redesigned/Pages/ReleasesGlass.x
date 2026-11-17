@@ -6,7 +6,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Pages.h"
 
-static char kReleasesFilters, kReleasesChipGlass;
+static char kReleasesFilters, kReleasesChipGlass, kReleasesClearGlass;
 
 static BOOL inReleasesFilters(UIView *view) {
     BOOL inChips = NO;
@@ -35,12 +35,40 @@ static void glassReleaseChip(UIView *chip) {
     });
 }
 
+// The selected-chip clear action is a distinct 32pt Swift ClearChipView.
+// Its white 14% disc is separate from FilterChipView's fill.
+static void glassReleaseClearChip(UIView *clear) {
+    if (!clear.window || !inReleasesFilters(clear) || clear.bounds.size.width < 1) return;
+    UIView *fill = clear.subviews.firstObject;
+    if (!fill) return;
+    SGRGlassChip(clear, fill, NO, &kReleasesClearGlass);
+    fill.backgroundColor = UIColor.clearColor;
+    fill.layer.backgroundColor = NULL;
+    SGRHoldClear(fill);
+}
+
+static void clearReleaseNavigation(UIViewController *page) {
+    UINavigationController *navigation = page.navigationController;
+    if (!navigation) return;
+    // Unlike the title capsule and Back, Spotify's full-width 91pt
+    // _UIBarBackground and the separate controller blur must be invisible.
+    UIView *blur = SGRBarBlurOf(navigation);
+    if (blur) {
+        blur.alpha = 0;
+        blur.userInteractionEnabled = NO;
+        if (!blur.layer.mask) blur.layer.mask = [CALayer layer];
+    }
+    UIView *backing = SGRChildNamed(navigation.navigationBar, @"_UIBarBackground");
+    if (backing) { backing.alpha = 0; backing.userInteractionEnabled = NO; }
+}
+
 static void dressReleases(UIViewController *page) {
     UIView *root = page.viewIfLoaded;
     if (!root) return;
     // The navigation page bar's existing implementation pins Back and the
     // title on glass, and suppresses its system opaque/blurred strip.
     SGRDressBarPage(page);
+    clearReleaseNavigation(page);
     UIView *filters = SGRFindByIdentifier(root, @"Components.UI.FilterChips", &kReleasesFilters);
     if (!filters) return;
     // The black backing belongs to the parent Swift FiltersElement, not to
@@ -56,6 +84,8 @@ static void dressReleases(UIViewController *page) {
     SGForEachView(filters, ^(UIView *v) {
         if ([NSStringFromClass(v.class) isEqualToString:@"EncoreConsumerMobile_BaseKit.FilterChipView"])
             glassReleaseChip(v);
+        else if ([NSStringFromClass(v.class) containsString:@"ClearChipView"])
+            glassReleaseClearChip(v);
     });
 }
 
@@ -65,4 +95,8 @@ static void dressReleases(UIViewController *page) {
     if (page) SGRDressBarPagesWith(page, YES, ^(UIViewController *c) { dressReleases(c); });
     Class chip = SGRSwiftClass(@"EncoreConsumerMobile_BaseKit", @"FilterChipView");
     if (chip) SGRPassView(chip, ^(UIView *view) { glassReleaseChip(view); });
+    // Swift's private hash in ClearChipView changes with releases; find the
+    // exact class by name from the current view tree at runtime.
+    Class clear = NSClassFromString(@"_TtC28EncoreConsumerMobile_BaseKitP33_0DE25E4485417E35B7827869974977D613ClearChipView");
+    if (clear) SGRPassView(clear, ^(UIView *view) { glassReleaseClearChip(view); });
 }
