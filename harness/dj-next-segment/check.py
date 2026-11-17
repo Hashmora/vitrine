@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check New DJ set mode isolation and, on macOS, the production page predicate."""
+"""Check Next DJ Set mode isolation and, on macOS, the production page predicate."""
 from pathlib import Path
 import re
 import subprocess
@@ -31,11 +31,20 @@ assert 'if (isCoreQueued(next)) return;' in poll
 assert 'jumpWithCompletion:' not in skip + poll
 assert 'signal:parameters:' not in skip + poll
 assert 'SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip)' in queue
-assert 'SGChoiceRow(@"New DJ set action"' in settings
+assert 'SGChoiceRow(@"Next DJ Set action"' in settings
 assert 'SGDJQueueSetModeSkip)' in settings
-assert 'SGOptionRow(@"Neutral request fallback"' in settings
-assert 'SGFlag(SGKeyDJPickFallback, NO)' in pick
-print('New DJ set settings and request isolation: PASS')
+assert 'SGSwitchRow(@"DJ queue"' in settings
+assert 'SGSwitchRow(@"Next DJ Set button"' in settings
+assert 'button.waitsOn = SGKeyDJQueue' in settings
+assert 'action.visible' in settings and 'SGEnabled(SGKeyDJQueuePickButton)' in settings
+assert 'SGDJPickRequest(queuePlayer()' in queue
+assert 'New DJ set button' not in settings
+assert 'Neutral request fallback' not in settings
+assert 'SGKeyDJPickFallback' not in pick
+assert '%hook' not in pick
+assert 'jumpWithCompletion:' not in queue
+assert 'button.accessibilityLabel = @"Next DJ Set"' in queue
+print('Next DJ Set settings and request isolation: PASS')
 
 if sys.platform != 'darwin':
     print('Page identity predicate: macOS/Foundation required (not run)')

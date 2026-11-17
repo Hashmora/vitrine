@@ -3,7 +3,6 @@
 #import "Settings/SGModPage.h"
 #import "PlayerSettings.h"
 #import "DJQueue.h"
-#import "DJPick.h"
 #import "Shared/AnimatedArtwork/AnimatedArtwork.h"
 #import "Shared/Lyrics/Lyrics.h"
 
@@ -21,15 +20,20 @@ UIViewController *SGLockScreenWidgetPage(void) {
 }
 
 SGModSection *SGDJSettingsSection(void) {
-    return SGNotedSection(@"DJ", @[
-        SGSwitchRow(@"DJ queue", @"The DJ's next songs in the queue", SGKeyDJQueue),
-        SGSwitchRow(@"New DJ set button", @"Show the button in the DJ queue", SGKeyDJQueuePickButton),
-        SGChoiceRow(@"New DJ set action", @"Choose one action for the queue button", SGKeyDJQueueSetMode,
-                    @[@"Skip to next segment", @"Let DJ pick (request)"], SGDJQueueSetModeSkip),
-        SGOptionRow(@"Neutral request fallback", @"For the request mode and native Let DJ pick", SGKeyDJPickFallback),
-    ], @"DJ queue shows the songs the DJ has picked next, where you can reorder and remove them. Its switch applies after restarting Spotify. "
-       @"The queue button and its action apply immediately. Skip to next segment is the default: it advances the DJ player "
-       @"to its next segment without asking Let DJ pick or sending a prompt. The previous request action remains available. "
-       @"Neutral request fallback is off by default; when enabled, a request that does not advance within 6 seconds sends "
-       @"“Surprise me with a new mix based on my taste.” once. This fallback also applies to native Let DJ pick.");
+    // The two switches start on. The mode choice appears only while the
+    // queue and its Next DJ Set button are enabled.
+    SGModRow *queue = SGSwitchRow(@"DJ queue", @"Show the DJ's upcoming tracks in the queue", SGKeyDJQueue);
+    SGModRow *button = SGSwitchRow(@"Next DJ Set button", @"Show Next DJ Set beside Edit in the DJ queue", SGKeyDJQueuePickButton);
+    button.waitsOn = SGKeyDJQueue;
+    SGModRow *action = SGChoiceRow(@"Next DJ Set action", @"Choose what the queue button does", SGKeyDJQueueSetMode,
+                                  @[@"Skip to next DJ segment", @"Let DJ pick (request)"], SGDJQueueSetModeSkip);
+    action.visible = ^BOOL { return SGEnabled(SGKeyDJQueue) && SGEnabled(SGKeyDJQueuePickButton); };
+    action.choiceNotes = @[@"Skip the remaining tracks and start the next DJ segment without sending a request.",
+                           @"Ask DJ for another set using one neutral English suggested request."];
+    return SGNotedSection(@"DJ", @[queue, button, action],
+        @"DJ queue shows the DJ's upcoming songs so you can reorder or remove them; restart Spotify after changing this switch. "
+        @"The Next DJ Set button and its action update immediately. By default, Next DJ Set skips to the next DJ segment "
+        @"without a request. Let DJ pick (request) instead sends one neutral English suggestion: "
+        @"“Surprise me with a new mix based on my taste.” It waits for a new set before changing your queue order. "
+        @"Spotify's native Let DJ pick button is unchanged.");
 }
