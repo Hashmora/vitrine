@@ -103,7 +103,9 @@ void SGRLibraryClearScrim(UIView *header) {
                             (id)[UIColor colorWithWhite:0 alpha:0.77].CGColor,
                             (id)[UIColor colorWithWhite:0 alpha:0.43].CGColor,
                             (id)[UIColor colorWithWhite:0 alpha:0].CGColor];
-        gradient.locations = @[@0, @0.20, @0.60, @1];
+        // Reach full black behind the title itself, then ease away before
+        // the filter chips begin.
+        gradient.locations = @[@0, @0.34, @0.72, @1];
         gradient.startPoint = CGPointMake(0.5, 0);
         gradient.endPoint = CGPointMake(0.5, 1);
         [fade.layer addSublayer:gradient];
