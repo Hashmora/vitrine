@@ -815,6 +815,8 @@ Spotify's own through.
   destination are acknowledged before the gate opens; Spotify's skip itself can resume playback. The anchor
   is not put in the logical history. `harness/dj-queue/check.py` exercises delayed command acknowledgements,
   Spotify's automatic resume on skip, and zeroing/releasing the independent output gate.
+- **Artwork:** Home and Recents use the DJ's public cover (the DJ card's recorded `image_url`), cached locally.
+  Each look owns its drawing hooks. Reused Library cells are never a source of another item's artwork.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
   future as it was), so the order is kept here and the player is held to it. A track the core would come to first is
   skipped to. Any other is queued (the core's own copy) and played from the queue, so the core keeps its place before
