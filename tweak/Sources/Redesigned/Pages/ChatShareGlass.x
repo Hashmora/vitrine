@@ -32,10 +32,21 @@ static void shareGlass(UIViewController *c) {
     // visible frame. Dress it then; requiring window caused a grey flash.
     UIView *pane = c.navigationController.presentationController.presentedView;
     if (!pane) pane = c.navigationController.view.superview;
-    if (pane && pane.bounds.size.width >= 300 && pane.bounds.size.height < UIScreen.mainScreen.bounds.size.height) {
+    UIView *outer = SGRSheetPaneOf(root);
+    if (outer && pane && pane != outer) {
+        // When Share with is inside NavigationUI's sheet, that outer pane
+        // already has the queue's glass. The previous pass installed a second
+        // glass pane on the embedded SPNavigationController's backing view;
+        // the two specular top rims read as a doubled highlight.
+        SGRRemoveSheetGlass(pane);
+        pane.backgroundColor = UIColor.clearColor;
+        pane.layer.backgroundColor = NULL;
+        SGRHoldClear(pane);
+        UIView *outerGlass = SGRGlassSheetChrome(outer);
+        if (outerGlass) SGRDimSheetGlass(outerGlass, 0.52);
+    } else if (pane && pane.bounds.size.width >= 300 && pane.bounds.size.height < UIScreen.mainScreen.bounds.size.height) {
+        // Standalone Share with keeps its own single glass sheet.
         UIView *sheetGlass = SGRGlassSheetView(pane);
-        // Undimmed panels over the conversation are washed out on light art.
-        // Keep the same queue sheet but give it a readable dark material.
         if (sheetGlass) SGRDimSheetGlass(sheetGlass, 0.52);
     }
     // This modal owns an SPNavigationBar and a separate blurred backing strip;
