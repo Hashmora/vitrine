@@ -305,6 +305,7 @@ static void pickerChrome(UIViewController *controller) {
 // The old hook therefore never ran. Attach the queue-style glass to the
 // real Navigation sheet before its first visible frame, then darken its pane.
 static char kNativeShareActionGlass, kNativeShareActionDim;
+static char kNativeShareArtworkRing, kNativeShareArtworkGlass;
 
 // The five "Search / Create group / (you) / Copy link / More" actions
 // are drawn by SwiftUI, not UILabel/Encore buttons. The device tree shows
@@ -330,6 +331,27 @@ static void shareActionGlass(UIView *circle) {
     circle.backgroundColor = UIColor.clearColor;
     circle.layer.backgroundColor = NULL;
     SGRHoldClear(circle);
+}
+
+// The other three slots in the same SwiftUI row are image-backed
+// _UIGraphicsView circles (the account avatar and shortcut artwork). Keep
+// the images rather than clearing them: give each a narrow glass surround
+// underneath, sized against its actual SwiftUI frame on every layout.
+static void shareArtworkActionGlass(UIView *image) {
+    if (!inNativeShareActions(image) || fabs(image.bounds.size.width - 56) > 2 ||
+        fabs(image.bounds.size.height - 56) > 2 || !image.superview) return;
+    UIView *ring = objc_getAssociatedObject(image, &kNativeShareArtworkRing);
+    if (!ring) {
+        ring = [UIView new];
+        ring.userInteractionEnabled = NO;
+        ring.accessibilityElementsHidden = YES;
+        objc_setAssociatedObject(image, &kNativeShareArtworkRing, ring, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CGRect frame = CGRectInset(image.frame, -2, -2);
+    if (!CGRectEqualToRect(ring.frame, frame)) ring.frame = frame;
+    if (ring.superview != image.superview) [image.superview insertSubview:ring belowSubview:image];
+    UIView *glass = SGRGlassFlatBox(ring, &kNativeShareArtworkGlass, NO);
+    if (glass) SGRDarkenGlass(glass, &kNativeShareActionDim, 30, 0.38);
 }
 
 // The sheet's view is built before the inner controller finishes its first
@@ -561,6 +583,8 @@ static void connectMenuChrome(UIViewController *controller) {
     if (shareElement) SGRPassView(shareElement, ^(UIView *v) { shareElementChrome(v); });
     Class actionCircle = NSClassFromString(@"_TtC7SwiftUIP33_A34643117F00277B93DEBAB70EC0697122_UIShapeHitTestingView");
     if (actionCircle) SGRPassView(actionCircle, ^(UIView *v) { shareActionGlass(v); });
+    Class artworkCircle = NSClassFromString(@"SwiftUI._UIGraphicsView");
+    if (artworkCircle) SGRPassView(artworkCircle, ^(UIView *v) { shareArtworkActionGlass(v); });
     SGRPassView(SGRSwiftClass(@"Share_MenuImpl", @"BottomAutoScrollingScrollView"), ^(UIView *view) { shareScrollChrome(view); });
     Class saveIn = SGRSwiftClass(@"PlaylistCuration_AddToPlaylistImpl", @"ATPContainerViewController");
     if (saveIn) {
