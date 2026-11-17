@@ -421,14 +421,79 @@ void SGRLibraryChipPainted(UIView *chip) {
 // YourLibraryHeaderContentFiltersView {0, 95} 390x52 of the 390x147 header.
 static void clearBacking(UIView *header) {
     if (header.layer.backgroundColor) header.layer.backgroundColor = NULL;
+    if (header.opaque) header.opaque = NO;
+    // The title row contains two full-width wrapper views flagged opaque in
+    // the current Spotify tree. Even without a background color, they can
+    // flatten the fade over the scrolling library into a black rectangle.
+    for (UIView *sub in header.subviews) {
+        if (![sub isMemberOfClass:UIView.class] || sub.bounds.size.width < header.bounds.size.width - 2) continue;
+        for (UIView *v in @[sub, sub.subviews.firstObject ?: sub]) {
+            if (![v isMemberOfClass:UIView.class]) continue;
+            if (v.bounds.size.height > 0 && v.bounds.size.height <= 55) {
+                v.backgroundColor = UIColor.clearColor;
+                v.layer.backgroundColor = NULL;
+                v.opaque = NO;
+                v.layer.opaque = NO;
+            }
+        }
+    }
 }
 
-// The list's page view moved up to the chips row and made taller by as much, and the list's top inset
-// raised by the same: Spotify's own is read off the list and kept, and put back on whenever Spotify sets
-// the inset again (told by the value not being the one written here). A list at its top stays at its top.
-// Keep Spotify's own list origin/inset for the first supplementary sort row.
-// Moving the entire collection under the glass header also pulled "Recents"
-// and the view-toggle beneath the filter chips when the collection relaid out.
+// The previous attempt removed the black header paint but left the entire
+// collection *below* the 147pt header. A transparent fade then showed only
+// the window's black canvas, looking like a solid bar. Put the collection
+// behind the header while preserving Recents' original screen position:
+// compensate the moved viewport with the same amount of content inset and
+// content offset. Do not move the sort row independently of its list.
+static char kUnderHeaderKey, kListKey;
+static void showListBehindHeader(UIView *page) {
+    UIView *content = childNamed(page, @"YourLibraryContentView");
+    if (!content || ![NSStringFromClass(content.class) hasSuffix:@"YourLibraryContentView"]) return;
+    UIView *candidate = SGRFindByIdentifier(content, SGRLibraryListIdentifier, &kListKey);
+    if (![candidate isKindOfClass:UIScrollView.class]) return;
+    UIScrollView *list = (UIScrollView *)candidate;
+    NSNumber *raised = objc_getAssociatedObject(list, &kUnderHeaderKey);
+    CGFloat shift = raised ? raised.doubleValue : content.frame.origin.y;
+    if (shift < 1 || shift > 200) return;
+    if (!raised) {
+        // Measure BEFORE the frame change, and adjust only once per list.
+        CGFloat oldOffset = list.contentOffset.y;
+        UIEdgeInsets inset = list.contentInset;
+        inset.top += shift;
+        [UIView performWithoutAnimation:^{
+            list.contentInset = inset;
+            list.contentOffset = CGPointMake(list.contentOffset.x, oldOffset - shift);
+        }];
+        objc_setAssociatedObject(list, &kUnderHeaderKey, @(shift), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (content.frame.origin.y > 0.5) {
+        CGRect frame = content.frame;
+        frame.origin.y = 0;
+        frame.size.height += shift;
+        content.frame = frame;
+    }
+    if (list.frame.size.height < content.bounds.size.height - 1) {
+        CGRect frame = list.frame;
+        frame.size.height = content.bounds.size.height;
+        list.frame = frame;
+    }
+}
+
+// Spotify's filter wrappers are marked opaque even with a nil background:
+// on an overlaid scroller that opaque promise can render as a black sheet.
+// Clear only the wrappers, never the actual chips or their glass capsules.
+static void clearFilterStripe(UIView *header) {
+    UIView *filters = childNamed(header, @"YourLibraryHeaderContentFiltersView");
+    if (!filters) return;
+    UIView *wrapper = filters.subviews.firstObject;
+    for (UIView *v in @[filters, wrapper ?: filters]) {
+        if (v == nil) continue;
+        if (v.backgroundColor != UIColor.clearColor) v.backgroundColor = UIColor.clearColor;
+        if (v.layer.backgroundColor) v.layer.backgroundColor = NULL;
+        if (v.opaque) v.opaque = NO;
+        if (v.layer.opaque) v.layer.opaque = NO;
+    }
+}
 
 // How far a group's capsule reaches past its first and last control: the 48pt buttons hold their glyphs well inside.
 static const CGFloat kGroupPad = -2;
@@ -443,8 +508,8 @@ static void layoutRoot(UIView *page) {
         UIView *filters = childNamed(header, @"YourLibraryHeaderContentFiltersView");
         if (filters && header.bounds.size.height > 1) {
             clearBacking(header);
-            // Leave the collection position and content inset under Spotify's
-            // control; the sort row must stay beneath the filter chip strip.
+            clearFilterStripe(header);
+            showListBehindHeader(page);
         }
     }
 
@@ -499,8 +564,8 @@ static void layoutFolder(UIView *page) {
         UIView *filters = childNamed(header, @"YourLibraryHeaderContentFiltersView");
         if (filters && header.bounds.size.height > 1) {
             clearBacking(header);
-            // Leave the collection position and content inset under Spotify's
-            // control; the sort row must stay beneath the filter chip strip.
+            clearFilterStripe(header);
+            showListBehindHeader(page);
         }
     }
 
