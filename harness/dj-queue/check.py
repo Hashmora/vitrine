@@ -86,7 +86,12 @@ int main(void) { @autoreleasepool {
     SPTPlayerTrack *copyFive = song(@"q5"); copyFive.URI = five.URI; copyFive.provider = @"queue";
     sCopyOf[@"q5"] = @{@"uid":@"5", @"uri":five.URI}; state.track = copyFive;
     assert(skipPastSpent(state) == fresh);
-    state.track = five; state.future = @[copyFive,outro,fresh]; assert(repeatedCurrentOutro(state) == outro); state.future = @[three,fresh];
+    // A known q-UID copy of the current song is already spent even though
+    // isUnspent(copyFive) sees its distinct q-UID as not played.
+    state.track = five; state.future = @[copyFive,outro,fresh]; assert(repeatedCurrentOutro(state) == outro);
+    // A different known queued copy must not be crossed just to reach the voice.
+    state.future = @[copy,outro,fresh]; assert(repeatedCurrentOutro(state) == nil);
+    state.future = @[three,fresh];
     // After reorder: the current physical-last song played through a queue
     // copy, but a different already-played context song comes before its outro.
     SPTPlayerTrack *spent = song(@"2");
