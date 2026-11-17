@@ -24,8 +24,12 @@ SGModSection *SGDJSettingsSection(void) {
     return SGNotedSection(@"DJ", @[
         SGSwitchRow(@"DJ queue", @"The DJ's next songs in the queue", SGKeyDJQueue),
         SGSwitchRow(@"New DJ set button", @"Show the button in the DJ queue", SGKeyDJQueuePickButton),
-        SGSwitchRow(@"Neutral request fallback", @"For New DJ set and Let DJ pick", SGKeyDJPickFallback),
+        SGChoiceRow(@"New DJ set action", @"Choose one action for the queue button", SGKeyDJQueueSetMode,
+                    @[@"Skip to next segment", @"Let DJ pick (request)"], SGDJQueueSetModeSkip),
+        SGOptionRow(@"Neutral request fallback", @"For the request mode and native Let DJ pick", SGKeyDJPickFallback),
     ], @"DJ queue shows the songs the DJ has picked next, where you can reorder and remove them. Its switch applies after restarting Spotify. "
-       @"The button and fallback switches apply immediately. If Pick does not advance within 6 seconds, fallback sends this English request once: "
-       @"“Surprise me with a new mix based on my taste.” It also applies to the native Let DJ pick button, even when the queue button is hidden.");
+       @"The queue button and its action apply immediately. Skip to next segment is the default: it advances the DJ player "
+       @"to its next segment without asking Let DJ pick or sending a prompt. The previous request action remains available. "
+       @"Neutral request fallback is off by default; when enabled, a request that does not advance within 6 seconds sends "
+       @"“Surprise me with a new mix based on my taste.” once. This fallback also applies to native Let DJ pick.");
 }

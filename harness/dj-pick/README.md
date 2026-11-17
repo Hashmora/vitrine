@@ -56,3 +56,13 @@ session. With fallback still off, pressing it left the current item unchanged an
 produced no Pick recovery events over seven seconds. Both switches were restored
 on. The harness also checks disabling before the retry and disabling after a
 request was already sent (the latter still tracks its landing for queue cleanup).
+
+## New DJ set action (follow-up)
+
+Player › DJ now has a single "New DJ set action" choice: **Skip to next
+segment** (default) or **Let DJ pick (request)** (retained legacy behavior).
+The neutral request fallback now defaults to **off**, but it remains available
+for both the legacy button action and native Let DJ pick. The skip action does
+not invoke either the native request or this fallback. See
+`../dj-next-segment/README.md` for its checks; no live simulator results have
+been recorded for the new action yet.

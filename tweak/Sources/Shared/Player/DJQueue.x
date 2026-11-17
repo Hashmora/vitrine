@@ -99,6 +99,9 @@ static id queuePlayer(void) {
 // rather than holding a request view or reaching into a Swift event closure.
 static __weak id sDJService, sDJJumpable;
 static BOOL sPickingSegment;
+// The queue button has two exclusive actions. The skip action never touches the
+// native CompositeJumpable or sends a prompt to the DJ service.
+static void skipToNextDJSegment(void);
 
 %hook _TtC16Endless_AIDJImpl11AIDJService
 - (void)_injectDependenciesWithProvider:(id)provider {
@@ -312,6 +315,9 @@ static NSHashTable<UITableViewCell *> *sQueueCells;
 // was last made up, so the page's cells and table do nothing of this anywhere else.
 static NSHashTable<UIView *> *sAvatarViews;
 static BOOL sDJActive;
+// The queue reader can activate before the page receives its final layout.
+static __weak UIView *sQueuePageView;
+static void drawNewSegmentButtonSoon(UIView *page);
 
 static void loadCardAvatar(NSString *url) {
     if (!url.length || [url isEqualToString:sCardAvatarURL]) return;
@@ -1454,7 +1460,9 @@ static BOOL lineUpTheFuture(id reader, id player, id queue, id *forward) {
         leaveDJ();
         return NO;
     }
+    BOOL becameActive = !sDJActive;
     sDJActive = YES;
+    if (becameActive) drawNewSegmentButtonSoon(sQueuePageView);
     restoreSession(SGPlayerState());
     if (queue && queue == sForwardFor && sForward && [signatureOf(SGPlayerState(), [queue valueForKey:@"nextTracks"]) isEqualToString:sSignature]) {
         if (!sReaders) sReaders = [NSHashTable weakObjectsHashTable];
@@ -1694,9 +1702,20 @@ static BOOL sReloadQueued;
 // edge of the content.
 static CGRect sHandleFrame = {{-1, 0}, {0, 0}};
 static __weak UIView *sUIKitHandle;
-static __weak UIView *sQueuePageView;
 static void alignHeaderPlay(UIView *page);
 static char kNewSegmentButton;
+static void drawNewSegmentButton(UIView *page);
+// On first presentation the Edit control and the DJ queue arrive on different
+// layout passes. Redraw during that short interval instead of waiting for the
+// half-second header timer (which used to make the button pop in late).
+static void drawNewSegmentButtonSoon(UIView *page) {
+    if (!page) return;
+    for (NSNumber *delay in @[@0, @0.04, @0.12, @0.25]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (page == sQueuePageView && page.window) drawNewSegmentButton(page);
+        });
+    }
+}
 static void drawNewSegmentButton(UIView *page) {
     UIButton *button = objc_getAssociatedObject(page, &kNewSegmentButton);
     UIView *edit = descendant(page, ^BOOL(UIView *view) {
@@ -1712,10 +1731,14 @@ static void drawNewSegmentButton(UIView *page) {
         button = [UIButton buttonWithType:UIButtonTypeSystem];
         button.accessibilityIdentifier = @"vitrine-dj-new-segment";
         button.accessibilityLabel = @"New DJ set";
-        button.accessibilityHint = @"Let DJ pick a new set of tracks";
+        button.accessibilityHint = @"Skip to the next DJ segment";
         button.titleLabel.adjustsFontForContentSizeCategory = YES;
         [button addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
             if (!SGEnabled(SGKeyDJQueuePickButton) || sPickingSegment || sHandingOver || !isDJSession(SGPlayerState())) return;
+            if (SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip) != SGDJQueueSetModeRequest) {
+                skipToNextDJSegment();
+                return;
+            }
             id service = sDJService;
             SEL provide = NSSelectorFromString(@"provideJumpableWithControlling:");
             SEL jump = NSSelectorFromString(@"jumpWithCompletion:");
@@ -1745,7 +1768,7 @@ static void drawNewSegmentButton(UIView *page) {
         objc_setAssociatedObject(page, &kNewSegmentButton, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
-    config.title = sPickingSegment ? @"Picking…" : @"New DJ set";
+    config.title = sPickingSegment ? @"Changing…" : @"New DJ set";
     config.image = [UIImage systemImageNamed:@"forward.end.fill"];
     config.imagePadding = 6;
     config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold];
@@ -1761,7 +1784,9 @@ static void drawNewSegmentButton(UIView *page) {
         return result;
     };
     button.configuration = config;
-    button.enabled = !sPickingSegment && !sHandingOver && (sDJJumpable != nil || sDJService != nil);
+    BOOL requestMode = SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip) == SGDJQueueSetModeRequest;
+    button.accessibilityHint = requestMode ? @"Ask DJ to pick a new set" : @"Skip to the next DJ segment";
+    button.enabled = !sPickingSegment && !sHandingOver && (!requestMode || sDJJumpable != nil || sDJService != nil);
     CGRect editFrame = [edit convertRect:edit.bounds toView:host];
     CGSize size = [button sizeThatFits:CGSizeMake(200, 44)];
     CGFloat available = CGRectGetMinX(editFrame) - 108;
@@ -2241,6 +2266,162 @@ static SPTPlayerTrack *lastOfSegment(SPTPlayerState *state) {
         if (isDJTrack(t) || [SGURIString(t.URI) hasPrefix:@"spotify:media:"]) last = t;
     }
     return last;
+}
+
+// New DJ set: skip through the *player's* current segment instead of asking
+// CompositeJumpable for a different playlist. In Spotify 9.1.90 the core only
+// prepares the next page after reaching the last song of the current page.
+// Keep the transition silent while the core moves to that anchor and publishes
+// the next page, then jump directly to its first item. No signal or prompt is sent.
+static NSTimer *sNextSegmentTimer;
+static NSString *sNextSegmentContext, *sNextSegmentPage;
+static NSSet<NSString *> *sNextSegmentOldUIDs;
+static SPTPlayerTrack *sNextSegmentAnchor;
+static BOOL sNextSegmentWasPaused, sNextSegmentAnchorSent, sNextSegmentJumpSent;
+static NSTimeInterval sNextSegmentStarted;
+static const NSTimeInterval kNextSegmentTimeout = 22;
+
+static BOOL isNewSegmentItem(SPTPlayerTrack *track) {
+    if (!track || isCoreQueued(track)) return NO;
+    NSString *uri = SGURIString(track.URI);
+    if (!isDJTrack(track) && ![uri hasPrefix:@"spotify:media:"]) return NO;
+    NSString *page = track.metadata[@"page_instance_id"];
+    if ([page isKindOfClass:NSString.class] && page.length && sNextSegmentPage.length)
+        return ![page isEqualToString:sNextSegmentPage];
+    NSString *uid = baseUID(track.UID);
+    return uid.length && ![sNextSegmentOldUIDs containsObject:uid];
+}
+
+static void endNextSegmentSkip(BOOL changed, NSString *problem, BOOL contextChanged) {
+    [sNextSegmentTimer invalidate];
+    sNextSegmentTimer = nil;
+    sNextSegmentContext = nil;
+    sNextSegmentPage = nil;
+    sNextSegmentOldUIDs = nil;
+    sNextSegmentAnchor = nil;
+    sNextSegmentAnchorSent = NO;
+    sNextSegmentJumpSent = NO;
+    sHandingOver = NO;
+    sHandOverAnchorUID = nil;
+    sHandOverDisplayState = nil;
+    sHandOverDisplayTrack = nil;
+    SGPlayerSetDJTransitionMuted(NO);
+    SGDJQueueFinishPick(changed);
+    if (!contextChanged) {
+        id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
+        if (sNextSegmentWasPaused) [player pause:nil];
+        else [player resume:nil];
+    }
+    if (problem.length && !contextChanged) {
+        [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Couldn't change DJ set"
+                           detail:problem symbol:@"exclamationmark.circle"];
+    }
+}
+
+static void pollNextSegmentSkip(NSTimer *timer) {
+    if (timer != sNextSegmentTimer) return;
+    SPTPlayerState *state = SGPlayerState();
+    if (!isDJSession(state) || ![SGURIString(state.contextURI) isEqualToString:sNextSegmentContext]) {
+        SGLog(@"queue: next segment skip cancelled; the DJ context changed");
+        endNextSegmentSkip(NO, nil, YES);
+        return;
+    }
+    NSTimeInterval elapsed = CACurrentMediaTime() - sNextSegmentStarted;
+    if (elapsed > kNextSegmentTimeout) {
+        SGLog(@"queue: next segment did not arrive in %.0f seconds", elapsed);
+        endNextSegmentSkip(NO, @"DJ didn't load another segment. Try again.", NO);
+        return;
+    }
+    if (!sNextSegmentAnchorSent) {
+        // The pause acknowledgement must arrive before a targeted skip: skip
+        // commands can resume audio before a second pause has been accepted.
+        if (!state.isPaused) {
+            if (elapsed > 2.5) endNextSegmentSkip(NO, @"DJ didn't pause before changing sets.", NO);
+            return;
+        }
+        sNextSegmentAnchorSent = YES;
+        SPTPlayerTrack *anchor = sNextSegmentAnchor;
+        if (anchor && !sameGroup(state.track, anchor)) {
+            SGLog(@"queue: skipping silently to the segment's last song %@ [%@]", SGURIString(anchor.URI), anchor.UID);
+            skipForward(anchor);
+        } else if ([SGURIString(state.track.URI) hasPrefix:@"spotify:media:"]) {
+            // Already in the closing narration: the core requested the next
+            // page on the preceding last song, so ask for its next item.
+            SGLog(@"queue: already on the closing voice; advancing to the next page");
+            skipForward(nil);
+        } else {
+            SGLog(@"queue: on the segment's last song; awaiting the next page");
+        }
+        return;
+    }
+    // A prefetched new page can become the current track before we see it in
+    // future. Conversely, an old voice after the anchor is not a new page.
+    if (isNewSegmentItem(state.track)) {
+        SGLog(@"queue: skipped to the next DJ segment at %@ [%@]", SGURIString(state.track.URI), state.track.UID);
+        endNextSegmentSkip(YES, nil, NO);
+        return;
+    }
+    if (sNextSegmentJumpSent) return;
+    for (SPTPlayerTrack *next in state.future) {
+        if ([SGURIString(next.URI) isEqualToString:@"spotify:delimiter"]) break;
+        if (!isNewSegmentItem(next)) continue;
+        sNextSegmentJumpSent = YES; // one targeted jump, never a run of Next presses
+        SGLog(@"queue: the next DJ segment arrived; jumping to %@ [%@]", SGURIString(next.URI), next.UID);
+        skipForward(next);
+        return;
+    }
+}
+
+static void skipToNextDJSegment(void) {
+    if (sNextSegmentTimer || sPickingSegment || sHandingOver) return;
+    SPTPlayerState *state = SGPlayerState();
+    if (!sDJActive || !isDJSession(state)) return;
+
+    // Collect only the old segment, before the delimiter. Both the voice and
+    // its song use the same UID; page_instance_id identifies the new page when
+    // the core reuses an introduction UID.
+    NSMutableSet<NSString *> *old = [NSMutableSet set];
+    NSString *page = state.track.metadata[@"page_instance_id"];
+    if (![page isKindOfClass:NSString.class]) page = nil;
+    if (baseUID(state.track.UID)) [old addObject:baseUID(state.track.UID)];
+    SPTPlayerTrack *anchor = isDJTrack(state.track) ? state.track : nil;
+    for (SPTPlayerTrack *track in state.future) {
+        if ([SGURIString(track.URI) isEqualToString:@"spotify:delimiter"]) break;
+        if (isCoreQueued(track)) continue;
+        NSString *trackPage = track.metadata[@"page_instance_id"];
+        if (page.length && [trackPage isKindOfClass:NSString.class] && trackPage.length && ![trackPage isEqualToString:page]) break;
+        if (!page.length && [trackPage isKindOfClass:NSString.class] && trackPage.length) page = trackPage;
+        NSString *uid = baseUID(track.UID);
+        if (uid.length) [old addObject:uid];
+        if (isDJTrack(track)) anchor = track; // last *song*, not its closing narration
+    }
+    if (!anchor && ![SGURIString(state.track.URI) hasPrefix:@"spotify:media:"]) {
+        [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Couldn't change DJ set"
+                           detail:@"DJ's current segment isn't available yet." symbol:@"exclamationmark.circle"];
+        return;
+    }
+    sNextSegmentContext = [SGURIString(state.contextURI) copy];
+    sNextSegmentPage = [page copy];
+    sNextSegmentOldUIDs = [old copy];
+    sNextSegmentAnchor = anchor;
+    sNextSegmentWasPaused = state.isPaused;
+    sNextSegmentAnchorSent = NO;
+    sNextSegmentJumpSent = NO;
+    sNextSegmentStarted = CACurrentMediaTime();
+    SGDJQueueBeginPick(); // hold the queue order and drop our prefetched old copy
+    sHandOverDisplayState = state;
+    sHandOverDisplayTrack = asDJTrack(state.track) ?: state.track;
+    sHandOverAnchorUID = anchor ? historyUID(anchor) : historyUID(state.track);
+    sHandingOver = YES; // disable the automatic end-of-segment bridge
+    SGPlayerSetDJTransitionMuted(YES);
+    SGLog(@"queue: New DJ set in skip mode: moving across the segment without sending a request");
+    if (!state.isPaused) [(id<SPTPlayer>)queuePlayer() pause:nil];
+    sNextSegmentTimer = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
+        pollNextSegmentSkip(timer);
+    }];
+    [NSRunLoop.mainRunLoop addTimer:sNextSegmentTimer forMode:NSRunLoopCommonModes];
+    // Avoid waiting for the timer's first tick if pause was already confirmed.
+    if (state.isPaused) pollNextSegmentSkip(sNextSegmentTimer);
 }
 
 // On the segment's last track, hidden: once the next segment's first item is in the future (the core asks for it as it
@@ -2954,6 +3135,11 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
     }
     %orig;
 }
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    sQueuePageView = ((UIViewController *)(id)self).view;
+    drawNewSegmentButtonSoon(sQueuePageView);
+}
 - (void)viewDidLayoutSubviews {
     %orig;
     drawHeaderAvatar(((UIViewController *)(id)self).view);
@@ -2967,6 +3153,8 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
     [sHeaderTimer invalidate];
     sHeaderTimer = nil;
     if (!sDJActive) return;
+    sQueuePageView = ((UIViewController *)(id)self).view;
+    drawNewSegmentButtonSoon(sQueuePageView);
     __weak UIViewController *page = (UIViewController *)(id)self;
     sHeaderTimerPage = page;
     sHeaderTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *timer) {
