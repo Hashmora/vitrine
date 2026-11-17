@@ -124,6 +124,7 @@ static SPTPlayerTrack *asDJTrack(SPTPlayerTrack *t) { return t; }
 static double kSegmentWait = .5;
 
 #define SGLog(...) ((void)0)
+static NSString *sSignature;
 static SPTPlayerState *SGPlayerState(void) { return testState; }
 static NSString *trackKey(SPTPlayerTrack *t) { return t.UID; }
 @interface TestPlayer : NSObject <SPTPlayer> @end
@@ -175,11 +176,13 @@ static id skipForward(SPTPlayerTrack *t) {
     assert([commands isEqual:expected]);
     // UID confirmation alone would open the gate on the song before the shared-UID voice.
     sHandingOver = YES; sHandOverAnchorUID = five.UID; sHandOverDisplayTrack = four;
-    assert(shownDJTrack(five) == four); assert(shownDJTrack(outro) == outro);
+    assert(shownDJTrack(five) == four); assert(shownDJTrack(outro) == four);
     sHandOverDisplayState = [SPTPlayerState new]; sHandOverDisplayState.track = four; sHandOverDisplayState.position = 99;
     state.track = five; state.position = 0;
     assert(shownDJStateBase(state).position == 99);
-    state.track = outro; assert(shownDJStateBase(state) == state);
+    state.track = four; state.isPaused = YES;
+    assert(shownDJStateBase(state) == sHandOverDisplayState && !shownDJStateBase(state).isPaused);
+    state.track = outro; assert(shownDJStateBase(state) == sHandOverDisplayState);
     landingTarget = outro; commands = [NSMutableArray array];
     state.track = copyFive; state.position = 100; nextPhysicalSong = copyFive; sHandingOver = YES; SGPlayerSetDJTransitionMuted(YES);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, .02 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
