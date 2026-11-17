@@ -56,6 +56,7 @@ BOOL SGRLegacyTabBarMinimized(void);
 BOOL SGRLegacyNowPlayingHeld(void);
 void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated);
 void SGRLegacyRefreshForMessageBar(void);
+void SGRLegacyRefreshPlayerDock(void);
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height);
 
 // TabBarRoom.m, the same for both bars. The hold on Spotify's Home that opens Mod Settings, added once.

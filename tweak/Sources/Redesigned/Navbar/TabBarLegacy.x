@@ -25,6 +25,7 @@
 #import "Settings/SGPage.h"
 #import "Shared/Navigation/TabItems.h"
 #import "Headers/SPTEncoreIconView.h"
+#import "Shared/Player/PlayerEvents.h"
 #import <objc/message.h>
 
 static char kMessageBarKey;
@@ -1285,6 +1286,20 @@ void SGRLegacyRefreshForMessageBar(void) {
     busy = NO;
 }
 
+// Called as NPV closes, including during an interactive hold. Do not wait
+// for Spotify to relayout the tab bar after the hand leaves the screen.
+void SGRLegacyRefreshPlayerDock(void) {
+    if (!sg_minimized || !sg_stockBar || !sg_stockBar.window) return;
+    static BOOL busy;
+    if (busy) return;
+    busy = YES;
+    [UIView performWithoutAnimation:^{
+        syncBar(sg_stockBar);
+        SGRNowPlayingBarFollowTabBar();
+    }];
+    busy = NO;
+}
+
 BOOL SGRLegacyTabBarMinimized(void) {
     return sg_minimized;
 }
@@ -1295,10 +1310,19 @@ void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated) {
 }
 
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height) {
+    static __weak UIView *lastHost;
+    static CGRect lastSlot;
     UIView *stockBar = sg_stockBar;
+    // Spotify temporarily hides the stock bar during the fullscreen-player
+    // close. Keep the previous compact slot until its live bar is back.
+    CGRect saved = sg_minimized && !SGPlayerIsOpen() && lastHost == host ? lastSlot : CGRectNull;
+    if (!sg_minimized) {
+        lastHost = nil;
+        lastSlot = CGRectNull;
+    }
     UIView *barHost = stockBar ? objc_getAssociatedObject(stockBar, &kHostKey) : nil;
     UIView *bar = stockBar ? objc_getAssociatedObject(stockBar, &kBarKey) : nil;
-    if (!sg_minimized || !host || !barHost || !bar.window || stockBar.hidden || stockBar.alpha < 0.01 || CGRectIsEmpty(sg_leadFrame)) return CGRectNull;
+    if (!sg_minimized || !host || !barHost || !bar.window || stockBar.hidden || stockBar.alpha < 0.01 || CGRectIsEmpty(sg_leadFrame)) return saved;
     // The circles' places, not what is on screen mid-spring.
     CGRect lead = [barHost convertRect:sg_leadFrame toView:host];
     CGFloat left = CGRectGetMaxX(lead) + SGRGrid;
@@ -1312,7 +1336,9 @@ CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height) {
     CGRect slot = CGRectMake(left, CGRectGetMidY(lead) - height / 2, right - left, height);
     // A bar Spotify has slid away for a page takes the slot off the screen with it.
     CGRect inWindow = [host convertRect:slot toView:nil];
-    if (slot.size.width < 100 || CGRectGetMaxY(inWindow) > CGRectGetMaxY(bar.window.bounds)) return CGRectNull;
+    if (slot.size.width < 100 || CGRectGetMaxY(inWindow) > CGRectGetMaxY(bar.window.bounds)) return saved;
+    lastHost = host;
+    lastSlot = slot;
     return slot;
 }
 
