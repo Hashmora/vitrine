@@ -84,3 +84,10 @@ landing before unmuting. The regression fixture asserts no `pause requested`
 command for either a logical-last-song bridge or the spent-original-to-outro
 bridge. If Spotify has not yet published the next page, audio can still be
 silent during the wait: this does not guarantee a gapless DJ transition.
+
+Targeted-outro skip acknowledgement race: immediately after starting an unpaused
+bridge, the core can still report the starting song at 0 s. The landing poll
+now waits for a changed physical UID, a confirmed position reset, or a short
+grace period before issuing an extra physical Next into the voice. The fixture
+delays the targeted-skip acknowledgement beyond the first four polls to guard
+against sending a spurious second skip.

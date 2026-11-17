@@ -2542,17 +2542,26 @@ static void finishDJLanding(id<SPTPlayer> player, SPTPlayerTrack *target, NSStri
     __block void (^poll)(void);
     __block NSString *advancedFromKey;
     __block NSUInteger physicalAdvances = 0;
+    // A targeted skip is asynchronous. At the first poll the *starting* song
+    // can still be at position zero: that alone is not evidence that Spotify
+    // skipped to another physical item sharing the outro's UID.
+    double startingPosition = SGPlayerState().position;
     poll = ^{
         SPTPlayerState *now = SGPlayerState();
         if (!isDJSession(now)) { poll = nil; sHandingOver = NO; SGPlayerSetDJTransitionMuted(NO); return; }
         BOOL sameItem = target && sameGroup(now.track, target) && [SGURIString(now.track.URI) isEqualToString:SGURIString(target.URI)];
         BOOL landed = target ? sameItem : ![trackKey(now.track) isEqualToString:from];
         if (outro && physicalAdvances && [SGURIString(now.track.URI) hasPrefix:@"spotify:media:"]) landed = YES;
-        // A targeted skip uses the uid, which the outro shares with its song. It can
-        // land on that song first. Stay muted and advance one physical item into the voice.
+        // A targeted skip uses the UID shared by the song and its outro. It can
+        // land on the song first. But before its acknowledgement the original
+        // song is still current; never treat its zero position as a completed
+        // skip and issue an overlapping, untargeted Next command.
+        BOOL movedFromStart = ![trackKey(now.track) isEqualToString:from];
+        BOOL returnedToSameUID = now.position < 1 &&
+            (physicalAdvances > 0 || (startingPosition > 1 && now.position + 1 < startingPosition) || tries >= 7);
         if (outro && physicalAdvances < 8 && isDJTrack(now.track) && sameGroup(now.track, target) && !sameItem &&
             ![trackKey(now.track) isEqualToString:advancedFromKey] &&
-            (![trackKey(now.track) isEqualToString:from] || now.position < 1)) {
+            (movedFromStart || returnedToSameUID)) {
             advancedFromKey = trackKey(now.track);
             physicalAdvances++;
             SGLog(@"queue: the outro uid landed on its song; still muted, advancing into the voice");
