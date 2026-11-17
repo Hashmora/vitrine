@@ -55,7 +55,6 @@ BOOL SGRLegacyTabBarMinimized(void);
 // even when a *second* finger scrolls a page. Only queried by the fallback.
 BOOL SGRLegacyNowPlayingHeld(void);
 void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated);
-void SGRLegacyRefreshForMessageBar(void);
 void SGRLegacyRefreshPlayerDock(void);
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height);
 
