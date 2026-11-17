@@ -106,7 +106,13 @@ void SGRLibraryClearScrim(UIView *header) {
         [fade.layer addSublayer:gradient];
         objc_setAssociatedObject(header, &kHeaderFadeKey, fade, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    fade.frame = header.bounds;
+    // Only the navigation title/control row has a fade. The filters start
+    // below it (at y=95 in the current library tree) and must have *no*
+    // backdrop, including none from our own gradient.
+    UIView *filters = childNamed(header, @"YourLibraryHeaderContentFiltersView");
+    CGFloat endY = filters ? CGRectGetMinY(filters.frame) : MIN(95, header.bounds.size.height);
+    endY = MIN(MAX(endY, 0), header.bounds.size.height);
+    fade.frame = CGRectMake(0, 0, header.bounds.size.width, endY);
     CAGradientLayer *gradient = (CAGradientLayer *)fade.layer.sublayers.firstObject;
     gradient.frame = fade.bounds;
     if (fade.superview != header) [header insertSubview:fade atIndex:0];
