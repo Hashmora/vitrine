@@ -13,32 +13,57 @@ static char kShareInnerPrepared, kShareOuterPrepared;
 // buttons, and others are tappable ListRow backings. Select the actual hit
 // control, not the text label, so the material and press animation follow it.
 static UIView *actionWithText(UIView *label, UIView *root) {
+    UIView *fallback = nil;
     for (UIView *v = label; v && v != root; v = v.superview) {
-        NSString *name = NSStringFromClass(v.class);
-        if (v.bounds.size.width > 1 && v.bounds.size.height >= 24 &&
-            ([name containsString:@"Button"] ||
-             [v.accessibilityIdentifier hasSuffix:@".Row"])) return v;
+        if (v.bounds.size.width < 28 || v.bounds.size.height < 26 ||
+            v.bounds.size.height > 78 || v.bounds.size.width > root.bounds.size.width) continue;
+        NSString *type = NSStringFromClass(v.class);
+        BOOL hit = [v isKindOfClass:UIControl.class] ||
+            [type containsString:@"Interactable"] || [type containsString:@"BackingButton"] ||
+            [type containsString:@"Button"] || [type containsString:@"ListRow"] ||
+            [v.accessibilityIdentifier hasSuffix:@".Row"];
+        if (hit) return v;
+        if (!fallback && (v.gestureRecognizers.count > 0 ||
+                          (v.isAccessibilityElement && (v.accessibilityTraits & UIAccessibilityTraitButton))))
+            fallback = v;
     }
-    return nil;
+    return fallback;
 }
 
 static void glassNamedActions(UIView *root) {
     if (!root) return;
+    NSMutableSet<NSValue *> *seen = [NSMutableSet set];
     SGForEachView(root, ^(UIView *view) {
         NSString *name = nil;
         if ([view isKindOfClass:UILabel.class]) name = ((UILabel *)view).text;
         if (!name.length) name = view.accessibilityLabel;
         if (!name.length) return;
-        NSString *lower = name.lowercaseString;
+        NSString *lower = [name.lowercaseString stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         const void *key = NULL;
-        if ([lower isEqualToString:@"copy link"]) key = &kCopyAction;
-        else if ([lower isEqualToString:@"andrew (you)"] || [lower hasSuffix:@" (you)"]) key = &kSelfAction;
-        else if ([lower isEqualToString:@"more"] || [lower hasPrefix:@"more options"]) key = &kMoreAction;
-        else if ([lower isEqualToString:@"search"]) key = &kSearchAction;
+        if ([lower containsString:@"copy link"] || [lower isEqualToString:@"copy invite link"])
+            key = &kCopyAction;
+        else if ([lower containsString:@" (you)"] || [lower isEqualToString:@"you"])
+            key = &kSelfAction;
+        else if ([lower isEqualToString:@"more"] || [lower hasPrefix:@"more options"])
+            key = &kMoreAction;
+        else if ([lower isEqualToString:@"search"] || [lower hasPrefix:@"search people"] ||
+                 [lower hasPrefix:@"search for people"])
+            key = &kSearchAction;
+        else if ([lower isEqualToString:@"create group"])
+            key = &kShareRow;
         if (!key) return;
         UIView *button = actionWithText(view, root);
-        if (!button || button.bounds.size.height > 78) return;
-        SGRGlassFlatBox(button, key, NO);
+        if (!button) return;
+        NSValue *identity = [NSValue valueWithNonretainedObject:button];
+        if ([seen containsObject:identity]) return;
+        [seen addObject:identity];
+        UIView *glass = SGRGlassFlatBox(button, key, NO);
+        if (!glass) return;
+        // Do not leave Encore's 100% opaque backing over the new glass.
+        if (button.layer.backgroundColor && CGColorGetAlpha(button.layer.backgroundColor) > 0.15)
+            button.layer.backgroundColor = NULL;
+        if (button.backgroundColor && CGColorGetAlpha(button.backgroundColor.CGColor) > 0.15)
+            button.backgroundColor = UIColor.clearColor;
         SGRUnclipUpTo(button, ^BOOL(UIView *ancestor) {
             return [ancestor isKindOfClass:UICollectionView.class] || ancestor == root;
         });
@@ -49,13 +74,17 @@ static void glassAction(UIView *row, const void *key) {
     if (!row) return;
     __block UIView *box = nil;
     SGForEachView(row, ^(UIView *v) {
-        if (box || ![v isMemberOfClass:UIView.class] ||
-            fabs(v.bounds.size.width - 48) > 1 || fabs(v.bounds.size.height - 48) > 1) return;
-        if (SGRChildNamed(v, @"SPTEncoreIconView")) box = v;
+        if (![v isMemberOfClass:UIView.class] || fabs(v.bounds.size.width - 48) > 2 ||
+            fabs(v.bounds.size.height - 48) > 2) return;
+        __block BOOL icon = NO;
+        SGForEachView(v, ^(UIView *child) {
+            if ([NSStringFromClass(child.class) containsString:@"SPTEncoreIconView"] ||
+                [child isKindOfClass:UIImageView.class]) icon = YES;
+        });
+        if (icon) box = v; // closest 48pt plate to the real glyph
     });
+    if (!box && row.bounds.size.height >= 30 && row.bounds.size.height <= 78) box = row;
     if (!box) return;
-    // Prepare the actual 48pt icon plate before the list cell first appears.
-    // Its #2A2A2A paint otherwise flashes on the first presentation frame.
     SGRGlassFlatBox(box, key, YES);
     box.backgroundColor = UIColor.clearColor;
     box.layer.backgroundColor = NULL;
@@ -191,6 +220,9 @@ static void dressEarlyShareAction(UIView *view) {
         glassAction(view, &kShareRow);
     else if ([identifier isEqualToString:@"InviteLink.Row"])
         glassAction(view, &kShareInvite);
+    else if ([identifier containsString:@"ChatShare"] ||
+             [identifier containsString:@"CopyLink"] || [identifier containsString:@"InviteLink"])
+        glassNamedActions(view);
 }
 
 %ctor {
