@@ -6,6 +6,43 @@
 #import "Pages.h"
 
 static char kShareSearch, kShareRow, kShareInvite, kGroupName, kCancel;
+static char kMoreAction, kCopyAction, kSelfAction, kSearchAction;
+
+// These actions are not all in the same Encore hierarchy: some are icon
+// buttons, and others are tappable ListRow backings. Select the actual hit
+// control, not the text label, so the material and press animation follow it.
+static UIView *actionWithText(UIView *label, UIView *root) {
+    for (UIView *v = label; v && v != root; v = v.superview) {
+        NSString *name = NSStringFromClass(v.class);
+        if (v.bounds.size.width > 1 && v.bounds.size.height >= 24 &&
+            ([name containsString:@"Button"] ||
+             [v.accessibilityIdentifier hasSuffix:@".Row"])) return v;
+    }
+    return nil;
+}
+
+static void glassNamedActions(UIView *root) {
+    if (!root) return;
+    SGForEachView(root, ^(UIView *view) {
+        NSString *name = nil;
+        if ([view isKindOfClass:UILabel.class]) name = ((UILabel *)view).text;
+        if (!name.length) name = view.accessibilityLabel;
+        if (!name.length) return;
+        NSString *lower = name.lowercaseString;
+        const void *key = NULL;
+        if ([lower isEqualToString:@"copy link"]) key = &kCopyAction;
+        else if ([lower isEqualToString:@"andrew (you)"] || [lower hasSuffix:@" (you)"]) key = &kSelfAction;
+        else if ([lower isEqualToString:@"more"] || [lower hasPrefix:@"more options"]) key = &kMoreAction;
+        else if ([lower isEqualToString:@"search"]) key = &kSearchAction;
+        if (!key) return;
+        UIView *button = actionWithText(view, root);
+        if (!button || button.bounds.size.height > 78) return;
+        SGRGlassFlatBox(button, key, NO);
+        SGRUnclipUpTo(button, ^BOOL(UIView *ancestor) {
+            return [ancestor isKindOfClass:UICollectionView.class] || ancestor == root;
+        });
+    });
+}
 
 static void glassAction(UIView *row, const void *key) {
     if (!row) return;
@@ -119,6 +156,7 @@ static void shareGlass(UIViewController *c) {
     }
     glassAction(SGRFindByIdentifier(root, @"CreateGroup.Row", &kShareRow), &kShareRow);
     glassAction(SGRFindByIdentifier(root, @"InviteLink.Row", &kShareInvite), &kShareInvite);
+    glassNamedActions(root);
     // In Add people the Cancel navigation action is an Encore tertiary text
     // button, not the standard UIKit back control.
     UIView *content = SGRChildNamed(bar, @"_UINavigationBarContentView");
