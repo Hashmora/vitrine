@@ -107,6 +107,35 @@ static UILabel *innerLabel(UIView *label) {
     return found;
 }
 
+// Spotify briefly supplies just "Added to" for the Queue snackbar, then animates
+// the missing word into its Encore label. Complete that native label before
+// measuring the capsule; do not reserve extra width or draw a second title.
+// Only the English Queue prefix of the action snackbar is affected. The
+// completed native string, including a localized one, is otherwise untouched.
+static void settleQueueText(UIView *content) {
+    if (![NSStringFromClass(content.class) containsString:@"SnackbarWithActionView"]) return;
+    UIView *label = nil, *action = nil;
+    contentParts(content, &label, &action);
+    UILabel *text = label ? innerLabel(label) : nil;
+    NSString *value = [text.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    BOOL partial = [value isEqualToString:@"Added to"];
+    BOOL complete = value.length > 0 && [value caseInsensitiveCompare:@"Added to queue"] == NSOrderedSame;
+    if (!partial && !complete) return;
+
+    if (partial) {
+        // Spotify may run its text update inside an active UIView animation.
+        [UIView performWithoutAnimation:^{ text.text = @"Added to queue"; }];
+    }
+    // Stop only the Encore title's independent slide/fade. The snackbar
+    // container keeps Spotify's normal entrance and exit animations.
+    [UIView performWithoutAnimation:^{
+        SGForEachView(label, ^(UIView *view) {
+            [view.layer removeAllAnimations];
+            if (!CGAffineTransformIsIdentity(view.transform)) view.transform = CGAffineTransformIdentity;
+        });
+    }];
+}
+
 // The action's size: its frame once Spotify has laid it out, its word's until then.
 static CGSize actionSize(UIView *action) {
     UILabel *text = innerLabel(action);
@@ -135,19 +164,6 @@ static CGFloat cardWidth(UIView *content, CGFloat maxWidth) {
     CGFloat padRight = trailingPad(action);
     CGFloat room = maxWidth - kPadLeft - padRight - actionWidth;
     CGFloat labelWidth = label ? labelSize(label, MAX(room, 1)).width : 0;
-    // Spotify fills the queue toast asynchronously: its first pass contains
-    // "Added to", then the queue suffix arrives after the toast is already
-    // animating in. Reserve the final localized suffix's room up front so the
-    // capsule does not grow in flight. Keep the label itself live and localized.
-    if (label) {
-        UILabel *text = innerLabel(label);
-        NSString *value = text.text.lowercaseString ?: @"";
-        if ([value containsString:@"added"] || [value containsString:@"queue"] || [value containsString:@"добав"]) {
-            UIFont *font = text.font ?: [UIFont systemFontOfSize:13];
-            CGFloat finalLine = ceil([@"Added to Queue" sizeWithAttributes:@{NSFontAttributeName: font}].width);
-            labelWidth = MAX(labelWidth, MIN(finalLine, MAX(room, 1)));
-        }
-    }
     return MIN(kPadLeft + labelWidth + actionWidth + padRight, maxWidth);
 }
 
@@ -234,6 +250,7 @@ static void dressSnackbar(UIView *snackbar) {
     sg_snackbar = snackbar;
     CGFloat maxWidth = snackbar.bounds.size.width - kSideInset * 2;
     BOOL hosted = content && isHostingView(content);
+    if (content && !hosted) settleQueueText(content);
     CGFloat width = !content ? maxWidth : hosted ? hostedCardWidth(content, maxWidth) : cardWidth(content, maxWidth);
     // By bounds and centre: the card carries a transform below (the minimized tab bar), and a frame set under one is undefined.
     CGRect bounds = CGRectMake(0, 0, width, snackbar.bounds.size.height);
@@ -367,7 +384,10 @@ static void shownAgain(UIView *snackbar) {
 // Spotify lays the label and the action out again for its own width whenever the content lays out.
 static void relayoutContent(UIView *content) {
     UIView *snackbar = content.superview.superview;
-    if (snackbar && objc_getAssociatedObject(snackbar, &kDressedKey)) layoutContent(content);
+    if (snackbar && objc_getAssociatedObject(snackbar, &kDressedKey)) {
+        settleQueueText(content);
+        layoutContent(content);
+    }
 }
 
 // A frame Spotify gives the content (its 374) is the card's instead, so the Open button is never placed past the card's edge.
@@ -384,7 +404,11 @@ static CGRect heldToCard(UIView *content, CGRect frame) {
 }
 
 - (void)layoutSubviews {
+    // The native layout can overwrite the label while animating its suffix.
+    // Correct it on both sides of that pass, before our width calculation.
+    settleQueueText((UIView *)self);
     %orig;
+    settleQueueText((UIView *)self);
     relayoutContent((UIView *)self);
 }
 %end
