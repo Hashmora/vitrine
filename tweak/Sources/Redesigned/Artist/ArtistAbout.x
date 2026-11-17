@@ -10,8 +10,6 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Artist.h"
 
-static char kAboutGlassKey;
-
 // Spotify's card gray: an opaque neutral between #202020 and #303030.
 static BOOL isCardGray(CGColorRef color) {
     if (!color || CGColorGetAlpha(color) < 0.95 || CGColorGetNumberOfComponents(color) < 3) return NO;
