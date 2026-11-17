@@ -2746,7 +2746,10 @@ static SPTPlayerTrack *repeatedCurrentOutro(SPTPlayerState *state) {
     for (SPTPlayerTrack *t in state.future) {
         NSString *uri = SGURIString(t.URI);
         if ([uri isEqualToString:@"spotify:delimiter"]) return nil;
-        if (isCoreQueued(t) && (!sCopyOf[t.UID] || isUnspent(t))) return nil;
+        // Queue copies have their own q-UID, so isUnspent(t) can call even a
+        // played copy "fresh". Only cross a known copy of this *same* track;
+        // never cross a queued copy for another group or a user's queue item.
+        if (isCoreQueued(t) && (!sCopyOf[t.UID] || !sameGroup(t, current))) return nil;
         if (sameGroup(t, current)) {
             if (isDJTrack(t)) { spentBetween = YES; continue; }
             if ([uri hasPrefix:@"spotify:media:"]) return spentBetween ? t : nil;
