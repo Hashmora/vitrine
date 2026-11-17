@@ -5,7 +5,7 @@
 #define SGKeyDJQueuePickButton @"spotifyglass.djqueue.pickButton" // live, on by default
 #define SGKeyDJQueueSetMode @"spotifyglass.djqueue.setMode" // live; exactly one action
 #define SGDJQueueSetModeSkip 0    // default: skip the current DJ page without a request
-#define SGDJQueueSetModeRequest 1 // legacy: CompositeJumpable Let DJ pick
+#define SGDJQueueSetModeRequest 1 // direct neutral suggested prompt (no native jump)
 // The DJ's session as the user left it (order, removed, played), so a launch in the same session goes on with it.
 #define SGKeyDJQueueSession @"spotifyglass.djqueue.session"
 

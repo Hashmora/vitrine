@@ -1,3 +1,3 @@
-// Automatic English suggested request when native Let DJ pick does not advance.
+// The Next DJ Set button's request action. Spotify's native DJ controls are untouched.
 #import <Foundation/Foundation.h>
-#define SGKeyDJPickFallback @"spotifyglass.djpick.fallback" // live, off by default; legacy queue request and native Pick
+void SGDJPickRequest(id player, void (^completion)(NSError *error));

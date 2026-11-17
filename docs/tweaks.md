@@ -823,28 +823,26 @@ Spotify's own through.
   active when future/order updates arrive after the track callback, so an empty transient snapshot does not
   disable automatic advancement. The player retains its full pre-handover state through the internal pause
   acknowledgement, then the queue and player are refreshed with the confirmed destination.
-- **New DJ set:** the queue button beside Edit has one live `New DJ set action` choice in Player › DJ:
-  **Skip to next segment** (default) or **Let DJ pick (request)** (legacy). Skip mode calls the
-  player's pause/targeted-skip API, silently visits the last song to trigger the core's next DJ page,
-  waits for its new `page_instance_id` / track UIDs and skips to that page's first item. It does not
-  call `CompositeJumpable`, send a `jump` request, or send a text prompt. A 22-second timeout restores
-  playback and retains the old queue order if the core has not loaded another page. The appearance
-  switch (`spotifyglass.djqueue.pickButton`) is independent and still on by default; extra first-open
-  redraws position the action with Edit instead of waiting for the header's 0.5-second timer.
-  The legacy request choice still uses Spotify's own `AIDJService` / `CompositeJumpable` with
-  `jumpWithCompletion:`; the 9.1.90 class, factory selector and NSError completion were checked
-  against its binary and native tap. The separate neutral request fallback
-  (`spotifyglass.djpick.fallback`) is **off by default** and applies to both the legacy request
-  choice and the native Let DJ pick, never to skip mode. When enabled, `DJPick.x` also repairs
-  the native button: a local `jump` acknowledgement can succeed even when the playlist service
-  later answers HTTP 502. A real landing is required. After six seconds without one, the code
-  sends the English suggested prompt “Surprise me with a new mix based on my taste.” once.
-  Explicit requests/skips, pausing, a context change and timeouts stop the pending retry.
-  Repeated taps share the attempt. The custom queue's order is inactive while waiting and is
-  discarded only on an actual landing; failures preserve it. The owned prefetch is removed
-  before the action so it cannot play ahead of the new set; the hand queue remains intact.
-  The queue action hides during Edit. Legacy behavior: `harness/dj-pick/`; skip-mode source
-  checks: `harness/dj-next-segment/` (live playback still needs verification).
+- **Next DJ Set:** the DJ queue and its `Next DJ Set` button beside Edit are both **on by default**
+  (Player › DJ: `DJ queue` and `Next DJ Set button`). The nested `Next DJ Set action`
+  choice appears only when the queue and button are enabled. Its exclusive choices are
+  **Skip to next DJ segment** (default) and **Let DJ pick (request)**. The queue switch
+  needs a Spotify restart; button visibility and action selection take effect immediately.
+  Skip mode physically advances the current DJ set without making a request: it quietly
+  visits the last item to trigger the core's next DJ page, waits for new `page_instance_id`
+  / UIDs, and moves to its first item. If the next page is not yet published, a bounded
+  physical Next advances past old anchors but not manual queue tracks. A 22-second
+  timeout restores playback and keeps the old order if no new page arrives.
+  Request mode now sends exactly **one** native-format suggested `prompt` signal immediately,
+  using Spotify's English text “Surprise me with a new mix based on my taste.” (protobuf
+  field 1; field 2 = 3, base64). There is **no preliminary native `jump`** and no
+  independent fallback toggle. The code **does not hook the native Let DJ pick button**:
+  Spotify's own behavior is unchanged. `DJPick.x` waits for an actual new page/intro
+  instead of treating the signal call as success; after 20 seconds without a landing it
+  reports an error and preserves the old custom order. Pausing or leaving the DJ session
+  cancels tracking. The custom queue's owned prefetch is removed before the request and
+  the old user order is discarded only on confirmed landing. Checks:
+  `harness/dj-pick/` and `harness/dj-next-segment/` (live playback must be verified).
 - **Artwork:** Home and Recents use the DJ's public cover (the DJ card's recorded `image_url`), cached locally.
   Each look owns its drawing hooks. Reused Library cells are never a source of another item's artwork.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its

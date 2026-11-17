@@ -57,6 +57,7 @@
 #import "Core/SGLog.h"
 #import "PlayerState.h"
 #import "DJQueue.h"
+#import "DJPick.h"
 #import "SpeedPitch.h"
 #import "Shared/AlbumQueue/AlbumQueue.h"
 
@@ -94,27 +95,10 @@ static id queuePlayer(void) {
     return sLastPlayer ?: SGPlayer();
 }
 
-// Spotify 9.1.90: AIDJService provides the same CompositeJumpable used by
-// the request sheet's “Let DJ pick”. Refer weakly to its native service/jumper,
-// rather than holding a request view or reaching into a Swift event closure.
-static __weak id sDJService, sDJJumpable;
+// The queue button offers either a physical segment skip or a single neutral
+// DJ request. Neither mode changes Spotify's native Let DJ pick behavior.
 static BOOL sPickingSegment;
-// The queue button has two exclusive actions. The skip action never touches the
-// native CompositeJumpable or sends a prompt to the DJ service.
 static void skipToNextDJSegment(void);
-
-%hook _TtC16Endless_AIDJImpl11AIDJService
-- (void)_injectDependenciesWithProvider:(id)provider {
-    %orig;
-    sDJService = self;
-}
-- (id)provideJumpableWithControlling:(id)player {
-    id result = %orig;
-    sDJService = self;
-    sDJJumpable = result;
-    return result;
-}
-%end
 
 // The DJ's segment (five tracks, a voice before the first and one after the last) with room for the hand-queued.
 static const int64_t kFutureCap = 16;
@@ -1730,7 +1714,7 @@ static void drawNewSegmentButton(UIView *page) {
     if (!button) {
         button = [UIButton buttonWithType:UIButtonTypeSystem];
         button.accessibilityIdentifier = @"vitrine-dj-new-segment";
-        button.accessibilityLabel = @"New DJ set";
+        button.accessibilityLabel = @"Next DJ Set";
         button.accessibilityHint = @"Skip to the next DJ segment";
         button.titleLabel.adjustsFontForContentSizeCategory = YES;
         [button addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
@@ -1739,36 +1723,19 @@ static void drawNewSegmentButton(UIView *page) {
                 skipToNextDJSegment();
                 return;
             }
-            id service = sDJService;
-            SEL provide = NSSelectorFromString(@"provideJumpableWithControlling:");
-            SEL jump = NSSelectorFromString(@"jumpWithCompletion:");
-            id jumper = sDJJumpable;
-            if (!jumper && [service respondsToSelector:provide]) jumper = ((id (*)(id, SEL, id))objc_msgSend)(service, provide, queuePlayer());
-            if (![jumper respondsToSelector:jump]) return;
-            sPickingSegment = YES;
-            drawNewSegmentButton(sQueuePageView);
-            SGLog(@"queue: New DJ set uses %@ jumpWithCompletion:", NSStringFromClass([jumper class]));
-            // 9.1.90's native completion is void (^)(NSError *). Spotify owns
-            // fetching and playback. DJPick.x waits for a real landing before finishing.
-            void (^complete)(NSError *) = ^(NSError *error) {
-                SGLog(@"queue: New DJ set result: %@", error ?: @"success");
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    sPickingSegment = NO;
-                    if (error) {
-                        [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Couldn't change DJ set"
-                                           detail:error.localizedDescription symbol:@"exclamationmark.circle"];
-                    }
-                    sSignature = nil;
-                    refreshReaders();
-                    drawNewSegmentButton(sQueuePageView);
-                });
-            };
-            ((void (*)(id, SEL, id))objc_msgSend)(jumper, jump, complete);
+            // Request mode uses the former neutral fallback directly. Do not
+            // dispatch a native jump or hook the request sheet's own button.
+            SGDJPickRequest(queuePlayer(), ^(NSError *error) {
+                if (error && error.code != NSUserCancelledError) {
+                    [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Couldn't change DJ set"
+                                       detail:error.localizedDescription symbol:@"exclamationmark.circle"];
+                }
+            });
         }] forControlEvents:UIControlEventTouchUpInside];
         objc_setAssociatedObject(page, &kNewSegmentButton, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
-    config.title = sPickingSegment ? @"Changing…" : @"New DJ set";
+    config.title = sPickingSegment ? @"Changing…" : @"Next DJ Set";
     config.image = [UIImage systemImageNamed:@"forward.end.fill"];
     config.imagePadding = 6;
     config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold];
@@ -1785,8 +1752,8 @@ static void drawNewSegmentButton(UIView *page) {
     };
     button.configuration = config;
     BOOL requestMode = SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip) == SGDJQueueSetModeRequest;
-    button.accessibilityHint = requestMode ? @"Ask DJ to pick a new set" : @"Skip to the next DJ segment";
-    button.enabled = !sPickingSegment && !sHandingOver && (!requestMode || sDJJumpable != nil || sDJService != nil);
+    button.accessibilityHint = requestMode ? @"Ask DJ for a new set using a neutral suggestion" : @"Skip to the next DJ segment";
+    button.enabled = !sPickingSegment && !sHandingOver && (!requestMode || [queuePlayer() respondsToSelector:NSSelectorFromString(@"signal:parameters:options:loggingParams:")]);
     CGRect editFrame = [edit convertRect:edit.bounds toView:host];
     CGSize size = [button sizeThatFits:CGSizeMake(200, 44)];
     CGFloat available = CGRectGetMinX(editFrame) - 108;
@@ -2268,7 +2235,7 @@ static SPTPlayerTrack *lastOfSegment(SPTPlayerState *state) {
     return last;
 }
 
-// New DJ set: skip through the *player's* current segment instead of asking
+// Next DJ Set: skip through the *player's* current segment instead of asking
 // CompositeJumpable for a different playlist. In Spotify 9.1.90 the core only
 // prepares the next page after reaching the last song of the current page.
 // Keep the transition silent while the core moves to that anchor and publishes
@@ -2445,7 +2412,7 @@ static void skipToNextDJSegment(void) {
     sHandOverAnchorUID = anchor ? historyUID(anchor) : historyUID(state.track);
     sHandingOver = YES; // disable the automatic end-of-segment bridge
     SGPlayerSetDJTransitionMuted(YES);
-    SGLog(@"queue: New DJ set in skip mode: moving across the segment without sending a request");
+    SGLog(@"queue: Next DJ Set in skip mode: moving across the segment without sending a request");
     if (!state.isPaused) [(id<SPTPlayer>)queuePlayer() pause:nil];
     sNextSegmentTimer = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
         pollNextSegmentSkip(timer);
