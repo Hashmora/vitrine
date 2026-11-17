@@ -1,0 +1,27 @@
+# DJ queue regression checks
+
+Run `python3 harness/dj-queue/check.py` on macOS. It compiles the production
+history and spent-track decision functions from `DJQueue.x` against Foundation
+fakes, then checks passed rows, queue-copy identities, removed rows, previous and
+next history entries, and skipping spent context tracks before their audio starts.
+
+Spotify 9.1.90, iOS 26.3, redesigned look, isolated **Vitrine DJ** simulator
+(driver port 8087), 2026-11-17:
+
+- The original five tracks were Another One Bites The Dust, I Feel It Coming,
+  Billie Jean, Left and Right, and Cool. Tapping Billie Jean and then Cool,
+  Previous visited Left and Right → Billie Jean → I Feel It Coming →
+  Another One Bites The Dust. Next visited the same four tracks forwards.
+- Previous was tested after seeking to zero, retaining Spotify's behavior that
+  a press beyond the first three seconds restarts the current track.
+
+The simulator checks verify track transitions and UI state. They do not measure
+audio samples or certify phone audio behavior.
+
+The production asynchronous handover is also exercised with a fake core that delays
+pause/skip acknowledgements and resumes on skip, as Spotify 9.1.90 does. The real
+output gate is checked on two PCM buffers, then released without changing samples.
+The lossless handoff app completed on the isolated simulator with `RESULT failures=0`.
+Its player-observer stub was updated for the current SpeedPitch subscription, and
+its recovery assertion now waits for the recovery callback rather than overtaking
+it on a busy simulator.

@@ -494,6 +494,16 @@ static BOOL hasSound(Format *format, AudioUnitRenderActionFlags flags, const Aud
 static const double kGainSlew = 0.5;
 static atomic_uint sg_gainBits;
 static float sg_gainNow = 1;
+static atomic_bool sg_djTransitionMuted;
+void SGPlayerSetDJTransitionMuted(BOOL muted) { atomic_store(&sg_djTransitionMuted, muted); }
+static void muteDJTransition(AudioUnitRenderActionFlags *flags, AudioBufferList *data) {
+    if (!atomic_load(&sg_djTransitionMuted)) return;
+    for (UInt32 b = 0; b < data->mNumberBuffers; b++) {
+        AudioBuffer *buffer = &data->mBuffers[b];
+        if (buffer->mData) memset(buffer->mData, 0, buffer->mDataByteSize);
+    }
+    *flags |= kAudioUnitRenderAction_OutputIsSilence;
+}
 
 // Scales a finished buffer, in the hardware's format, ramping each frame from where the last buffer left off.
 // Integers scale as they are, so a fixed point format needs no conversion.
@@ -531,13 +541,14 @@ static OSStatus rendered(void *refCon, AudioUnitRenderActionFlags *flags, const 
     if (!sourceMetered && hasSound(&output->hardware, *flags, data)) atomic_store_explicit(&output->loudAt, mach_absolute_time(), memory_order_relaxed);
     if (output != music()) return noErr;
     applyGain(&output->hardware, flags, frames, data);
-    if (atomic_load(&output->taken) || !atomic_load(&sg_engaged)) return noErr;
+    if (atomic_load(&output->taken) || !atomic_load(&sg_engaged)) { muteDJTransition(flags, data); return noErr; }
     atomic_store(&output->busy, true);
     SGTimePitch *unit = atomic_load(&sg_inPlace);
     if (atomic_load(&sg_engaged) && output == music() && unit && SGTimePitchSampleRate(unit) == rateOf(&output->hardware)) {
         shiftInPlace(unit, &output->hardware, flags, frames, data);
     }
     atomic_store(&output->busy, false);
+    muteDJTransition(flags, data);
     return noErr;
 }
 

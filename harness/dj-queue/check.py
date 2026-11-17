@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Compile the production DJ history and end-of-track decisions against small Foundation fakes."""
+from pathlib import Path
+import subprocess, tempfile
+source = (Path(__file__).resolve().parents[2] / 'tweak/Sources/Shared/Player/DJQueue.x').read_text()
+def function(name):
+    import re
+    match = re.search(r'^(?:static )?[^\n]+\b' + name + r'\([^\n]*\) \{', source, re.M)
+    assert match, name
+    start = match.start(); pos = match.end(); depth = 1
+    while depth:
+        if source[pos] == '{': depth += 1
+        if source[pos] == '}': depth -= 1
+        pos += 1
+    return source[start:pos]
+prelude = r'''
+#import <Foundation/Foundation.h>
+#include <assert.h>
+#import <dispatch/dispatch.h>
+@interface SPTPlayerTrack : NSObject
+@property NSString *URI, *UID, *provider;
+@property NSDictionary *metadata;
+@end
+@implementation SPTPlayerTrack @end
+@interface SPTPlayerState : NSObject
+@property SPTPlayerTrack *track;
+@property NSArray<SPTPlayerTrack *> *future, *reverse;
+@property NSString *contextURI;
+@property BOOL isPaused;
+@end
+@implementation SPTPlayerState @end
+static NSString *SGURIString(id value) { return value; }
+static NSString *kCardSuffix = @"-card";
+static NSMutableDictionary *sCopyOf;
+static NSMutableArray<SPTPlayerTrack *> *sPlayed;
+static NSMutableSet *sHidden, *sPassed, *sPlayedBefore, *sVoiced;
+static BOOL sDJActive = YES, sOrdered, sHandingOver, sAdvancing, sPlayingMoved;
+static SPTPlayerTrack *wanted;
+static BOOL isDJSession(SPTPlayerState *state) { return YES; }
+static SPTPlayerTrack *wantedNext(void) { return wanted; }
+static SPTPlayerTrack *originalOf(SPTPlayerTrack *track) { return track; }
+'''
+names = ['baseUID','historyUID','sameGroup','isDJTrack','inDJ','isHidden','wasPlayed','staysHidden','playedIndex','playedBefore','playedAfter','isCoreQueued','coreNextUnplayed','isUnspent','reachableInFuture','skipPastSpent']
+tests = r'''
+static SPTPlayerTrack *song(NSString *uid) {
+    SPTPlayerTrack *t = [SPTPlayerTrack new]; t.UID = uid;
+    t.URI = [@"spotify:track:" stringByAppendingString:uid];
+    t.provider = @"context"; t.metadata = @{@"page_instance_id": @"segment"}; return t;
+}
+int main(void) { @autoreleasepool {
+    SPTPlayerTrack *one = song(@"1"), *two = song(@"2"), *three = song(@"3"), *four = song(@"4"), *five = song(@"5");
+    SPTPlayerTrack *copy = song(@"q3"); copy.URI = three.URI; copy.provider = @"queue";
+    sCopyOf = [@{@"q3": @{@"uid": @"3", @"uri": three.URI}} mutableCopy];
+    sPlayed = [@[one,two,three,four,five] mutableCopy];
+    sHidden = [NSMutableSet setWithArray:@[@"2",@"3",@"4"]];
+    sPassed = [NSMutableSet setWithArray:@[@"2",@"4"]];
+    sPlayedBefore = [NSMutableSet set]; sVoiced = [NSMutableSet set];
+    SPTPlayerState *state = [SPTPlayerState new]; state.reverse = @[one,copy]; state.track = five;
+    assert(playedBefore(state) == four); state.track = four;
+    assert(playedBefore(state) == copy); state.track = copy;
+    assert(playedBefore(state) == two); state.track = two;
+    assert(playedBefore(state) == one); state.track = one;
+    assert(playedBefore(state) == nil);
+    // A removed song is skipped, while rows passed by a tap remain navigable.
+    [sPassed removeObject:@"4"]; state.track = five;
+    assert(playedBefore(state) == copy); [sPassed addObject:@"4"];
+    assert(playedAfter(copy) == four);
+    assert(!staysHidden(three));
+    // Last reordered track: its stale context next must be skipped before it sounds.
+    state.track = five; SPTPlayerTrack *fresh = song(@"6"); state.future = @[three,fresh];
+    sOrdered = YES; assert(skipPastSpent(state) == fresh);
+    // Same decision when the last track itself is a queue copy.
+    SPTPlayerTrack *copyFive = song(@"q5"); copyFive.URI = five.URI; copyFive.provider = @"queue";
+    sCopyOf[@"q5"] = @{@"uid":@"5", @"uri":five.URI}; state.track = copyFive;
+    assert(skipPastSpent(state) == fresh);
+    // Preserve an intentional walk forwards through history and tracks queued by hand.
+    state.track = copy; assert(skipPastSpent(state) == nil);
+    state.track = five; wanted = fresh; assert(skipPastSpent(state) == fresh); wanted = song(@"not-reachable"); assert(skipPastSpent(state) == nil); wanted = nil;
+    SPTPlayerTrack *hand = song(@"qHand"); hand.provider = @"queue";
+    state.future = @[hand,three,fresh]; assert(skipPastSpent(state) == nil);
+    puts("DJ history and spent-track decisions: PASS");
+} }
+'''
+with tempfile.TemporaryDirectory(prefix='vitrine-dj-check-') as tmp:
+    path = Path(tmp) / 'check.m'
+    saved_source = source
+    source = (Path(__file__).resolve().parents[2] / 'tweak/Sources/Shared/Player/SpeedPitch.x').read_text()
+    mute_code = r'''
+#import <stdatomic.h>
+typedef uint32_t AudioUnitRenderActionFlags;
+typedef struct { uint32_t mNumberChannels, mDataByteSize; void *mData; } AudioBuffer;
+typedef struct { uint32_t mNumberBuffers; AudioBuffer mBuffers[2]; } AudioBufferList;
+#define kAudioUnitRenderAction_OutputIsSilence 1
+static atomic_bool sg_djTransitionMuted;
+''' + function('muteDJTransition') + function('SGPlayerSetDJTransitionMuted')
+    source = saved_source
+    handover = mute_code + r'''
+@protocol SPTPlayer <NSObject>
+- (id)pause:(id)options;
+- (id)resume:(id)options;
+@end
+static SPTPlayerState *testState;
+static SPTPlayerTrack *landingTarget;
+static NSMutableArray *commands;
+static NSString *sHandOverAnchorUID;
+static double kSegmentWait = .5;
+
+#define SGLog(...) ((void)0)
+static SPTPlayerState *SGPlayerState(void) { return testState; }
+static NSString *trackKey(SPTPlayerTrack *t) { return t.UID; }
+@interface TestPlayer : NSObject <SPTPlayer> @end
+@implementation TestPlayer
+- (id)pause:(id)options {
+    [commands addObject:@"pause requested"];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, .1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        testState.isPaused = YES; [commands addObject:@"pause acknowledged"];
+    }); return @YES;
+}
+- (id)resume:(id)options {
+    assert(testState.track == landingTarget);
+    testState.isPaused = NO; [commands addObject:@"resume"];
+    return @YES;
+}
+@end
+static id queuePlayer(void) { static TestPlayer *p; if (!p) p = [TestPlayer new]; return p; }
+static BOOL queueInCore(id t) { return YES; }
+static void hideTrack(id t, id reason) {}
+static void refreshReaders(void) {}
+static void noteCopy(id a, id b) {}
+static id skipForward(SPTPlayerTrack *t) {
+    assert(atomic_load(&sg_djTransitionMuted)); if (commands.count == 2) assert(testState.isPaused); [commands addObject:t == landingTarget ? @"skip destination" : @"skip anchor"];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, .08 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        testState.track = t; testState.future = @[landingTarget]; testState.isPaused = NO;
+    }); return @YES;
+}
+''' + function('lastOfSegment') + function('finishDJLanding') + function('landAtSegmentEnd')
+    tests = tests.replace('    puts("DJ history and spent-track decisions: PASS");', r'''
+    float left[8], right[8]; for (int i=0;i<8;i++) left[i]=right[i]=.25;
+    AudioBufferList buffers = {2, {{1,sizeof left,left},{1,sizeof right,right}}};
+    AudioUnitRenderActionFlags flags = 0;
+    SGPlayerSetDJTransitionMuted(YES); muteDJTransition(&flags,&buffers);
+    assert(flags & kAudioUnitRenderAction_OutputIsSilence);
+    for (int i=0;i<8;i++) assert(left[i]==0 && right[i]==0);
+    SGPlayerSetDJTransitionMuted(NO); left[0]=.25; flags=0;
+    muteDJTransition(&flags,&buffers); assert(left[0]==.25 && flags==0);
+    testState = state; state.track = five; state.contextURI = @"DJ";
+    state.future = @[three]; state.isPaused = NO;
+    landingTarget = song(@"new-segment"); commands = [NSMutableArray array];
+    sHandingOver = NO; landAtSegmentEnd(nil);
+    NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:3];
+    while (sHandingOver && limit.timeIntervalSinceNow > 0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    assert(!sHandingOver && !atomic_load(&sg_djTransitionMuted) && !state.isPaused && state.track == landingTarget);
+    NSArray *expected = @[@"pause requested", @"pause acknowledged", @"skip anchor", @"skip destination", @"resume"];
+    assert([commands isEqual:expected]);
+    puts("DJ history, spent-track decisions and asynchronous handover: PASS");''')
+    path.write_text(prelude + '\n'.join(function(n) for n in names) + handover + tests)
+    subprocess.run(['xcrun','clang','-fobjc-arc','-Werror','-Wno-unused-function','-framework','Foundation',str(path),'-o',str(Path(tmp)/'check')],check=True)
+    subprocess.run([str(Path(tmp)/'check')],check=True)
