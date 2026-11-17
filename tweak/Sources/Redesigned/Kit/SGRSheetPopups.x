@@ -304,6 +304,44 @@ static void pickerChrome(UIViewController *controller) {
 // Share_MenuImpl.NativeShareMenuViewController, *not* ShareMenuViewControllerV2.
 // The old hook therefore never ran. Attach the queue-style glass to the
 // real Navigation sheet before its first visible frame, then darken its pane.
+static char kNativeShareActionGlass, kNativeShareActionDim;
+
+// The five "Search / Create group / (you) / Copy link / More" actions
+// are drawn by SwiftUI, not UILabel/Encore buttons. The device tree shows
+// each solid round background as a 56x56 _UIShapeHitTestingView inside the
+// on-platform action section. Glass that backing directly, leaving the
+// adjacent SwiftUI glyphs and accessibility actions untouched.
+static BOOL inNativeShareActions(UIView *view) {
+    for (UIView *v = view.superview; v; v = v.superview) {
+        NSString *name = NSStringFromClass(v.class);
+        if ([name containsString:@"Share_OnPlatformSectionImpl"] &&
+            [name containsString:@"OnPlatformSectionElement"]) return YES;
+        if ([name containsString:@"OffPlatformSectionElement"]) return NO;
+    }
+    return NO;
+}
+
+static void shareActionGlass(UIView *circle) {
+    if (!inNativeShareActions(circle) || fabs(circle.bounds.size.width - 56) > 2 ||
+        fabs(circle.bounds.size.height - 56) > 2) return;
+    UIView *pane = SGRGlassFlatBox(circle, &kNativeShareActionGlass, NO);
+    if (!pane) return;
+    SGRDarkenGlass(pane, &kNativeShareActionDim, 28, 0.38);
+    circle.backgroundColor = UIColor.clearColor;
+    circle.layer.backgroundColor = NULL;
+    SGRHoldClear(circle);
+}
+
+// The sheet's view is built before the inner controller finishes its first
+// layout. Glass the root ElementView as soon as it is attached so the first
+// Share presentation does not briefly show Spotify's grey/white sheet.
+static void shareElementChrome(UIView *view) {
+    UIView *pane = SGRSheetPaneOf(view);
+    if (!pane) return;
+    UIView *glass = SGRGlassSheetChrome(view);
+    if (glass) SGRDimSheetGlass(glass, 0.52);
+}
+
 static void shareMenuChrome(UIViewController *controller) {
     UIView *root = controller.viewIfLoaded;
     if (!root) return;
@@ -518,6 +556,11 @@ static void connectMenuChrome(UIViewController *controller) {
     SGRPassSwiftController(@"Tome_PageLoaderViewImpl", @"SPTMusicClientPageLoaderView", ^(UIViewController *c) { loaderChrome(c); });
     SGRPassSwiftController(@"Share_MenuImpl", @"ShareMenuViewControllerV2", ^(UIViewController *c) { glassNamed(c, @"ShareMenuSheetView"); });
     SGRPassSwiftController(@"Share_MenuImpl", @"NativeShareMenuViewController", ^(UIViewController *c) { shareMenuChrome(c); });
+    // Explicit current-build class names are grounded in the Share view tree.
+    Class shareElement = NSClassFromString(@"_TtGC13Element_UIKit11ElementViewVV14Share_MenuImpl16ShareMenuElement5PropsVS1_14ShareMenuModelOS1_14ShareMenuEvent_");
+    if (shareElement) SGRPassView(shareElement, ^(UIView *v) { shareElementChrome(v); });
+    Class actionCircle = NSClassFromString(@"_TtC7SwiftUIP33_A34643117F00277B93DEBAB70EC0697122_UIShapeHitTestingView");
+    if (actionCircle) SGRPassView(actionCircle, ^(UIView *v) { shareActionGlass(v); });
     SGRPassView(SGRSwiftClass(@"Share_MenuImpl", @"BottomAutoScrollingScrollView"), ^(UIView *view) { shareScrollChrome(view); });
     Class saveIn = SGRSwiftClass(@"PlaylistCuration_AddToPlaylistImpl", @"ATPContainerViewController");
     if (saveIn) {
