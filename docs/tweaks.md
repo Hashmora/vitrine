@@ -803,10 +803,12 @@ Spotify's own through.
   Remove sends the core only its own queue, and nothing when that is empty. Move up puts the ticked rows first in the
   user's order, below the "Up next" card on top. The toast's Undo puts back what Edit removed. The X button clears the
   ticks.
-- **Back:** past the removed and played tracks in the core's history, to the nearest one that is neither. When the
-  history has only such tracks, the step goes to the last visible played track by its uid. Should the core still land
-  on one, the player goes back to the track it came from, not on. After a step back, the tracks that played after it
-  come again in their order.
+- **Back:** follows the session's logical track history, including the rows passed by tapping a later song.
+  For example, tapping through 1, 3 and 5 preserves 5–4–3–2–1 on Previous. A track played from a queue copy
+  has its original DJ identity in that history, and the core's retained instance is used when available.
+  A paused landing used to load the next segment is not a listened-to track. A step back is not overridden
+  by reorder enforcement; after it, Next walks forwards through the same history. Past the first three seconds,
+  Spotify's restart-current-track behavior is retained. Checked by `harness/dj-queue/check.py`.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
   future as it was), so the order is kept here and the player is held to it. A track the core would come to first is
   skipped to. Any other is queued (the core's own copy) and played from the queue, so the core keeps its place before
