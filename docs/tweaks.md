@@ -817,6 +817,12 @@ Spotify's own through.
   so a song cannot open the output gate as if it were its voice. The player's song and clock retain the last
   real snapshot while the core visits an internal anchor. `harness/dj-queue/check.py` exercises delayed command acknowledgements,
   Spotify's automatic resume on skip, and zeroing/releasing the independent output gate.
+- **Logical last song:** before entering a reordered final song whose physical context still has spent items
+  after it, the context visits its anchor and obtains the next segment. An existing owned queued copy is
+  reused, and the same preparation runs for Next and automatic playback. The session's clock watcher remains
+  active when future/order updates arrive after the track callback, so an empty transient snapshot does not
+  disable automatic advancement. The player retains its full pre-handover state through the internal pause
+  acknowledgement, then the queue and player are refreshed with the confirmed destination.
 - **Artwork:** Home and Recents use the DJ's public cover (the DJ card's recorded `image_url`), cached locally.
   Each look owns its drawing hooks. Reused Library cells are never a source of another item's artwork.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
