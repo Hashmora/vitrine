@@ -134,6 +134,11 @@ static SGRHomeKind gridKind(UICollectionView *grid) {
 // The previews (a video or a playlist playing as Home scrolls) are medium density cards, on their own or under a
 // heading; the song suggestions are Spotify's content evaluation carousel. Each stays only when asked for.
 static SGRHomeKind optionalKind(NSString *name) {
+    // DJ is its own Home section, even when Spotify exposes its MDC view/element
+    // directly instead of the older Discovery_DJElementKit wrapper. Preview hiding
+    // must not suppress its transcript, animation or original navigation action.
+    if ([name containsString:@"Discovery_DJElementKit"] || [name containsString:@"DJMDCElement"] ||
+        [name containsString:@"DJMDCView"]) return SGHidden(SGRKeyHomeHideDJ) ? SGRHomeKindDrop : SGRHomeKindKeep;
     if ([name containsString:@"MediumDensityCard"] || [name containsString:@"Discovery_Preview"]) {
         return SGHidden(SGRKeyHomePreviews) ? SGRHomeKindKeep : SGRHomeKindDrop;
     }
@@ -141,11 +146,22 @@ static SGRHomeKind optionalKind(NSString *name) {
     return SGRHomeKindDrop;
 }
 
+// Spotify can wrap the DJ element in ordinary stacks/views. Recognize the original
+// card before treating its container as an optional preview. Nested shelves are separate sections.
+static BOOL containsDJCard(UIView *view) {
+    NSString *name = NSStringFromClass(view.class);
+    if ([name containsString:@"Discovery_DJElementKit"] || [name containsString:@"DJMDCElement"] ||
+        [name containsString:@"DJMDCView"]) return YES;
+    if ([view isKindOfClass:UICollectionView.class]) return NO;
+    for (UIView *child in view.subviews) if (containsDJCard(child)) return YES;
+    return NO;
+}
+
 // A LazyElementView names the element it will hold before it holds it.
 static SGRHomeKind stackKind(UIStackView *stack) {
     for (UIView *part in stack.arrangedSubviews) {
         NSString *name = NSStringFromClass(part.class);
-        if ([name containsString:@"Discovery_DJElementKit"]) return SGHidden(SGRKeyHomeHideDJ) ? SGRHomeKindDrop : SGRHomeKindKeep;
+        if (containsDJCard(part)) return SGHidden(SGRKeyHomeHideDJ) ? SGRHomeKindDrop : SGRHomeKindKeep;
         SGRHomeKind optional = optionalKind(name);
         if (optional == SGRHomeKindKeep) return optional;
     }
@@ -176,6 +192,7 @@ static SGRHomeKind kindOf(UIView *content, NSString **rootName) {
     UIView *root = content.subviews.firstObject.subviews.firstObject;
     if (!root) return SGRHomeKindPending;
     *rootName = NSStringFromClass(root.class);
+    if (containsDJCard(root)) return SGHidden(SGRKeyHomeHideDJ) ? SGRHomeKindDrop : SGRHomeKindKeep;
     static Class shelf;
     if (!shelf) shelf = NSClassFromString(@"_TtC16Home_CarouselKit29TouchCancellingCollectionView");
     if (shelf && [root isKindOfClass:shelf]) return shelfKind(root);
