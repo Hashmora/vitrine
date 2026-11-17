@@ -7,6 +7,7 @@
 
 static char kShareSearch, kShareRow, kShareInvite, kGroupName, kCancel;
 static char kMoreAction, kCopyAction, kSelfAction, kSearchAction;
+static char kShareInnerPrepared, kShareOuterPrepared;
 
 // These actions are not all in the same Encore hierarchy: some are icon
 // buttons, and others are tappable ListRow backings. Select the actual hit
@@ -71,20 +72,30 @@ static void shareGlass(UIViewController *c) {
     if (!pane) pane = c.navigationController.view.superview;
     UIView *outer = SGRSheetPaneOf(root);
     if (outer && pane && pane != outer) {
-        // When Share with is inside NavigationUI's sheet, that outer pane
-        // already has the queue's glass. The previous pass installed a second
-        // glass pane on the embedded SPNavigationController's backing view;
-        // the two specular top rims read as a doubled highlight.
-        SGRRemoveSheetGlass(pane);
+        // The sheet owns one glass pane. In Round 7 the inner navigation
+        // container's glass was torn down on EVERY viewDidLayoutSubviews,
+        // restoring its solid fill in between frames: light/dark flashing.
+        // Strip it once, and keep that same container permanently clear.
+        if (!objc_getAssociatedObject(pane, &kShareInnerPrepared)) {
+            SGRRemoveSheetGlass(pane);
+            objc_setAssociatedObject(pane, &kShareInnerPrepared, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
         pane.backgroundColor = UIColor.clearColor;
         pane.layer.backgroundColor = NULL;
         SGRHoldClear(pane);
-        UIView *outerGlass = SGRGlassSheetChrome(outer);
-        if (outerGlass) SGRDimSheetGlass(outerGlass, 0.52);
-    } else if (pane && pane.bounds.size.width >= 300 && pane.bounds.size.height < UIScreen.mainScreen.bounds.size.height) {
-        // Standalone Share with keeps its own single glass sheet.
-        UIView *sheetGlass = SGRGlassSheetView(pane);
-        if (sheetGlass) SGRDimSheetGlass(sheetGlass, 0.52);
+        if (!objc_getAssociatedObject(outer, &kShareOuterPrepared)) {
+            UIView *glass = SGRGlassSheetChrome(outer);
+            if (glass) SGRDimSheetGlass(glass, 0.52);
+            objc_setAssociatedObject(outer, &kShareOuterPrepared, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    } else if (!outer && pane && root.window && pane.bounds.size.width >= 300 &&
+               pane.bounds.size.height < UIScreen.mainScreen.bounds.size.height &&
+               !objc_getAssociatedObject(pane, &kShareInnerPrepared)) {
+        // A truly standalone share sheet is glassed once, only after its
+        // presentation hierarchy exists (never while UIKit is reparenting).
+        UIView *glass = SGRGlassSheetView(pane);
+        if (glass) SGRDimSheetGlass(glass, 0.52);
+        objc_setAssociatedObject(pane, &kShareInnerPrepared, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     // This modal owns an SPNavigationBar and a separate blurred backing strip;
     // hiding _UIBarBackground alone leaves that strip visible.
