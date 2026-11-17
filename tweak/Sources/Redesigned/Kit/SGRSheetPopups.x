@@ -83,6 +83,7 @@ static NSArray<NSString *> *contentMarkers(void) {
              @"YourLibrary_YourLibraryXImpl25BottomSheetViewController",
              @"AIPlaylist_PlaylistCreationPageImpl25BottomSheetViewController",
              @"ReinventFree_DownloadUpsellPageImpl",
+             @"Share_MenuImpl",
              @"ContextualShuffle_UpsellImpl",
              @"Upsells_SheetPageImpl",
              @"EReader_EReaderPageImpl",
@@ -299,6 +300,37 @@ static void pickerChrome(UIViewController *controller) {
     glassNamed(controller, @"PlayModePickerView");
 }
 
+// On Spotify 9.1.90 the track's Share action opens
+// Share_MenuImpl.NativeShareMenuViewController, *not* ShareMenuViewControllerV2.
+// The old hook therefore never ran. Attach the queue-style glass to the
+// real Navigation sheet before its first visible frame, then darken its pane.
+static void shareMenuChrome(UIViewController *controller) {
+    UIView *root = controller.viewIfLoaded;
+    if (!root) return;
+    UIView *pane = SGRSheetPaneOf(root);
+    if (!pane) return;
+    UIView *glass = SGRGlassSheetChrome(root);
+    if (glass) SGRDimSheetGlass(glass, 0.52);
+    UIView *scroller = sheetNamed(root, @"BottomAutoScrollingScrollView", 5);
+    if (scroller) {
+        if (scroller.backgroundColor && CGColorGetAlpha(scroller.backgroundColor.CGColor) > 0.05)
+            scroller.backgroundColor = UIColor.clearColor;
+        if (scroller.opaque) scroller.opaque = NO;
+    }
+}
+
+// The Share content is built lazily on first invocation. Its own scroll view
+// can arrive after the controller's viewWillAppear without another controller
+// layout: give the sheet a first-frame pass as soon as this view is attached.
+static void shareScrollChrome(UIView *scroll) {
+    UIView *pane = SGRSheetPaneOf(scroll);
+    if (!pane || !scroll.window) return;
+    UIView *glass = SGRGlassSheetChrome(scroll);
+    if (glass) SGRDimSheetGlass(glass, 0.52);
+    scroll.backgroundColor = UIColor.clearColor;
+    if (scroll.opaque) scroll.opaque = NO;
+}
+
 #pragma mark - the library's Sort by
 
 // The Recents button opens SPTSortingFilteringPickerViewController as a card under its own presentation
@@ -485,6 +517,8 @@ static void connectMenuChrome(UIViewController *controller) {
     SGRPassSwiftController(@"Ratings_CommonImpl", @"RatingsAndReviewsRatePodcastViewController", ^(UIViewController *c) { rateChrome(c); });
     SGRPassSwiftController(@"Tome_PageLoaderViewImpl", @"SPTMusicClientPageLoaderView", ^(UIViewController *c) { loaderChrome(c); });
     SGRPassSwiftController(@"Share_MenuImpl", @"ShareMenuViewControllerV2", ^(UIViewController *c) { glassNamed(c, @"ShareMenuSheetView"); });
+    SGRPassSwiftController(@"Share_MenuImpl", @"NativeShareMenuViewController", ^(UIViewController *c) { shareMenuChrome(c); });
+    SGRPassView(SGRSwiftClass(@"Share_MenuImpl", @"BottomAutoScrollingScrollView"), ^(UIView *view) { shareScrollChrome(view); });
     Class saveIn = SGRSwiftClass(@"PlaylistCuration_AddToPlaylistImpl", @"ATPContainerViewController");
     if (saveIn) {
         SGRPassController(saveIn, ^(UIViewController *c) { saveInChrome(c); });
