@@ -19,7 +19,7 @@ The simulator checks verify track transitions and UI state. They do not measure
 audio samples or certify phone audio behavior.
 
 The production asynchronous handover is also exercised with a fake core that delays
-pause/skip acknowledgements and resumes on skip, as Spotify 9.1.90 does. The real
+skip acknowledgements and resumes on skip, as Spotify 9.1.90 does. The real
 output gate is checked on two PCM buffers, then released without changing samples.
 The lossless handoff app completed on the isolated simulator with `RESULT failures=0`.
 Its player-observer stub was updated for the current SpeedPitch subscription, and
@@ -72,6 +72,15 @@ The existing early-outro bridge covered only an *adjacent* repeat of the
 current song and was triggered by the deadline watcher, not by Next. The
 bridge now traverses other already-played/hidden context originals as well,
 and the physical Next hook invokes it before Spotify can play them. The
-bridge waits for pause acknowledgement before the targeted skip and keeps
-audio muted until landing is confirmed. The regression fixture also checks
+bridge issues targeted skips under the independent render-thread mute without
+pausing the Spotify transport; it keeps audio muted until landing is confirmed. The regression fixture also checks
 that an unplayed DJ song, user-queued song or pending order is never skipped.
+
+Follow-up (transport flicker): a segment-ending reorder used to call Pause, wait for
+acknowledgement, then skip the anchor and Resume. The muted output gate already
+blocks playback of those unwanted originals, so the reordered-track handovers
+now perform the targeted skips with playback running and acknowledge the
+landing before unmuting. The regression fixture asserts no `pause requested`
+command for either a logical-last-song bridge or the spent-original-to-outro
+bridge. If Spotify has not yet published the next page, audio can still be
+silent during the wait: this does not guarantee a gapless DJ transition.

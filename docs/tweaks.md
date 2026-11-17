@@ -795,8 +795,9 @@ Spotify's own through.
   cap of 80 the core still gave one segment (9.1.90): the next is made when the core comes to the last track of this
   one. The core asks for it itself, with no context page from the app (no `play`, `updateContext` or
   `updateContextPage`), so it cannot be asked for earlier. With nothing of a segment left but removed or played
-  tracks, the player is paused 0.7 s before the end, skipped to the segment's last, then to the next segment's first
-  once it has come (up to 6 s), and resumed, so nothing removed or played sounds. Next pressed then does the same at
+  tracks, the output is muted 0.7 s before the end while the player skips to the segment's last item, then to the
+  next segment's first once it has come (up to 6 s). These internal skips do not issue Pause/Play commands, so the
+  transport stays playing; audio may still be briefly silent while the next DJ page loads. Next pressed then does the same at
   once, and a tap on the segment's last row with removed or played tracks after it in the core's order plays that
   track from the core's queue once the next segment has come (gone to directly, the core made no next segment). The future is read only up to
   `spotify:delimiter`: past it the core repeats the session with other uids.
@@ -810,13 +811,14 @@ Spotify's own through.
 - **Back:** follows the session's logical track history, including the rows passed by tapping a later song.
   For example, tapping through 1, 3 and 5 preserves 5–4–3–2–1 on Previous. A track played from a queue copy
   has its original DJ identity in that history, and the core's retained instance is used when available.
-  A paused landing used to load the next segment is not a listened-to track. A step back is not overridden
+  An internal muted landing used to load the next segment is not a listened-to track. A step back is not overridden
   by reorder enforcement; after it, Next walks forwards through the same history. Past the first three seconds,
   Spotify's restart-current-track behavior is retained. Checked by `harness/dj-queue/check.py`.
 - **Segment transitions:** a spent context track is skipped before its audio starts, including when the next
   segment's card is already available in the user's order. When the core must land on the segment's last item
-  to load more, the local music output is gated independently of the sleep timer's gain. The pause and final
-  destination are acknowledged before the gate opens; Spotify's skip itself can resume playback. The anchor
+  to load more, the local music output is gated independently of the sleep timer's gain. No explicit pause is sent
+  for these reordered-track handovers: the final destination is acknowledged before the gate opens; Spotify's skip
+  itself can resume playback. The anchor
   is not put in the logical history. A song and its outro can share a UID: confirmation checks the physical URI,
   so a song cannot open the output gate as if it were its voice. The player's song and clock retain the last
   real snapshot while the core visits an internal anchor. `harness/dj-queue/check.py` exercises delayed command acknowledgements,
@@ -825,8 +827,8 @@ Spotify's own through.
   after it, the context visits its anchor and obtains the next segment. An existing owned queued copy is
   reused, and the same preparation runs for Next and automatic playback. The session's clock watcher remains
   active when future/order updates arrive after the track callback, so an empty transient snapshot does not
-  disable automatic advancement. The player retains its full pre-handover state through the internal pause
-  acknowledgement, then the queue and player are refreshed with the confirmed destination.
+  disable automatic advancement. The player retains its pre-handover state through the muted skips,
+  then the queue and player are refreshed with the confirmed destination.
 - **Next DJ Set:** the DJ queue and its `Next DJ Set` button beside Edit are both **on by default**
   (Player › DJ: `DJ queue` and `Next DJ Set button`). The nested `Next DJ Set action`
   choice appears only when the queue and button are enabled. Its exclusive choices are
