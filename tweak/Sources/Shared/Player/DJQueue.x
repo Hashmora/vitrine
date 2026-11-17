@@ -894,6 +894,23 @@ static BOOL sameGroup(SPTPlayerTrack *a, SPTPlayerTrack *b) {
     return a && b && [historyUID(a) isEqualToString:historyUID(b)];
 }
 
+// After Previous, the later entries in the logical history are upcoming again, in their
+// listened/passed order. Keep removal and playback bookkeeping intact; this is the visible future.
+static NSArray<SPTPlayerTrack *> *historyFutureRows(SPTPlayerState *state) {
+    NSUInteger at = playedIndex(historyUID(state.track));
+    if (at == NSNotFound) return @[];
+    NSMutableArray<SPTPlayerTrack *> *rows = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (NSUInteger i = at + 1; i < sPlayed.count; i++) {
+        SPTPlayerTrack *track = originalOf(sPlayed[i]);
+        NSString *uid = historyUID(track);
+        if (!isDJTrack(track) || staysHidden(track) || !uid.length || [seen containsObject:uid]) continue;
+        [rows addObject:track];
+        [seen addObject:uid];
+    }
+    return rows;
+}
+
 // The core's queued copy of `track` among the tracks queued by hand that come first in the future (the last such, the
 // one put in latest), and whether any track queued by hand comes after it.
 static SPTPlayerTrack *queuedCopyOf(SPTPlayerTrack *track, SPTPlayerState *state, BOOL *notLast) {
@@ -1475,6 +1492,13 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     }
     for (NSDictionary *entry in sMoved.allValues) if (!isHidden(entry[@"row"])) [shown addObject:entry[@"row"]];
     if (sOrdered) shown = arrangedRows(shown, state);
+    NSArray<SPTPlayerTrack *> *history = historyFutureRows(state);
+    NSMutableSet<NSString *> *historyUIDs = [NSMutableSet set];
+    for (SPTPlayerTrack *t in history) [historyUIDs addObject:historyUID(t)];
+    [shown filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(SPTPlayerTrack *t, id _) {
+        return ![historyUIDs containsObject:historyUID(t)];
+    }]];
+    [shown insertObjects:history atIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, history.count)]];
     // The hand-queued tracks, the DJ's, then whatever else the queue had.
     NSMutableArray<SPTPlayerTrack *> *queued = [NSMutableArray array], *rest = [NSMutableArray array], *injected = [NSMutableArray array];
     // The core's queue names the session again after the delimiter (stand-ins, some with another provider than the
@@ -1482,6 +1506,7 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     // `ahead` already holds, by uri, or one already taken, is not a row of its own.
     NSMutableSet<NSString *> *aheadURIs = [NSMutableSet set], *restKeys = [NSMutableSet set];
     for (SPTPlayerTrack *track in ahead) [aheadURIs addObject:SGURIString(track.URI)];
+    for (SPTPlayerTrack *track in history) [aheadURIs addObject:SGURIString(track.URI)];
     // A track queued by hand is the core's (isCoreQueued: its provider is "queue", or its uid starts with q when it is a
     // DJ track queued again), whichever provider the core gives it.
     NSString *playing = trackKey(state.track);
@@ -2549,16 +2574,21 @@ static void scheduleHandOver(void) {
 // removed or what has played, so the cover list's next cover is the track the player goes to and a skip to it moves the
 // list forward, though the core may step back to it. The mod's own observers, and everything here, read the core's.
 static SPTPlayerState *djLens(SPTPlayerState *state) {
-    if (!sDJActive || (!sOrdered && !sHidden.count) || !NSThread.isMainThread || !isDJSession(state)) return state;
+    if (!sDJActive || !NSThread.isMainThread || !isDJSession(state)) return state;
     NSArray<SPTPlayerTrack *> *raw = state.future;
+    NSArray<SPTPlayerTrack *> *history = historyFutureRows(state);
+    NSMutableSet<NSString *> *historyUIDs = [NSMutableSet set];
+    for (SPTPlayerTrack *t in history) [historyUIDs addObject:historyUID(t)];
     NSMutableArray<SPTPlayerTrack *> *future = [NSMutableArray array];
     NSMutableSet<NSString *> *placed = [NSMutableSet set];
     for (SPTPlayerTrack *t in raw) {
         if (!isCoreQueued(t)) break;
+        if ([historyUIDs containsObject:historyUID(t)]) continue;
         [future addObject:t];
         [placed addObject:trackKey(t)];
     }
-    NSString *current = baseUID(state.track.UID);
+    for (SPTPlayerTrack *t in history) { [future addObject:t]; [placed addObject:trackKey(t)]; }
+    NSString *current = historyUID(state.track);
     BOOL onVoice = [SGURIString(state.track.URI) hasPrefix:@"spotify:media:"];
     if (sOrdered) {
         for (NSString *uid in sOrder) {
@@ -2577,7 +2607,7 @@ static SPTPlayerState *djLens(SPTPlayerState *state) {
         }
     }
     for (SPTPlayerTrack *t in raw) {
-        if ([placed containsObject:trackKey(t)]) continue;
+        if ([placed containsObject:trackKey(t)] || [historyUIDs containsObject:historyUID(t)]) continue;
         NSString *uid = baseUID(t.UID);
         BOOL voice = [SGURIString(t.URI) hasPrefix:@"spotify:media:"];
         if (!isCoreQueued(t) && uid.length && (isHidden(t) || (isDJTrack(t) && wasPlayed(uid)) || (voice && [sVoiced containsObject:uid]))) continue;

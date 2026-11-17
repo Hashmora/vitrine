@@ -40,7 +40,7 @@ static BOOL isDJSession(SPTPlayerState *state) { return YES; }
 static SPTPlayerTrack *wantedNext(void) { return wanted; }
 static SPTPlayerTrack *originalOf(SPTPlayerTrack *track) { return track; }
 '''
-names = ['baseUID','historyUID','sameGroup','isDJTrack','inDJ','isHidden','wasPlayed','staysHidden','playedIndex','playedBefore','playedAfter','isCoreQueued','coreNextUnplayed','isUnspent','reachableInFuture','skipPastSpent']
+names = ['baseUID','historyUID','sameGroup','isDJTrack','inDJ','isHidden','wasPlayed','staysHidden','playedIndex','playedBefore','playedAfter','historyFutureRows','isCoreQueued','coreNextUnplayed','isUnspent','reachableInFuture','skipPastSpent']
 tests = r'''
 static SPTPlayerTrack *song(NSString *uid) {
     SPTPlayerTrack *t = [SPTPlayerTrack new]; t.UID = uid;
@@ -65,6 +65,11 @@ int main(void) { @autoreleasepool {
     [sPassed removeObject:@"4"]; state.track = five;
     assert(playedBefore(state) == copy); [sPassed addObject:@"4"];
     assert(playedAfter(copy) == four);
+    state.track = three; assert(([historyFutureRows(state) isEqualToArray:@[four,five]]));
+    state.track = copy; assert(([historyFutureRows(state) isEqualToArray:@[four,five]]));
+    state.track = one; assert(([historyFutureRows(state) isEqualToArray:@[two,three,four,five]]));
+    [sPassed removeObject:@"4"]; assert(([historyFutureRows(state) isEqualToArray:@[two,three,five]])); [sPassed addObject:@"4"];
+    state.track = five; assert(historyFutureRows(state).count == 0);
     assert(!staysHidden(three));
     // Last reordered track: its stale context next must be skipped before it sounds.
     state.track = five; SPTPlayerTrack *fresh = song(@"6"); state.future = @[three,fresh];
