@@ -69,6 +69,7 @@ static const CGFloat kActionInset = 9;
 static const CGFloat kLabelGap = 16;
 
 static char kGlassKey, kFilmKey, kDimKey, kActionGlassKey, kDressedKey;
+static char kQueueTitleKey, kQueueWidthKey, kDressingKey;
 // The toast on screen, for the tab bar's minimize to move.
 static __weak UIView *sg_snackbar;
 
@@ -94,6 +95,7 @@ static void contentParts(UIView *content, UIView **label, UIView **action) {
     *label = nil;
     *action = nil;
     for (UIView *sub in content.subviews) {
+        if (sub == objc_getAssociatedObject(content, &kQueueTitleKey)) continue;
         if (isActionButton(sub)) *action = sub;
         else if (!*label && [NSStringFromClass(sub.class) containsString:@"Label"]) *label = sub;
     }
@@ -105,6 +107,51 @@ static UILabel *innerLabel(UIView *label) {
         if (!found && [view isKindOfClass:UILabel.class]) found = (UILabel *)view;
     });
     return found;
+}
+
+// Spotify first draws the Queue toast as "Added to" and animates in "Queue"
+// separately. Keep the original button and toast motion, but show its title
+// as one stationary, fully measured label from the first visible pass.
+static UILabel *queueOverlay(UIView *content) {
+    return objc_getAssociatedObject(content, &kQueueTitleKey);
+}
+
+static BOOL dressQueueTitle(UIView *content) {
+    if (!content || isHostingView(content)) return NO;
+    UIView *label = nil, *action = nil;
+    contentParts(content, &label, &action);
+    UILabel *native = innerLabel(label);
+    NSString *text = [native.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *verb = [innerLabel(action).text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    BOOL queue = action && ([verb isEqualToString:@"Open"] || [action.accessibilityLabel isEqualToString:@"Open"]) &&
+                 ([text isEqualToString:@"Added to"] || [text isEqualToString:@"Added to Queue"] ||
+                  [text isEqualToString:@"Added to queue"]);
+    UILabel *overlay = queueOverlay(content);
+    if (!queue) {
+        if (overlay && text.length) {
+            overlay.hidden = YES;
+            label.alpha = 1;
+            objc_setAssociatedObject(content, &kQueueWidthKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        return NO;
+    }
+    if (!overlay) {
+        overlay = [UILabel new];
+        overlay.text = @"Added to Queue";
+        overlay.textColor = UIColor.whiteColor;
+        overlay.numberOfLines = 1;
+        overlay.userInteractionEnabled = NO;
+        overlay.isAccessibilityElement = NO;
+        objc_setAssociatedObject(content, &kQueueTitleKey, overlay, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    overlay.font = native.font ?: [UIFont systemFontOfSize:13];
+    overlay.hidden = NO;
+    if (overlay.superview != content) [content addSubview:overlay];
+    else [content bringSubviewToFront:overlay];
+    [label.layer removeAllAnimations];
+    [native.layer removeAllAnimations];
+    label.alpha = 0;
+    return YES;
 }
 
 // The action's size: its frame once Spotify has laid it out, its word's until then.
@@ -134,7 +181,11 @@ static CGFloat cardWidth(UIView *content, CGFloat maxWidth) {
     CGFloat actionWidth = action ? actionSize(action).width + kActionPadX + kLabelGap : 0;
     CGFloat padRight = trailingPad(action);
     CGFloat room = maxWidth - kPadLeft - padRight - actionWidth;
-    CGFloat labelWidth = label ? labelSize(label, MAX(room, 1)).width : 0;
+    UILabel *fixed = queueOverlay(content);
+    CGFloat labelWidth = fixed && !fixed.hidden
+        ? MIN(ceil([fixed sizeThatFits:CGSizeMake(MAX(room, 1), CGFLOAT_MAX)].width), MAX(room, 1))
+        : label ? labelSize(label, MAX(room, 1)).width : 0;
+    if (fixed && !fixed.hidden) actionWidth = MAX(actionWidth, 48 + kActionPadX + kLabelGap);
     return MIN(kPadLeft + labelWidth + actionWidth + padRight, maxWidth);
 }
 
@@ -157,7 +208,11 @@ static void layoutContent(UIView *content) {
     }
     if (label) {
         CGFloat room = size.width - kPadLeft - padRight - (action ? actionWidth + kActionPadX + kLabelGap : 0);
-        CGSize fit = labelSize(label, MAX(room, 1));
+        UILabel *fixed = queueOverlay(content);
+        CGSize fit = fixed && !fixed.hidden ? [fixed sizeThatFits:CGSizeMake(MAX(room, 1), CGFLOAT_MAX)]
+                                              : labelSize(label, MAX(room, 1));
+        fit.width = MIN(ceil(fit.width), MAX(room, 1));
+        fit.height = ceil(fit.height);
         CGRect frame = CGRectMake(kPadLeft, round((size.height - fit.height) / 2), fit.width, fit.height);
         if (!CGRectEqualToRect(label.frame, frame)) label.frame = frame;
         // Spotify's Encore label keeps its UILabel at the width it was laid out for (342 of a 374pt toast), whatever
@@ -166,6 +221,10 @@ static void layoutContent(UIView *content) {
         CGRect inner = CGRectMake(0, 0, fit.width, fit.height);
         if (text && !CGRectEqualToRect(text.frame, inner)) text.frame = inner;
         if (!label.clipsToBounds) label.clipsToBounds = YES;
+        if (fixed && !fixed.hidden) {
+            [UIView performWithoutAnimation:^{ fixed.frame = frame; fixed.transform = CGAffineTransformIdentity; }];
+            label.alpha = 0;
+        }
     }
 }
 
@@ -208,7 +267,9 @@ static CGFloat hostedCardWidth(UIView *content, CGFloat maxWidth) {
 
 static void dressSnackbar(UIView *snackbar) {
     UIView *card = cardOf(snackbar);
-    if (!card || snackbar.bounds.size.width < 1 || snackbar.bounds.size.height < 1) return;
+    if (!card || snackbar.bounds.size.width < 1 || snackbar.bounds.size.height < 1 ||
+        objc_getAssociatedObject(snackbar, &kDressingKey)) return;
+    objc_setAssociatedObject(snackbar, &kDressingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // Dressed: from here the bare strips beside the card do not take touches (pointInside below).
     if (!objc_getAssociatedObject(snackbar, &kDressedKey)) objc_setAssociatedObject(snackbar, &kDressedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
@@ -221,12 +282,22 @@ static void dressSnackbar(UIView *snackbar) {
     sg_snackbar = snackbar;
     CGFloat maxWidth = snackbar.bounds.size.width - kSideInset * 2;
     BOOL hosted = content && isHostingView(content);
+    BOOL queue = !hosted && dressQueueTitle(content);
     CGFloat width = !content ? maxWidth : hosted ? hostedCardWidth(content, maxWidth) : cardWidth(content, maxWidth);
+    if (queue) {
+        NSNumber *previous = objc_getAssociatedObject(content, &kQueueWidthKey);
+        width = MIN(maxWidth, MAX(width, MAX(previous.doubleValue, 220)));
+        objc_setAssociatedObject(content, &kQueueWidthKey, @(width), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     // By bounds and centre: the card carries a transform below (the minimized tab bar), and a frame set under one is undefined.
     CGRect bounds = CGRectMake(0, 0, width, snackbar.bounds.size.height);
     CGPoint center = CGPointMake(round((snackbar.bounds.size.width - width) / 2) + width / 2, snackbar.bounds.size.height / 2);
-    if (!CGRectEqualToRect(card.bounds, bounds)) card.bounds = bounds;
-    if (!CGPointEqualToPoint(card.center, center)) card.center = center;
+    void (^placeCard)(void) = ^{
+        if (!CGRectEqualToRect(card.bounds, bounds)) card.bounds = bounds;
+        if (!CGPointEqualToPoint(card.center, center)) card.center = center;
+    };
+    if (queue) [UIView performWithoutAnimation:placeCard];
+    else placeCard();
     followNowPlayingBar(snackbar);
     UIView *glass = SGRGlassFloatingCard(card, &kGlassKey, &kFilmKey, kMaxRadius);
     // Dimmed as the tab bar's glass is, so its text stands out over a bright page.
@@ -252,6 +323,7 @@ static void dressSnackbar(UIView *snackbar) {
 
     static dispatch_once_t once;
     dispatch_once(&once, ^{ SGLog(@"toast: glass over a card of %@", NSStringFromCGRect(card.bounds)); });
+    objc_setAssociatedObject(snackbar, &kDressingKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 static void dressAfterSettling(UIView *snackbar) {
@@ -371,7 +443,12 @@ static CGRect heldToCard(UIView *content, CGRect frame) {
 }
 
 - (void)layoutSubviews {
+    dressQueueTitle((UIView *)self);
     %orig;
+    if (dressQueueTitle((UIView *)self)) {
+        UIView *snackbar = ((UIView *)self).superview.superview;
+        if (snackbar.window) dressSnackbar(snackbar);
+    }
     relayoutContent((UIView *)self);
 }
 %end
