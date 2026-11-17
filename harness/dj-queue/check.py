@@ -87,6 +87,24 @@ int main(void) { @autoreleasepool {
     sCopyOf[@"q5"] = @{@"uid":@"5", @"uri":five.URI}; state.track = copyFive;
     assert(skipPastSpent(state) == fresh);
     state.track = five; state.future = @[copyFive,outro,fresh]; assert(repeatedCurrentOutro(state) == outro); state.future = @[three,fresh];
+    // After reorder: the current physical-last song played through a queue
+    // copy, but a different already-played context song comes before its outro.
+    SPTPlayerTrack *spent = song(@"2");
+    state.track = copyFive; state.future = @[spent,five,outro,fresh];
+    assert(repeatedCurrentOutro(state) == outro);
+    // Keep ordinary tracks, user's queued items, and the intended DJ order.
+    sPlayed = [@[one,three,four,five] mutableCopy]; [sHidden removeObject:@"2"];
+    assert(repeatedCurrentOutro(state) == nil); // '2' has not played or been hidden
+    [sHidden addObject:@"2"];
+    assert(repeatedCurrentOutro(state) == outro); // deliberately removed is spent
+    sPlayed = [@[one,two,three,four,five] mutableCopy];
+    SPTPlayerTrack *handAtOutro = song(@"qHand"); handAtOutro.provider = @"queue";
+    state.future = @[handAtOutro,five,outro,fresh]; assert(repeatedCurrentOutro(state) == nil);
+    state.future = @[spent,five,outro,fresh]; wanted = fresh; sOrdered = YES;
+    assert(repeatedCurrentOutro(state) == nil); wanted = nil;
+    state.future = @[outro,fresh]; assert(repeatedCurrentOutro(state) == nil); // natural outro
+    state.future = @[spent,five,outro,fresh]; assert(repeatedCurrentOutro(state) == outro);
+    state.track = five; state.future = @[three,fresh];
     // Preserve an intentional walk forwards through history and tracks queued by hand.
     state.track = copy; assert(skipPastSpent(state) == nil);
     state.track = five; wanted = fresh; assert(skipPastSpent(state) == fresh); wanted = song(@"not-reachable"); assert(skipPastSpent(state) == nil); wanted = nil;

@@ -1031,6 +1031,8 @@ static SPTPlayerTrack *sHandOverDisplayTrack;
 static SPTPlayerState *sHandOverDisplayState;
 static BOOL onlyThisLeft(SPTPlayerState *state, SPTPlayerTrack *target);
 static SPTPlayerTrack *lastLogicalNext(SPTPlayerState *state);
+static SPTPlayerTrack *repeatedCurrentOutro(SPTPlayerState *state);
+static void skipRepeatedCurrentIntoOutro(SPTPlayerTrack *voice);
 
 // `track` has an "Up next" card before it in the core's future that has not been heard (the DJ's words after a track
 // have its uid too, and come after it).
@@ -2150,6 +2152,17 @@ static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
         SPTPlayerTrack *last = lastLogicalNext(SGPlayerState());
         if (last) { id landed = landAtSegmentEnd(last); if (landed) return landed; }
     }
+    if (!track && sDJActive && !sAdvancing && !sHandingOver) {
+        // A reordered segment can end on a queued copy of its physical last
+        // song. Next would otherwise play spent context originals (audibly)
+        // before reaching that song's closing DJ voice. Cross them muted.
+        SPTPlayerTrack *outro = repeatedCurrentOutro(SGPlayerState());
+        if (outro) {
+            SGLog(@"queue: next pressed with spent context songs before the outro; crossing them muted");
+            skipRepeatedCurrentIntoOutro(outro);
+            return @YES;
+        }
+    }
     if (!track && sDJActive && !sAdvancing && !sHandingOver && segmentSpent(SGPlayerState())) {
         id landed = landAtSegmentEnd(nil);
         if (landed) return landed;
@@ -2719,19 +2732,34 @@ static SPTPlayerTrack *skipPastSpent(SPTPlayerState *state) {
     return next && !sameGroup(next, coming) ? next : nil;
 }
 
-// The core may put the context original of the song playing from a queue copy
-// before that song's outro. Group equality must not hide this physical duplicate.
+// The core may put the context original of a song played from its queue back
+// before that song's closing DJ voice. Reordering can leave *other* spent
+// context originals between the queued copy and the voice as well. They must
+// not sound for a moment when Next is pressed or playback reaches the end.
+// Never jump across a still-unplayed DJ track, a card's fresh voice, or an
+// intentional hand-queued song; in those cases the normal player order wins.
 static SPTPlayerTrack *repeatedCurrentOutro(SPTPlayerState *state) {
     SPTPlayerTrack *current = state.track;
     if (!sDJActive || sHandingOver || sAdvancing || sPlayingMoved || !isDJSession(state) ||
-        !isDJTrack(current) || playedAfter(current)) return nil;
-    BOOL duplicate = NO;
+        !isDJTrack(current) || playedAfter(current) || (sOrdered && wantedNext())) return nil;
+    BOOL spentBetween = NO;
     for (SPTPlayerTrack *t in state.future) {
-        if ([SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) return nil;
-        if (isCoreQueued(t) && !sCopyOf[t.UID]) return nil; // preserve tracks queued by the user
-        if (!sameGroup(t, current)) return nil;
-        if (isDJTrack(t)) { duplicate = YES; continue; }
-        if ([SGURIString(t.URI) hasPrefix:@"spotify:media:"]) return duplicate ? t : nil;
+        NSString *uri = SGURIString(t.URI);
+        if ([uri isEqualToString:@"spotify:delimiter"]) return nil;
+        if (isCoreQueued(t) && (!sCopyOf[t.UID] || isUnspent(t))) return nil;
+        if (sameGroup(t, current)) {
+            if (isDJTrack(t)) { spentBetween = YES; continue; }
+            if ([uri hasPrefix:@"spotify:media:"]) return spentBetween ? t : nil;
+            return nil;
+        }
+        if (isUnspent(t)) return nil;
+        // These are only the context originals we have already played or
+        // hidden. A fresh segment cannot be traversed by this shortcut.
+        if (isDJTrack(t) || [uri hasPrefix:@"spotify:media:"]) {
+            spentBetween = YES;
+            continue;
+        }
+        return nil;
     }
     return nil;
 }
@@ -2751,12 +2779,22 @@ static void skipRepeatedCurrentIntoOutro(SPTPlayerTrack *voice) {
     poll = ^{
         SPTPlayerState *now = SGPlayerState();
         if (!isDJSession(now)) { poll = nil; sHandingOver = NO; SGPlayerSetDJTransitionMuted(NO); return; }
-        if (!now.isPaused && ++tries < 40) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), poll);
+        if (!now.isPaused) {
+            if (++tries < 40) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), poll);
+                return;
+            }
+            poll = nil;
+            sHandingOver = NO;
+            sHandOverAnchorUID = nil;
+            sHandOverDisplayTrack = nil;
+            sHandOverDisplayState = nil;
+            SGPlayerSetDJTransitionMuted(NO);
+            SGLog(@"queue: pause for spent context tracks was not confirmed; leaving the player's order alone");
             return;
         }
         poll = nil;
-        SGLog(@"queue: the context repeats the current song before its outro; crossing it muted");
+        SGLog(@"queue: spent context originals precede the closing DJ voice; crossing them muted");
         skipForward(voice);
         finishDJLanding(player, voice, from, YES, YES);
     };

@@ -64,3 +64,14 @@ Native “Let DJ pick” invokes CompositeJumpable.jumpWithCompletion: with
 `void (^)(NSError *)`. Its acknowledgement can precede an HTTP 502 on the playlist
 signal endpoint, leaving playback unchanged. The recovery and new before/after
 checks are documented in `../dj-pick/README.md`.
+
+Reordered DJ segment outro regression (three simulator reproductions, 2026-11-17):
+when a moved track played from a core queue copy, a spent context original
+briefly played again before the physical last song's `spotify:media:` outro.
+The existing early-outro bridge covered only an *adjacent* repeat of the
+current song and was triggered by the deadline watcher, not by Next. The
+bridge now traverses other already-played/hidden context originals as well,
+and the physical Next hook invokes it before Spotify can play them. The
+bridge waits for pause acknowledgement before the targeted skip and keeps
+audio muted until landing is confirmed. The regression fixture also checks
+that an unplayed DJ song, user-queued song or pending order is never skipped.
