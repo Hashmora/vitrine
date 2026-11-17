@@ -7,7 +7,9 @@
 static char kInviteGlass, kInvitePlus;
 
 static void dressInvite(UIView *host) {
-    if (!host.window) return;
+    // The carousel is composed before its drawer is onscreen. Dressing only
+    // after -didMoveToWindow let the first visible frame show Spotify's disc.
+    if (!host) return;
     // The cell and the generic ElementView have different immediate children.
     // Search only their small subtree for the named 72pt Invite Friends item.
     __block UIView *button = nil;
@@ -92,4 +94,11 @@ static void dressInvite(UIView *host) {
     // scrolls, without causing the outer collection cell another layout pass.
     Class item = NSClassFromString(@"_TtGC13Element_UIKit11ElementViewVV29ListeningActivity_ElementsKit25InviteCarouselItemElement5PropsVS2_5StateOS2_5Event_");
     if (item) SGRPassView(item, ^(UIView *view) { dressInvite(view); });
+    // The outer ElementContentView can receive the 56pt disc while the cell
+    // and its ElementView are already laid out. Watch its own first pass too.
+    Class content = NSClassFromString(@"_TtGC13Element_UIKit18ElementContentViewV12Element_List14ItemIdentifierGVS_22IdentifiableElementBoxV29ListeningActivity_ElementsKit25InviteCarouselItemElement__");
+    if (content) SGRPassView(content, ^(UIView *view) { dressInvite(view); });
+    SGRPassSwiftController(@"SideDrawer_ListPageImpl", @"ListViewController", ^(UIViewController *c) {
+        dressInvite(c.viewIfLoaded);
+    });
 }
