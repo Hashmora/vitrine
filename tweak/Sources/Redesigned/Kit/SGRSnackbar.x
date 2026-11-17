@@ -107,34 +107,6 @@ static UILabel *innerLabel(UIView *label) {
     return found;
 }
 
-// Some "Added to queue" toasts enter with only "Added to" in their
-// Encore label. Spotify later completes the string while animating that
-// label, so the glass card is first sized to the prefix and visibly grows
-// in mid-air. Complete this *one* toast before measuring the card. An "Open"
-// action distinguishes it from the other "Added to ..." notifications.
-static BOOL settleQueueLabel(UIView *content) {
-    UIView *label = nil, *action = nil;
-    contentParts(content, &label, &action);
-    UILabel *text = innerLabel(label), *actionText = innerLabel(action);
-    NSString *word = [text.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSString *actionWord = [actionText.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (![actionWord isEqualToString:@"Open"] ||
-        (![word isEqualToString:@"Added to"] && ![word isEqualToString:@"Added to queue"] && ![word isEqualToString:@"Added to Queue"])) return NO;
-    if ([word isEqualToString:@"Added to"]) text.text = @"Added to Queue";
-    // Spotify also slides this text in independently of the snackbar's
-    // entrance. That slide starts above the capsule and is visible through
-    // glass; the completed queue label should be still from its first frame.
-    [label.layer removeAllAnimations];
-    [text.layer removeAllAnimations];
-    [action.layer removeAllAnimations];
-    [actionText.layer removeAllAnimations];
-    if (!CGAffineTransformIsIdentity(label.transform)) label.transform = CGAffineTransformIdentity;
-    if (!CGAffineTransformIsIdentity(text.transform)) text.transform = CGAffineTransformIdentity;
-    if (!CGAffineTransformIsIdentity(action.transform)) action.transform = CGAffineTransformIdentity;
-    if (!CGAffineTransformIsIdentity(actionText.transform)) actionText.transform = CGAffineTransformIdentity;
-    return YES;
-}
-
 // The action's size: its frame once Spotify has laid it out, its word's until then.
 static CGSize actionSize(UIView *action) {
     UILabel *text = innerLabel(action);
@@ -249,23 +221,12 @@ static void dressSnackbar(UIView *snackbar) {
     sg_snackbar = snackbar;
     CGFloat maxWidth = snackbar.bounds.size.width - kSideInset * 2;
     BOOL hosted = content && isHostingView(content);
-    BOOL queue = !hosted && content && settleQueueLabel(content);
     CGFloat width = !content ? maxWidth : hosted ? hostedCardWidth(content, maxWidth) : cardWidth(content, maxWidth);
-    // Reserve room for the full text and Open even if Spotify has not yet
-    // laid out the action. Keep that size stable across its entrance frames.
-    if (queue) width = MIN(maxWidth, MAX(width, 240));
     // By bounds and centre: the card carries a transform below (the minimized tab bar), and a frame set under one is undefined.
     CGRect bounds = CGRectMake(0, 0, width, snackbar.bounds.size.height);
     CGPoint center = CGPointMake(round((snackbar.bounds.size.width - width) / 2) + width / 2, snackbar.bounds.size.height / 2);
-    void (^sizeCard)(void) = ^{
-        if (!CGRectEqualToRect(card.bounds, bounds)) card.bounds = bounds;
-        if (!CGPointEqualToPoint(card.center, center)) card.center = center;
-    };
-    // The toast itself may be inside Spotify's entrance animation. UIKit
-    // must not tween a change of width from the transient prefix to its
-    // final width while that animation is already on screen.
-    if (queue) [UIView performWithoutAnimation:sizeCard];
-    else sizeCard();
+    if (!CGRectEqualToRect(card.bounds, bounds)) card.bounds = bounds;
+    if (!CGPointEqualToPoint(card.center, center)) card.center = center;
     followNowPlayingBar(snackbar);
     UIView *glass = SGRGlassFloatingCard(card, &kGlassKey, &kFilmKey, kMaxRadius);
     // Dimmed as the tab bar's glass is, so its text stands out over a bright page.
@@ -410,9 +371,7 @@ static CGRect heldToCard(UIView *content, CGRect frame) {
 }
 
 - (void)layoutSubviews {
-    settleQueueLabel((UIView *)self);
     %orig;
-    settleQueueLabel((UIView *)self);
     relayoutContent((UIView *)self);
 }
 %end
