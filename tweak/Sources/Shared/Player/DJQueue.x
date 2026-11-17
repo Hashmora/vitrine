@@ -1707,6 +1707,24 @@ static void drawNewSegmentButtonSoon(UIView *page) {
         });
     }
 }
+// Use the queue's native Edit text as the typography size reference. Spotify's
+// Edit control may be a UIKit button or a hosting view containing a label.
+// SwiftUI-rendered text is not always exposed as a UILabel; in that case use
+// the equivalent compact Footnote size instead of a fixed 14-point override.
+static CGFloat nextDJSetEditFontSize(UIView *edit) {
+    UILabel *label = (UILabel *)descendant(edit, ^BOOL(UIView *candidate) {
+        if (![candidate isKindOfClass:UILabel.class]) return NO;
+        UILabel *text = (UILabel *)candidate;
+        NSString *title = text.text ?: text.attributedText.string;
+        return [title caseInsensitiveCompare:@"Edit"] == NSOrderedSame && text.font.pointSize > 0;
+    });
+    if (label) return label.font.pointSize;
+    if ([edit isKindOfClass:UIButton.class]) {
+        UIFont *nativeFont = ((UIButton *)edit).titleLabel.font;
+        if (nativeFont.pointSize > 0) return nativeFont.pointSize;
+    }
+    return [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote].pointSize;
+}
 static void drawNewSegmentButton(UIView *page) {
     UIButton *button = objc_getAssociatedObject(page, &kNewSegmentButton);
     UIView *edit = descendant(page, ^BOOL(UIView *view) {
@@ -1752,12 +1770,11 @@ static void drawNewSegmentButton(UIView *page) {
     config.background.cornerRadius = 16;
     config.background.backgroundInsets = NSDirectionalEdgeInsetsMake(6, 0, 6, 0);
     config.contentInsets = NSDirectionalEdgeInsetsMake(6, 12, 6, 12);
-    // Match Spotify's own queue controls instead of UIKit's San Francisco subheadline.
-    // Asking by font name also respects Vitrine's app-wide font replacement setting.
-    UIFont *spotifyFont = [UIFont fontWithName:@"SpotifyMixUI-Bold" size:14];
-    UIFont *font = spotifyFont
-        ? [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline] scaledFontForFont:spotifyFont]
-        : [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    // Keep Spotify Mix UI Bold, but make it the same point size as the native Edit label.
+    // The size is already scaled on the native label (or by the Footnote fallback).
+    CGFloat editFontSize = nextDJSetEditFontSize(edit);
+    UIFont *font = [UIFont fontWithName:@"SpotifyMixUI-Bold" size:editFontSize]
+        ?: [UIFont systemFontOfSize:editFontSize weight:UIFontWeightBold];
     config.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
         NSMutableDictionary *result = [attributes mutableCopy];
         result[NSFontAttributeName] = font;
