@@ -46,6 +46,7 @@
 // places them again.
 
 #import "Core/SGCore.h"
+#import "Core/SGGlassTouch.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Library.h"
 #import "Redesigned/Search/Search.h"
@@ -79,40 +80,38 @@ static UIView *childNamed(UIView *host, NSString *marker) {
 }
 
 void SGRLibraryClearScrim(UIView *header) {
-    UIView *scrim = childNamed(header, @"GradientView");
-    if (scrim) {
-        scrim.hidden = NO;
-        scrim.alpha = 1;
-        scrim.userInteractionEnabled = NO;
-        scrim.accessibilityElementsHidden = YES;
-        if ([scrim.layer isKindOfClass:CAGradientLayer.class]) {
-            CAGradientLayer *gradient = (CAGradientLayer *)scrim.layer;
-            gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0].CGColor,
-                                (id)[UIColor colorWithWhite:0 alpha:0.82].CGColor];
-            gradient.locations = @[@0, @1];
-            gradient.startPoint = CGPointMake(0.5, 1);
-            gradient.endPoint = CGPointMake(0.5, 0);
-        }
+    if (!SGBelowiOS26()) {
+        // Preserve the existing native/26+ path exactly as before.
+        vanish(childNamed(header, @"GradientView"));
         return;
     }
+    // The old scrim sometimes survived as an opaque black top band. Replace
+    // it with a single transparent-to-black fade behind the toolbar controls.
+    // With the list now running under the entire header, scrolling content is
+    // visible at the lower end instead of a hard line above the chips.
+    UIView *spotify = childNamed(header, @"GradientView");
+    if (spotify) SGRConceal(spotify);
     UIView *fade = objc_getAssociatedObject(header, &kHeaderFadeKey);
     if (!fade) {
         fade = [UIView new];
         fade.userInteractionEnabled = NO;
         fade.accessibilityElementsHidden = YES;
+        fade.backgroundColor = UIColor.clearColor;
         CAGradientLayer *gradient = [CAGradientLayer layer];
-        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0].CGColor,
-                            (id)[UIColor colorWithWhite:0 alpha:0.82].CGColor];
-        gradient.locations = @[@0, @1];
-        gradient.startPoint = CGPointMake(0.5, 1);
-        gradient.endPoint = CGPointMake(0.5, 0);
+        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0.93].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.72].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0].CGColor];
+        gradient.locations = @[@0, @0.35, @1];
+        gradient.startPoint = CGPointMake(0.5, 0);
+        gradient.endPoint = CGPointMake(0.5, 1);
         [fade.layer addSublayer:gradient];
         objc_setAssociatedObject(header, &kHeaderFadeKey, fade, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    CGFloat height = MIN(MAX(header.bounds.size.height, 1), 124);
-    fade.frame = CGRectMake(0, 0, header.bounds.size.width, height);
-    ((CAGradientLayer *)fade.layer.sublayers.firstObject).frame = fade.bounds;
+    fade.frame = header.bounds;
+    CAGradientLayer *gradient = (CAGradientLayer *)fade.layer.sublayers.firstObject;
+    gradient.frame = fade.bounds;
     if (fade.superview != header) [header insertSubview:fade atIndex:0];
+    else if (header.subviews.firstObject != fade) [header sendSubviewToBack:fade];
 }
 
 #pragma mark - the controls
@@ -235,6 +234,12 @@ static NSArray<UIView *> *placeRoot(UIView *header) {
     if (!trailing.count) return trailing;
 
     CGFloat leading = placeTrailing(header, trailing);
+    if (SGBelowiOS26() && trailing.count > 1) {
+        UIView *host = trailing.firstObject.superview;
+        BOOL shared = YES;
+        for (UIView *v in trailing) shared &= v.superview == host;
+        if (shared) SGRGlassGroupPill(host, trailing, &kGroupGlassKey, 44, -2);
+    }
     CGRect row = SGFrameIn(trailing.firstObject, header);
     layoutTitle(header, spotifyTitle, SGRSideMargin, leading, CGRectGetMidY(row));
     for (UIView *control in trailing) watchRow(control.superview, header, placeRoot);
@@ -418,12 +423,12 @@ static void clearBacking(UIView *header) {
 // the inset again (told by the value not being the one written here). A list at its top stays at its top.
 static void raiseList(UIView *page, UIView *header, UIView *filters) {
     CGFloat edge = CGRectGetMinY(filters.frame);
-    CGFloat extra = header.bounds.size.height - edge;
-    if (edge < 1 || extra < 1) return;
+    CGFloat extra = header.bounds.size.height;
+    if (edge < 1 || extra < edge) return;
     UIView *content = SGRFindByIdentifier(page, @"YourLibraryContent.collectionView", &kContentKey).superview;
     if (!content || ![NSStringFromClass(content.class) hasSuffix:@"YourLibraryContentView"]) return;
 
-    CGRect frame = CGRectMake(0, edge, page.bounds.size.width, page.bounds.size.height - edge);
+    CGRect frame = CGRectMake(0, 0, page.bounds.size.width, page.bounds.size.height);
     if (!CGRectEqualToRect(content.frame, frame)) content.frame = frame;
 
     UIView *found = SGRFindByIdentifier(content, SGRLibraryListIdentifier, &kListKey);
@@ -472,7 +477,14 @@ static void layoutRoot(UIView *page) {
         for (UIView *control in trailing) shared = shared && control.superview == host;
         // The two looks are exclusive: switching from one to the other hides the glass the earlier passes made.
         if (shared && trailing.count > 1) {
-            SGRGlassGroupPill(host, trailing, &kGroupGlassKey, 44, kGroupPad);
+            UIView *pane = SGRGlassGroupPill(host, trailing, &kGroupGlassKey, 44, kGroupPad);
+            // Presses on any of the three toolbar actions spring and morph
+            // the shared glass, as the search capsule and filter chips do.
+            UIView *holder = pane.superview;
+            if (SGUseLegacyGlass() && pane && holder) {
+                for (UIView *control in trailing) SGGlassInteractiveVia(control, holder, pane);
+                SGRUnclipUpTo(holder, ^BOOL(UIView *v) { return v == header; });
+            }
             for (UIView *control in trailing) {
                 UIView *round = objc_getAssociatedObject(control, &kRoundGlassKey);
                 if (round && !round.hidden) round.hidden = YES;
