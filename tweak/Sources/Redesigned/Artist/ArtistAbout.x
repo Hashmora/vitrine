@@ -19,16 +19,15 @@ static BOOL isCardGray(CGColorRef color) {
     return c[0] > 0.12 && c[0] < 0.19 && fabs(c[0] - c[1]) < 0.01 && fabs(c[1] - c[2]) < 0.01;
 }
 
-static char kAboutCardKey, kButtonGlassKey;
+static char kAboutCardKey, kButtonGlassKey, kInfoPaneKey, kInfoDimKey;
 
 // An Encore secondary button in the card (Follow): a ring drawn as a shape layer the size of its first subview. The
 // ring goes and the button stands on a glass capsule, as Spotify's other outlined buttons do (Kit/SGRCallToAction.x).
 static void dressButton(UIView *button) {
     UIView *face = button.subviews.firstObject;
     if (!face || face.bounds.size.width < 1 || button.bounds.size.width < 1) return;
-    // Spotify changes Follow to Following through Auto Layout. Never force a
-    // width on this button: the old manual resize left the original border at
-    // its previous width after another click.
+    // Spotify owns the Follow/Following width. Keep the pane in the button's
+    // own bounds, not in the secondary button's old face frame.
     button.backgroundColor = UIColor.clearColor;
     button.layer.backgroundColor = NULL;
     face.backgroundColor = UIColor.clearColor;
@@ -36,14 +35,18 @@ static void dressButton(UIView *button) {
     button.layer.borderWidth = 0;
     face.layer.borderWidth = 0;
     for (CALayer *layer in face.layer.sublayers) {
-        if (![layer isKindOfClass:CAShapeLayer.class]) continue;
-        CAShapeLayer *ring = (CAShapeLayer *)layer;
-        if (ring.bounds.size.width < face.bounds.size.width * 0.65 ||
-            ring.bounds.size.height < face.bounds.size.height * 0.65) continue;
-        if (ring.strokeColor) ring.strokeColor = UIColor.clearColor.CGColor;
-        if (ring.fillColor) ring.fillColor = UIColor.clearColor.CGColor;
+        NSString *type = NSStringFromClass(layer.class);
+        if ([type containsString:@"BackgroundLayer"]) {
+            layer.opacity = 0; // Encore's original gray plate and offset ring
+        } else if ([layer isKindOfClass:CAShapeLayer.class] &&
+                   layer.bounds.size.width >= face.bounds.size.width * 0.65) {
+            CAShapeLayer *ring = (CAShapeLayer *)layer;
+            if (ring.strokeColor) ring.strokeColor = UIColor.clearColor.CGColor;
+        }
     }
-    SGRGlassChip(button, face, NO, &kButtonGlassKey);
+    // The glass key is per actual button. SGRGlassCapsuleInside resizes it
+    // on every Follow/Following change, with no manual width mutation.
+    SGRGlassCapsuleInside(button, &kButtonGlassKey, button.bounds.size, NO);
     SGRUnclipUpTo(button, ^BOOL(UIView *v) {
         return [NSStringFromClass(v.class) hasSuffix:@"CreatorBiographyCardLayout"];
     });
@@ -59,13 +62,31 @@ static BOOL onArtistCard(UIView *button) {
 
 static void dressAbout(UIView *card) {
     if (!card.window || card.bounds.size.width < 1) return;
-    SGRGlassPaneIn(card, &kAboutGlassKey, card.layer.cornerRadius > 0 ? card.layer.cornerRadius : 16);
-    if (isCardGray(card.layer.backgroundColor)) card.backgroundColor = UIColor.clearColor;
+    // Photo and caption are different sibling views. Put glass ONLY under
+    // the short caption at the bottom, not behind the full photo/card.
+    UIView *info = nil;
     for (UIView *sub in card.subviews) {
-        if (isCardGray(sub.layer.backgroundColor)) sub.backgroundColor = UIColor.clearColor;
+        if (![sub isMemberOfClass:UIView.class]) continue;
+        if (sub.bounds.size.width < card.bounds.size.width - 2 || sub.bounds.size.height < 75) continue;
+        if (sub.frame.origin.y < card.bounds.size.height * 0.45) continue;
+        if (!isCardGray(sub.layer.backgroundColor)) continue;
+        info = sub;
+        break;
     }
-    SGForEachView(card, ^(UIView *v) {
-        if ([NSStringFromClass(v.class) hasSuffix:@"Button9Secondary"]) dressButton(v);
+    if (!info) return;
+    // Preserve the card's native 16pt outer rounding. The info plate gets
+    // its own *top* rounded corners where it meets the artist's photo.
+    if (isCardGray(card.layer.backgroundColor)) card.backgroundColor = UIColor.clearColor;
+    info.backgroundColor = UIColor.clearColor;
+    info.layer.backgroundColor = NULL;
+    info.layer.cornerRadius = 22;
+    info.layer.cornerCurve = kCACornerCurveContinuous;
+    UIView *glass = SGRGlassPaneIn(info, &kInfoPaneKey, 22);
+    if (glass) SGRDarkenGlass(glass, &kInfoDimKey, 22, 0.35);
+    SGForEachView(info, ^(UIView *v) {
+        if ([NSStringFromClass(v.class) hasSuffix:@"Button9Secondary"] &&
+            [v.accessibilityIdentifier isEqualToString:@"Curation.FollowButtonElementKit.FollowButton"])
+            dressButton(v);
     });
 }
 
