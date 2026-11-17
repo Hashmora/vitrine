@@ -45,7 +45,6 @@ static const CGFloat kMinCover = 80, kMinHero = 120;
 static const CGFloat kBar = 100, kFade = 150;
 
 static char kInfoKey, kHeroKey, kHeroHeightKey, kContainerHeightKey, kRowWatchedKey, kSizeKey;
-static char kInfoGlassKey, kInfoGlassPaneKey, kInfoGlassDimKey;
 static char kTitleKey, kMetaKey, kShuffleKey, kPlayKey, kFollowKey, kArtworkKey, kMoreKey, kMoreButtonKey;
 
 #pragma mark - Spotify's views
@@ -238,28 +237,6 @@ static void applyHero(UIView *container, UIView *artwork, CGFloat bottom) {
     [hero followArtwork:photoIn(artwork)];
 }
 
-// The title, listeners and actions occupy the bottom of the photo header.
-// Give that entire block one rounded panel rather than leaving a straight,
-// hard cut from the photo to a plain black strip under the text.
-static void glassArtistInfo(UIView *container, SGRHeaderInfo *info) {
-    if (!SGBelowiOS26() || !container || !info || container.bounds.size.width < 1) return;
-    CGFloat height = MIN(container.bounds.size.height, 190);
-    if (height < 60) return;
-    UIView *panel = objc_getAssociatedObject(container, &kInfoGlassKey);
-    if (!panel) {
-        panel = [UIView new];
-        panel.userInteractionEnabled = NO;
-        panel.accessibilityElementsHidden = YES;
-        objc_setAssociatedObject(container, &kInfoGlassKey, panel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    CGRect frame = CGRectMake(0, container.bounds.size.height - height, container.bounds.size.width, height);
-    if (!CGRectEqualToRect(panel.frame, frame)) panel.frame = frame;
-    if (panel.superview != container) [container insertSubview:panel belowSubview:info];
-    else [container insertSubview:panel belowSubview:info];
-    UIView *glass = SGRGlassPaneIn(panel, &kInfoGlassPaneKey, 30);
-    if (glass) SGRDarkenGlass(glass, &kInfoGlassDimKey, 30, 0.26);
-}
-
 #pragma mark - the header's pass
 
 static void applyHeader(UIView *header, BOOL full);
@@ -350,7 +327,6 @@ static void applyHeader(UIView *header, BOOL full) {
     }
     CGFloat bottom = rest - SGRHeaderInfoBottom - [info contentHeightForWidth:container.bounds.size.width] + SGRHeaderInfoTitleRise;
     applyHero(container, artwork, bottom);
-    glassArtistInfo(container, info);
 }
 
 // What the header shows besides its text: the logo, the buttons, More, and the watch on the buttons' row.
