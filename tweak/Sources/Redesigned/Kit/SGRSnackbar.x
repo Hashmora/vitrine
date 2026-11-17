@@ -142,10 +142,27 @@ static BOOL settleQueueText(UIView *content) {
 }
 
 // The action's size: its frame once Spotify has laid it out, its word's until then.
-static CGSize actionSize(UIView *action) {
+// Spotify 9.1.90 creates the Queue action with a 0pt-wide title on the first
+// pass, even though it becomes "Open" (34pt) on the next pass. The Queue toast
+// must reserve *the action's* final width before drawing the capsule, rather
+// than allowing the whole capsule to grow by 34pt after it appears.
+static CGSize actionSize(UIView *action, BOOL queue) {
     UILabel *text = innerLabel(action);
     CGSize fit = text ? [text sizeThatFits:CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)] : CGSizeZero;
-    return CGSizeMake(MAX(action.bounds.size.width, ceil(fit.width)), MAX(action.bounds.size.height, MAX(ceil(fit.height), 30)));
+    CGFloat width = MAX(action.bounds.size.width, ceil(fit.width));
+    if (queue) {
+        UIButton *button = [action isKindOfClass:UIButton.class] ? (UIButton *)action : nil;
+        NSString *title = button.currentTitle.length ? button.currentTitle : text.text;
+        if (!title.length) title = action.accessibilityLabel;
+        if (!title.length) title = @"Open"; // observed Queue action before Spotify has populated its label
+        UIFont *font = button.titleLabel.font ?: text.font ?: [UIFont systemFontOfSize:13];
+        width = MAX(width, ceil([title sizeWithAttributes:@{NSFontAttributeName: font}].width));
+        // Measured final "Open" UIButtonLabel on the iOS 18.6 / 9.1.90 trace:
+        // 34pt. Keep that intrinsic action width on the first (empty) pass too;
+        // this is NOT a fixed width for the snackbar or any other action.
+        if ([title isEqualToString:@"Open"]) width = MAX(width, 34);
+    }
+    return CGSizeMake(width, MAX(action.bounds.size.height, MAX(ceil(fit.height), 30)));
 }
 
 // How wide the label wants to be within maxWidth (a long one takes all of it and wraps).
@@ -175,7 +192,7 @@ static CGFloat trailingPad(UIView *action) {
 static CGFloat cardWidth(UIView *content, CGFloat maxWidth) {
     UIView *label = nil, *action = nil;
     contentParts(content, &label, &action);
-    CGFloat actionWidth = action ? actionSize(action).width + kActionPadX + kLabelGap : 0;
+    CGFloat actionWidth = action ? actionSize(action, queueTitle(label) != nil).width + kActionPadX + kLabelGap : 0;
     CGFloat padRight = trailingPad(action);
     CGFloat room = maxWidth - kPadLeft - padRight - actionWidth;
     CGFloat labelWidth = label ? labelSize(label, MAX(room, 1)).width : 0;
@@ -193,7 +210,7 @@ static void layoutContent(UIView *content) {
     UIView *label = nil, *action = nil;
     contentParts(content, &label, &action);
     CGFloat padRight = trailingPad(action);
-    CGSize actionFit = action ? actionSize(action) : CGSizeZero;
+    CGSize actionFit = action ? actionSize(action, queueTitle(label) != nil) : CGSizeZero;
     CGFloat actionWidth = actionFit.width;
     if (action) {
         CGRect frame = CGRectMake(size.width - padRight - actionWidth, round((size.height - actionFit.height) / 2), actionWidth, actionFit.height);
