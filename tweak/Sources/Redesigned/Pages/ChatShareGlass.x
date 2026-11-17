@@ -83,9 +83,11 @@ static void glassAction(UIView *row, const void *key) {
         });
         if (icon) box = v; // closest 48pt plate to the real glyph
     });
-    if (!box && row.bounds.size.height >= 30 && row.bounds.size.height <= 78) box = row;
+    // Do not dress the full-width InviteLink.Row as a 390pt glass capsule.
+    // Its only intended lens is the 48pt icon; a row laid out before the
+    // icon exists must simply be handled by a later pass.
     if (!box) return;
-    SGRGlassFlatBox(box, key, YES);
+    SGRGlassFlatBox(box, key, NO);
     box.backgroundColor = UIColor.clearColor;
     box.layer.backgroundColor = NULL;
     SGRHoldClear(box);
@@ -117,15 +119,10 @@ static void shareGlass(UIViewController *c) {
             if (glass) SGRDimSheetGlass(glass, 0.52);
             objc_setAssociatedObject(outer, &kShareOuterPrepared, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
-    } else if (!outer && pane && root.window && pane.bounds.size.width >= 300 &&
-               pane.bounds.size.height < UIScreen.mainScreen.bounds.size.height &&
-               !objc_getAssociatedObject(pane, &kShareInnerPrepared)) {
-        // A truly standalone share sheet is glassed once, only after its
-        // presentation hierarchy exists (never while UIKit is reparenting).
-        UIView *glass = SGRGlassSheetView(pane);
-        if (glass) SGRDimSheetGlass(glass, 0.52);
-        objc_setAssociatedObject(pane, &kShareInnerPrepared, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
+    // Never create a temporary glass pane on the navigation wrapper before
+    // the actual NavigationUI sheet has been attached. The old fallback made
+    // the first appearance alternate between the two material surfaces.
     // This modal owns an SPNavigationBar and a separate blurred backing strip;
     // hiding _UIBarBackground alone leaves that strip visible.
     UIView *blur = SGRBarBlurOf(c.navigationController);
