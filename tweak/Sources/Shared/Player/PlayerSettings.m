@@ -2,6 +2,8 @@
 #import "Core/SGCore.h"
 #import "Settings/SGModPage.h"
 #import "PlayerSettings.h"
+#import "DJQueue.h"
+#import "DJPick.h"
 #import "Shared/AnimatedArtwork/AnimatedArtwork.h"
 #import "Shared/Lyrics/Lyrics.h"
 
@@ -16,4 +18,14 @@ UIViewController *SGLockScreenWidgetPage(void) {
         SGSection(@"Widget", @[SGLockScreenLyricsRow(), SGLockScreenTranslationRow(), likes]),
         SGSection(@"Artwork", SGLockScreenMotionRows()),
     ] footer:nil];
+}
+
+SGModSection *SGDJSettingsSection(void) {
+    return SGNotedSection(@"DJ", @[
+        SGSwitchRow(@"DJ queue", @"The DJ's next songs in the queue", SGKeyDJQueue),
+        SGSwitchRow(@"New DJ set button", @"Show the button in the DJ queue", SGKeyDJQueuePickButton),
+        SGSwitchRow(@"Neutral request fallback", @"For New DJ set and Let DJ pick", SGKeyDJPickFallback),
+    ], @"DJ queue shows the songs the DJ has picked next, where you can reorder and remove them. Its switch applies after restarting Spotify. "
+       @"The button and fallback switches apply immediately. If Pick does not advance within 6 seconds, fallback sends this English request once: "
+       @"“Surprise me with a new mix based on my taste.” It also applies to the native Let DJ pick button, even when the queue button is hidden.");
 }

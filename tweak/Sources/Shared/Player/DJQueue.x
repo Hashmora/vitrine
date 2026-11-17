@@ -1703,7 +1703,7 @@ static void drawNewSegmentButton(UIView *page) {
         return [view.accessibilityIdentifier isEqualToString:@"queue-edit-button"];
     });
     UIView *host = page;
-    BOOL visible = sDJActive && isDJSession(SGPlayerState()) && edit;
+    BOOL visible = SGEnabled(SGKeyDJQueuePickButton) && sDJActive && isDJSession(SGPlayerState()) && edit;
     for (UIView *v = edit; v && v != page; v = v.superview) {
         if (v.hidden || v.alpha <= 0.01) { visible = NO; break; }
     }
@@ -1715,7 +1715,7 @@ static void drawNewSegmentButton(UIView *page) {
         button.accessibilityHint = @"Let DJ pick a new set of tracks";
         button.titleLabel.adjustsFontForContentSizeCategory = YES;
         [button addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
-            if (sPickingSegment || sHandingOver || !isDJSession(SGPlayerState())) return;
+            if (!SGEnabled(SGKeyDJQueuePickButton) || sPickingSegment || sHandingOver || !isDJSession(SGPlayerState())) return;
             id service = sDJService;
             SEL provide = NSSelectorFromString(@"provideJumpableWithControlling:");
             SEL jump = NSSelectorFromString(@"jumpWithCompletion:");

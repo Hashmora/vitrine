@@ -824,7 +824,11 @@ Spotify's own through.
   disable automatic advancement. The player retains its full pre-handover state through the internal pause
   acknowledgement, then the queue and player are refreshed with the confirmed destination.
 - **New DJ set:** a compact action beside Edit on the DJ queue header duplicates the request sheet's
-  “Let DJ pick”. It uses Spotify's own `AIDJService` / `CompositeJumpable` and `jumpWithCompletion:`;
+  “Let DJ pick”. Player › DJ has independent live switches for the queue button
+  (`spotifyglass.djqueue.pickButton`) and neutral request fallback (`spotifyglass.djpick.fallback`),
+  both on by default. Hiding the button leaves the native Pick and its independent fallback available.
+  Disabling fallback passes Pick through unchanged and cancels any neutral request not yet sent.
+  The English fallback is “Surprise me with a new mix based on my taste.” It uses Spotify's own `AIDJService` / `CompositeJumpable` and `jumpWithCompletion:`;
   the 9.1.90 classes, factory selector and NSError completion were checked against its binary and native tap.
   `DJPick.x` also repairs the native button: the local `jump` acknowledgement can be successful while the
   playlist service later answers HTTP 502. A real landing in another page/interaction is required, rather than
