@@ -1691,6 +1691,10 @@ static CGRect sHandleFrame = {{-1, 0}, {0, 0}};
 static __weak UIView *sUIKitHandle;
 static void alignHeaderPlay(UIView *page);
 static char kNewSegmentButton;
+// While Spotify is switching to Edit, the native Edit pill can remain visible
+// for a layout pass. Do not let a queued redraw resurrect our action meanwhile.
+static char kNewSegmentEditPending;
+static BOOL queueInEdit(UIView *page);
 static void drawNewSegmentButton(UIView *page);
 // On first presentation the Edit control and the DJ queue arrive on different
 // layout passes. Redraw during that short interval instead of waiting for the
@@ -1709,7 +1713,8 @@ static void drawNewSegmentButton(UIView *page) {
         return [view.accessibilityIdentifier isEqualToString:@"queue-edit-button"];
     });
     UIView *host = page;
-    BOOL visible = SGEnabled(SGKeyDJQueuePickButton) && sDJActive && isDJSession(SGPlayerState()) && edit;
+    BOOL visible = SGEnabled(SGKeyDJQueuePickButton) && sDJActive && isDJSession(SGPlayerState()) && edit
+        && ![objc_getAssociatedObject(page, &kNewSegmentEditPending) boolValue] && !queueInEdit(page);
     for (UIView *v = edit; v && v != page; v = v.superview) {
         if (v.hidden || v.alpha <= 0.01) { visible = NO; break; }
     }
@@ -1946,9 +1951,59 @@ static BOOL queueInEdit(UIView *page) {
     }) != nil;
 }
 
+// SwiftUI's Edit/close controls can dispatch from an inner UIControl. Look up
+// through its wrappers, but stop at this queue page so other buttons are untouched.
+static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identifier) {
+    if (!page || !page.window || control.window != page.window) return NO;
+    BOOL identified = NO;
+    for (UIView *view = control; view; view = view.superview) {
+        if ([view.accessibilityIdentifier isEqualToString:identifier]) identified = YES;
+        if (view == page) return identified || descendant(control, ^BOOL(UIView *child) {
+            return [child.accessibilityIdentifier isEqualToString:identifier];
+        }) != nil;
+    }
+    return NO;
+}
+
+// Follow the native Edit pill's visibility as well as the tap: the tap hides
+// Next DJ Set immediately, and this hook catches state changes that don't go
+// through a UIKit UIControl action (including the return from Edit).
+%hook _TtCOOO17NowPlaying_ECMKit11QueueHeader2UI7Private10PillButton
+- (void)setHidden:(BOOL)hidden {
+    %orig;
+    UIView *edit = (UIView *)self;
+    if (!sDJActive || (![edit.accessibilityIdentifier isEqualToString:@"queue-edit-button"] &&
+        !descendant(edit, ^BOOL(UIView *child) {
+            return [child.accessibilityIdentifier isEqualToString:@"queue-edit-button"];
+        }))) return;
+    UIView *page = sQueuePageView;
+    if (!page || !page.window || edit.window != page.window) return;
+    objc_setAssociatedObject(page, &kNewSegmentEditPending, hidden ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (hidden) {
+        UIButton *button = objc_getAssociatedObject(page, &kNewSegmentButton);
+        button.hidden = YES;
+    } else {
+        drawNewSegmentButtonSoon(page);
+    }
+}
+%end
+
 %hook UIControl
 - (void)sendAction:(SEL)action to:(id)target forEvent:(UIEvent *)event {
+    UIView *page = sQueuePageView;
+    BOOL enteringEdit = sDJActive && queueEditActionFrom(self, page, @"queue-edit-button");
+    BOOL leavingEdit = sDJActive && queueEditActionFrom(self, page, @"queue-close-edit-button");
+    if (enteringEdit) {
+        // Do this before Spotify's action: no half-second header-timer lag.
+        objc_setAssociatedObject(page, &kNewSegmentEditPending, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        UIButton *button = objc_getAssociatedObject(page, &kNewSegmentButton);
+        button.hidden = YES;
+    }
     %orig;
+    if (leavingEdit) {
+        objc_setAssociatedObject(page, &kNewSegmentEditPending, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        drawNewSegmentButtonSoon(page);
+    }
     if (!sDJActive || !sEditTable) return;
     NSString *name = self.accessibilityIdentifier;
     if ([name isEqualToString:@"queue-edit-toolbar-clear-selection"]) [sPicked removeAllObjects];
@@ -3163,6 +3218,8 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
     sQueuePageView = ((UIViewController *)(id)self).view;
+    // A sheet reused after being closed in Edit must not retain a stale guard.
+    objc_setAssociatedObject(sQueuePageView, &kNewSegmentEditPending, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     drawNewSegmentButtonSoon(sQueuePageView);
 }
 - (void)viewDidLayoutSubviews {
