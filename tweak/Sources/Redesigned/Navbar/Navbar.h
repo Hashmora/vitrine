@@ -55,7 +55,6 @@ BOOL SGRLegacyTabBarMinimized(void);
 // even when a *second* finger scrolls a page. Only queried by the fallback.
 BOOL SGRLegacyNowPlayingHeld(void);
 void SGRLegacyApplyTabBarMinimized(BOOL minimized, BOOL animated);
-void SGRLegacyRefreshPlayerDock(void);
 CGRect SGRLegacyTabBarInlineSlot(UIView *host, CGFloat height);
 
 // TabBarRoom.m, the same for both bars. The hold on Spotify's Home that opens Mod Settings, added once.
