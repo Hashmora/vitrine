@@ -305,53 +305,72 @@ static void pickerChrome(UIViewController *controller) {
 // The old hook therefore never ran. Attach the queue-style glass to the
 // real Navigation sheet before its first visible frame, then darken its pane.
 static char kNativeShareActionGlass, kNativeShareActionDim;
-static char kNativeShareArtworkRing, kNativeShareArtworkGlass;
+static char kShareFirstAction, kShareThirdAction, kShareCopyLink, kShareMore;
 
-// The five "Search / Create group / (you) / Copy link / More" actions
-// are drawn by SwiftUI, not UILabel/Encore buttons. The device tree shows
-// each solid round background as a 56x56 _UIShapeHitTestingView inside the
-// on-platform action section. Glass that backing directly, leaving the
-// adjacent SwiftUI glyphs and accessibility actions untouched.
-static BOOL inNativeShareActions(UIView *view) {
+// Identify the row *within the native Share sheet*, not other SwiftUI
+// graphics with the same runtime classes elsewhere in the application.
+static BOOL inNativeShareSection(UIView *view, BOOL onPlatform) {
+    NSString *target = onPlatform ? @"OnPlatformSectionElement" : @"OffPlatformSectionElement";
     for (UIView *v = view.superview; v; v = v.superview) {
         NSString *name = NSStringFromClass(v.class);
-        if ([name containsString:@"Share_OnPlatformSectionImpl"] &&
-            [name containsString:@"OnPlatformSectionElement"]) return YES;
-        if ([name containsString:@"OffPlatformSectionElement"]) return NO;
+        if ([name containsString:target]) return YES;
+        if ([name containsString:onPlatform ? @"OffPlatformSectionElement" : @"OnPlatformSectionElement"]) return NO;
     }
     return NO;
 }
 
+static BOOL isShareActionRow(UIView *row) {
+    return [NSStringFromClass(row.class) containsString:@"PlatformGroupContainer"] &&
+           row.bounds.size.width > 390 && row.bounds.size.height >= 90 && row.bounds.size.height < 130;
+}
+
+static UIView *backingInShareRow(UIView *row, const void *key, CGRect frame) {
+    UIView *backing = objc_getAssociatedObject(row, key);
+    if (!backing) {
+        backing = [UIView new];
+        backing.userInteractionEnabled = NO;
+        backing.accessibilityElementsHidden = YES;
+        objc_setAssociatedObject(row, key, backing, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    backing.frame = frame;
+    if (backing.superview != row) [row insertSubview:backing atIndex:0];
+    else if (row.subviews.firstObject != backing) [row sendSubviewToBack:backing];
+    // A backing belongs only to its own button, stays inside the 390pt
+    // viewport and can never multiply during repeated SwiftUI layout passes.
+    UIView *glass = SGRGlassFlatBox(backing, key, NO);
+    if (glass) SGRDarkenGlass(glass, &kNativeShareActionDim, frame.size.height / 2, 0.38);
+    return backing;
+}
+
+static void shareRowChrome(UIView *row) {
+    if (!isShareActionRow(row)) return;
+    if (inNativeShareSection(row, YES)) {
+        // The first three native actions occupy x=16, 96, 176 (56pt each).
+        // The middle one already has a native _UIShapeHitTestingView;
+        // drawing a second background around it produced a double rim.
+        backingInShareRow(row, &kShareFirstAction, CGRectMake(16, 0, 56, 56));
+        // The third slot contains the account avatar image. Keep its artwork,
+        // and show a narrow glass surround rather than drawing over the icon.
+        backingInShareRow(row, &kShareThirdAction, CGRectMake(175, 0, 58, 58));
+    } else if (inNativeShareSection(row, NO)) {
+        // The lower Share shortcuts are image-backed, not UIKit buttons.
+        // Glass beneath the first two actions; keep their native glyphs above.
+        backingInShareRow(row, &kShareCopyLink, CGRectMake(15, 7, 58, 58));
+        backingInShareRow(row, &kShareMore, CGRectMake(95, 7, 58, 58));
+    }
+}
+
 static void shareActionGlass(UIView *circle) {
-    if (!inNativeShareActions(circle) || fabs(circle.bounds.size.width - 56) > 2 ||
-        fabs(circle.bounds.size.height - 56) > 2) return;
-    UIView *pane = SGRGlassFlatBox(circle, &kNativeShareActionGlass, NO);
-    if (!pane) return;
-    SGRDarkenGlass(pane, &kNativeShareActionDim, 28, 0.38);
+    if (!inNativeShareSection(circle, YES) || !isShareActionRow(circle.superview) ||
+        fabs(circle.frame.origin.x - 96) > 2 ||
+        fabs(circle.bounds.size.width - 56) > 2 || fabs(circle.bounds.size.height - 56) > 2) return;
+    // Only the *second* top action has a native round hit-testing backing.
+    // Its sibling glyph is drawn above it by SwiftUI.
+    UIView *glass = SGRGlassFlatBox(circle, &kNativeShareActionGlass, NO);
+    if (glass) SGRDarkenGlass(glass, &kNativeShareActionDim, 28, 0.38);
     circle.backgroundColor = UIColor.clearColor;
     circle.layer.backgroundColor = NULL;
     SGRHoldClear(circle);
-}
-
-// The other three slots in the same SwiftUI row are image-backed
-// _UIGraphicsView circles (the account avatar and shortcut artwork). Keep
-// the images rather than clearing them: give each a narrow glass surround
-// underneath, sized against its actual SwiftUI frame on every layout.
-static void shareArtworkActionGlass(UIView *image) {
-    if (!inNativeShareActions(image) || fabs(image.bounds.size.width - 56) > 2 ||
-        fabs(image.bounds.size.height - 56) > 2 || !image.superview) return;
-    UIView *ring = objc_getAssociatedObject(image, &kNativeShareArtworkRing);
-    if (!ring) {
-        ring = [UIView new];
-        ring.userInteractionEnabled = NO;
-        ring.accessibilityElementsHidden = YES;
-        objc_setAssociatedObject(image, &kNativeShareArtworkRing, ring, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    CGRect frame = CGRectInset(image.frame, -2, -2);
-    if (!CGRectEqualToRect(ring.frame, frame)) ring.frame = frame;
-    if (ring.superview != image.superview) [image.superview insertSubview:ring belowSubview:image];
-    UIView *glass = SGRGlassFlatBox(ring, &kNativeShareArtworkGlass, NO);
-    if (glass) SGRDarkenGlass(glass, &kNativeShareActionDim, 30, 0.38);
 }
 
 // The sheet's view is built before the inner controller finishes its first
@@ -368,7 +387,15 @@ static void shareMenuChrome(UIViewController *controller) {
     UIView *root = controller.viewIfLoaded;
     if (!root) return;
     UIView *pane = SGRSheetPaneOf(root);
-    if (!pane) return;
+    // On the first opening the SwiftUI content is loaded asynchronously;
+    // its initial white backing is briefly presented before the sheet view
+    // attaches. Use a dark placeholder for that short pre-attachment phase.
+    if (!pane) {
+        root.backgroundColor = [UIColor colorWithWhite:0.10 alpha:1];
+        return;
+    }
+    root.backgroundColor = UIColor.clearColor;
+    root.opaque = NO;
     UIView *glass = SGRGlassSheetChrome(root);
     if (glass) SGRDimSheetGlass(glass, 0.52);
     UIView *scroller = sheetNamed(root, @"BottomAutoScrollingScrollView", 5);
@@ -376,6 +403,7 @@ static void shareMenuChrome(UIViewController *controller) {
         if (scroller.backgroundColor && CGColorGetAlpha(scroller.backgroundColor.CGColor) > 0.05)
             scroller.backgroundColor = UIColor.clearColor;
         if (scroller.opaque) scroller.opaque = NO;
+        SGForEachView(scroller, ^(UIView *view) { shareRowChrome(view); });
     }
 }
 
@@ -389,6 +417,7 @@ static void shareScrollChrome(UIView *scroll) {
     if (glass) SGRDimSheetGlass(glass, 0.52);
     scroll.backgroundColor = UIColor.clearColor;
     if (scroll.opaque) scroll.opaque = NO;
+    SGForEachView(scroll, ^(UIView *view) { shareRowChrome(view); });
 }
 
 #pragma mark - the library's Sort by
@@ -583,8 +612,8 @@ static void connectMenuChrome(UIViewController *controller) {
     if (shareElement) SGRPassView(shareElement, ^(UIView *v) { shareElementChrome(v); });
     Class actionCircle = NSClassFromString(@"_TtC7SwiftUIP33_A34643117F00277B93DEBAB70EC0697122_UIShapeHitTestingView");
     if (actionCircle) SGRPassView(actionCircle, ^(UIView *v) { shareActionGlass(v); });
-    Class artworkCircle = NSClassFromString(@"SwiftUI._UIGraphicsView");
-    if (artworkCircle) SGRPassView(artworkCircle, ^(UIView *v) { shareArtworkActionGlass(v); });
+    Class actionRow = NSClassFromString(@"_TtCC7SwiftUI17HostingScrollView22PlatformGroupContainer");
+    if (actionRow) SGRPassView(actionRow, ^(UIView *v) { shareRowChrome(v); });
     SGRPassView(SGRSwiftClass(@"Share_MenuImpl", @"BottomAutoScrollingScrollView"), ^(UIView *view) { shareScrollChrome(view); });
     Class saveIn = SGRSwiftClass(@"PlaylistCuration_AddToPlaylistImpl", @"ATPContainerViewController");
     if (saveIn) {
