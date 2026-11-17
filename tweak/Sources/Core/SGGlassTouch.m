@@ -21,6 +21,7 @@ static CGFloat SGSmooth(CGFloat t) { return t * t * (3 - 2 * t); }
 @property (nonatomic, weak) UIView *pane;
 // The view that moves, when it is not the one that takes the touches (the player's mod button over the ⋯).
 @property (nonatomic, weak) UIView *target;
+@property (nonatomic, strong) NSHashTable<UIView *> *peers;
 @end
 
 @implementation SGGlassTouchRecognizer {
@@ -121,24 +122,32 @@ static CGFloat SGSmooth(CGFloat t) { return t * t * (3 - 2 * t); }
 - (void)applyTracking:(BOOL)tracking springy:(BOOL)springy {
     UIView *host = [self subject];
     if (!host) return;
-    CALayer *layer = host.layer;
     CATransform3D target = [self transformTracking:tracking];
-    if (!springy || UIAccessibilityIsReduceMotionEnabled()) {
-        [layer removeAnimationForKey:kTransformKey];
-        layer.sublayerTransform = target;
-        return;
+    // Move the glass and its sibling button glyphs on exactly the same
+    // spring. Without this the grouped Library plate grows by itself while
+    // Search, + and the avatar stay motionless above it.
+    NSMutableArray<CALayer *> *layers = [NSMutableArray arrayWithObject:host.layer];
+    for (UIView *peer in self.peers) {
+        if (peer && peer != host && peer.window == host.window) [layers addObject:peer.layer];
     }
-    SGSpring spring = tracking ? SGGlassLiftOn : SGGlassLiftOff;
-    CASpringAnimation *animation = [CASpringAnimation animationWithKeyPath:@"sublayerTransform"];
-    animation.fromValue = [NSValue valueWithCATransform3D:(layer.presentationLayer ?: layer).sublayerTransform];
-    animation.toValue = [NSValue valueWithCATransform3D:target];
-    animation.mass = spring.mass;
-    animation.stiffness = spring.stiffness;
-    animation.damping = spring.damping;
-    animation.initialVelocity = 0;
-    animation.duration = animation.settlingDuration;
-    layer.sublayerTransform = target;
-    [layer addAnimation:animation forKey:kTransformKey];
+    for (CALayer *layer in layers) {
+        if (!springy || UIAccessibilityIsReduceMotionEnabled()) {
+            [layer removeAnimationForKey:kTransformKey];
+            layer.sublayerTransform = target;
+            continue;
+        }
+        SGSpring spring = tracking ? SGGlassLiftOn : SGGlassLiftOff;
+        CASpringAnimation *animation = [CASpringAnimation animationWithKeyPath:@"sublayerTransform"];
+        animation.fromValue = [NSValue valueWithCATransform3D:(layer.presentationLayer ?: layer).sublayerTransform];
+        animation.toValue = [NSValue valueWithCATransform3D:target];
+        animation.mass = spring.mass;
+        animation.stiffness = spring.stiffness;
+        animation.damping = spring.damping;
+        animation.initialVelocity = 0;
+        animation.duration = animation.settlingDuration;
+        layer.sublayerTransform = target;
+        [layer addAnimation:animation forKey:kTransformKey];
+    }
 }
 
 #pragma mark touches
@@ -240,4 +249,13 @@ void SGGlassInteractiveVia(UIView *touched, UIView *host, UIView *pane) {
     SGGlassTouchVia *via = [SGGlassTouchVia new];
     via.recognizer = recognizer;
     objc_setAssociatedObject(host, &kViaKey, via, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+void SGGlassInteractiveViaPeers(UIView *touched, UIView *host, UIView *pane, NSArray<UIView *> *peers) {
+    SGGlassInteractiveVia(touched, host, pane);
+    SGGlassTouchRecognizer *recognizer = objc_getAssociatedObject(touched, &kRecognizerKey);
+    if (!recognizer) return;
+    NSHashTable<UIView *> *weakPeers = [NSHashTable weakObjectsHashTable];
+    for (UIView *peer in peers) if (peer && peer != host) [weakPeers addObject:peer];
+    recognizer.peers = weakPeers;
 }
