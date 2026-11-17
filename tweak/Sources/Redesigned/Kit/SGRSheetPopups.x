@@ -342,35 +342,42 @@ static UIView *backingInShareRow(UIView *row, const void *key, CGRect frame) {
     return backing;
 }
 
-static void shareRowChrome(UIView *row) {
-    if (!isShareActionRow(row)) return;
-    if (inNativeShareSection(row, YES)) {
-        // The first three native actions occupy x=16, 96, 176 (56pt each).
-        // The middle one already has a native _UIShapeHitTestingView;
-        // drawing a second background around it produced a double rim.
-        backingInShareRow(row, &kShareFirstAction, CGRectMake(16, 0, 56, 56));
-        // The third slot contains the account avatar image. Keep its artwork,
-        // and show a narrow glass surround rather than drawing over the icon.
-        backingInShareRow(row, &kShareThirdAction, CGRectMake(175, 0, 58, 58));
-    } else if (inNativeShareSection(row, NO)) {
-        // The lower Share shortcuts are image-backed, not UIKit buttons.
-        // Glass beneath the first two actions; keep their native glyphs above.
-        backingInShareRow(row, &kShareCopyLink, CGRectMake(15, 7, 58, 58));
-        backingInShareRow(row, &kShareMore, CGRectMake(95, 7, 58, 58));
-    }
-}
-
 static void shareActionGlass(UIView *circle) {
     if (!inNativeShareSection(circle, YES) || !isShareActionRow(circle.superview) ||
-        fabs(circle.frame.origin.x - 96) > 2 ||
+        (fabs(circle.frame.origin.x - 16) > 2 && fabs(circle.frame.origin.x - 96) > 2) ||
         fabs(circle.bounds.size.width - 56) > 2 || fabs(circle.bounds.size.height - 56) > 2) return;
-    // Only the *second* top action has a native round hit-testing backing.
-    // Its sibling glyph is drawn above it by SwiftUI.
+    // Search (x16) and Create group (x96) are *real* SwiftUI hit-test
+    // buttons. Glass these native circles instead of placing a duplicate
+    // plate behind Search's opaque #333 fill. Their glyphs stay on top.
     UIView *glass = SGRGlassFlatBox(circle, &kNativeShareActionGlass, NO);
     if (glass) SGRDarkenGlass(glass, &kNativeShareActionDim, 28, 0.38);
     circle.backgroundColor = UIColor.clearColor;
     circle.layer.backgroundColor = NULL;
     SGRHoldClear(circle);
+}
+
+static void shareRowChrome(UIView *row) {
+    if (!isShareActionRow(row)) return;
+    if (inNativeShareSection(row, YES)) {
+        // Round 11 had a second underlay under Search, while the SwiftUI
+        // button was drawing its own solid fill above it. Discard the old
+        // underlay and glass the actual x16 and x96 hit-test circles.
+        UIView *duplicate = objc_getAssociatedObject(row, &kShareFirstAction);
+        if (duplicate) {
+            [duplicate removeFromSuperview];
+            objc_setAssociatedObject(row, &kShareFirstAction, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        for (UIView *child in row.subviews) shareActionGlass(child);
+        // Andrew (you) is rendered as a UIImage-backed glyph, not a
+        // UIShapeHitTestingView. Keep a single 56pt backing under its image.
+        backingInShareRow(row, &kShareThirdAction, CGRectMake(176, 0, 56, 56));
+    } else if (inNativeShareSection(row, NO)) {
+        // The off-platform row is horizontally scrollable and the 'More'
+        // shortcut is the last visible item at x336, not the second at x96.
+        // Both underlays stay inside the 390pt visible viewport.
+        backingInShareRow(row, &kShareCopyLink, CGRectMake(16, 8, 56, 56));
+        backingInShareRow(row, &kShareMore, CGRectMake(334, 8, 56, 56));
+    }
 }
 
 // The sheet's view is built before the inner controller finishes its first
@@ -594,6 +601,31 @@ static void connectMenuChrome(UIViewController *controller) {
     clearSaveInPaint(view);
 }
 
+// ViewDidLoad is the earliest predictable point before a lazily built
+// native Share menu can draw Spotify's temporary light root backing.
+// This is intentionally scoped to NativeShareMenuViewController only.
+@interface SGRNativeShareController : UIViewController @end
+%group SGRNativeSharePrefill
+%hook SGRNativeShareController
+- (void)viewDidLoad {
+    %orig;
+    UIView *root = ((UIViewController *)self).viewIfLoaded;
+    if (root && !SGRSheetPaneOf(root)) {
+        root.backgroundColor = [UIColor colorWithWhite:0.10 alpha:1];
+        root.opaque = NO;
+    }
+}
+- (void)viewWillAppear:(BOOL)animated {
+    UIView *root = ((UIViewController *)self).viewIfLoaded;
+    if (root && !SGRSheetPaneOf(root)) {
+        root.backgroundColor = [UIColor colorWithWhite:0.10 alpha:1];
+        root.opaque = NO;
+    }
+    %orig;
+}
+%end
+%end
+
 %ctor {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     %init(SGRSheetShadow);
@@ -606,7 +638,11 @@ static void connectMenuChrome(UIViewController *controller) {
     SGRPassSwiftController(@"Ratings_CommonImpl", @"RatingsAndReviewsRatePodcastViewController", ^(UIViewController *c) { rateChrome(c); });
     SGRPassSwiftController(@"Tome_PageLoaderViewImpl", @"SPTMusicClientPageLoaderView", ^(UIViewController *c) { loaderChrome(c); });
     SGRPassSwiftController(@"Share_MenuImpl", @"ShareMenuViewControllerV2", ^(UIViewController *c) { glassNamed(c, @"ShareMenuSheetView"); });
-    SGRPassSwiftController(@"Share_MenuImpl", @"NativeShareMenuViewController", ^(UIViewController *c) { shareMenuChrome(c); });
+    Class nativeShare = SGRSwiftClass(@"Share_MenuImpl", @"NativeShareMenuViewController");
+    if (nativeShare) {
+        %init(SGRNativeSharePrefill, SGRNativeShareController = nativeShare);
+        SGRPassController(nativeShare, ^(UIViewController *c) { shareMenuChrome(c); });
+    }
     // Explicit current-build class names are grounded in the Share view tree.
     Class shareElement = NSClassFromString(@"_TtGC13Element_UIKit11ElementViewVV14Share_MenuImpl16ShareMenuElement5PropsVS1_14ShareMenuModelOS1_14ShareMenuEvent_");
     if (shareElement) SGRPassView(shareElement, ^(UIView *v) { shareElementChrome(v); });
