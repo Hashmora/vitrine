@@ -97,10 +97,13 @@ void SGRLibraryClearScrim(UIView *header) {
         fade.accessibilityElementsHidden = YES;
         fade.backgroundColor = UIColor.clearColor;
         CAGradientLayer *gradient = [CAGradientLayer layer];
-        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0.93].CGColor,
-                            (id)[UIColor colorWithWhite:0 alpha:0.72].CGColor,
+        // Start fading immediately across the title row, not only near its
+        // bottom. The header's fade still ends exactly where the chips begin.
+        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0.96].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.77].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.43].CGColor,
                             (id)[UIColor colorWithWhite:0 alpha:0].CGColor];
-        gradient.locations = @[@0, @0.35, @1];
+        gradient.locations = @[@0, @0.20, @0.60, @1];
         gradient.startPoint = CGPointMake(0.5, 0);
         gradient.endPoint = CGPointMake(0.5, 1);
         [fade.layer addSublayer:gradient];
