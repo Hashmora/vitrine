@@ -21,6 +21,10 @@
 // released bubble when `animated`; a change of size, the first call and Reduce Motion cut.
 - (void)setRestFrame:(CGRect)frame animated:(BOOL)animated;
 
+// Rendered tab centers in the lens host's coordinates, left to right. The held
+// bubble can widen briefly between icons rather than showing an empty patch of glass.
+- (void)setTabCenters:(NSArray<NSNumber *> *)centers;
+
 // A finger down on the bar at `x`, free to run between the centers `minCenter` and `maxCenter` (a little past them).
 - (void)beginTouchAtX:(CGFloat)x minCenter:(CGFloat)minCenter maxCenter:(CGFloat)maxCenter;
 - (void)moveTouchToX:(CGFloat)x;
