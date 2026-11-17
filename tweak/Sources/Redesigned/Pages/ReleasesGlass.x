@@ -7,6 +7,7 @@
 #import "Pages.h"
 
 static char kReleasesFilters, kReleasesChipGlass, kReleasesClearGlass;
+static char kReleasesScrollKey, kReleasesScrollOffsetKey;
 
 static BOOL inReleasesFilters(UIView *view) {
     BOOL inChips = NO;
@@ -62,6 +63,39 @@ static void clearReleaseNavigation(UIViewController *page) {
     if (backing) { backing.alpha = 0; backing.userInteractionEnabled = NO; }
 }
 
+// Clearing the navigation blur alone left a black 139pt empty band: Spotify's
+// collection was *below* both the 91pt navigation and the 48pt chips row.
+// Move its viewport behind the floating controls but compensate its content
+// offset AND inset, so the first release retains exactly its former position.
+// As the user scrolls, artwork/rows can now actually move under the glass.
+static void letReleasesScrollUnderHeader(UIView *root) {
+    static char kCollectionKey;
+    UIView *candidate = SGRFindByIdentifier(root, @"Releases.Page.CollectionView", &kCollectionKey);
+    if (![candidate isKindOfClass:UICollectionView.class]) return;
+    UICollectionView *list = (UICollectionView *)candidate;
+    CGFloat top = CGRectGetMinY(list.frame);
+    NSNumber *saved = objc_getAssociatedObject(list, &kReleasesScrollKey);
+    if (!saved && (top < 100 || top > 200)) return;
+    if (!saved) {
+        objc_setAssociatedObject(list, &kReleasesScrollKey, @(top), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        CGFloat beforeOffset = list.contentOffset.y;
+        UIEdgeInsets inset = list.contentInset;
+        inset.top += top;
+        [UIView performWithoutAnimation:^{
+            list.contentInset = inset;
+            list.contentOffset = CGPointMake(list.contentOffset.x, beforeOffset - top);
+        }];
+        objc_setAssociatedObject(list, &kReleasesScrollOffsetKey, @(inset.top), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CGFloat height = saved ? saved.doubleValue : top;
+    if (list.frame.origin.y > 0.5) {
+        CGRect frame = list.frame;
+        frame.origin.y = 0;
+        frame.size.height += height;
+        list.frame = frame;
+    }
+}
+
 static void dressReleases(UIViewController *page) {
     UIView *root = page.viewIfLoaded;
     if (!root) return;
@@ -69,6 +103,7 @@ static void dressReleases(UIViewController *page) {
     // title on glass, and suppresses its system opaque/blurred strip.
     SGRDressBarPage(page);
     clearReleaseNavigation(page);
+    letReleasesScrollUnderHeader(root);
     UIView *filters = SGRFindByIdentifier(root, @"Components.UI.FilterChips", &kReleasesFilters);
     if (!filters) return;
     // The black backing belongs to the parent Swift FiltersElement, not to
