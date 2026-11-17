@@ -495,9 +495,13 @@ static const double kGainSlew = 0.5;
 static atomic_uint sg_gainBits;
 static float sg_gainNow = 1;
 static atomic_bool sg_djTransitionMuted;
+static atomic_uint_fast64_t sg_djMutedBuffers;
 void SGPlayerSetDJTransitionMuted(BOOL muted) { atomic_store(&sg_djTransitionMuted, muted); }
+BOOL SGPlayerDJTransitionMuted(void) { return atomic_load(&sg_djTransitionMuted); }
+uint64_t SGPlayerDJTransitionMutedBuffers(void) { return atomic_load(&sg_djMutedBuffers); }
 static void muteDJTransition(AudioUnitRenderActionFlags *flags, AudioBufferList *data) {
     if (!atomic_load(&sg_djTransitionMuted)) return;
+    atomic_fetch_add_explicit(&sg_djMutedBuffers, 1, memory_order_relaxed);
     for (UInt32 b = 0; b < data->mNumberBuffers; b++) {
         AudioBuffer *buffer = &data->mBuffers[b];
         if (buffer->mData) memset(buffer->mData, 0, buffer->mDataByteSize);
