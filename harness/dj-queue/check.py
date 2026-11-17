@@ -153,6 +153,7 @@ static SPTPlayerTrack *landingTarget;
 static SPTPlayerTrack *nextPhysicalSong, *prefetchedNext;
 static NSUInteger queueCalls;
 static NSMutableArray *commands;
+static double skipAcknowledgementDelay = .08;
 static NSString *sHandOverAnchorUID;
 static SPTPlayerTrack *sHandOverDisplayTrack;
 static SPTPlayerState *sHandOverDisplayState;
@@ -187,7 +188,7 @@ static id skipForward(SPTPlayerTrack *t) {
     assert(atomic_load(&sg_djTransitionMuted));
     if (!t) { [commands addObject:@"advance into voice"]; t = nextPhysicalSong ?: landingTarget; nextPhysicalSong = nil; }
     else [commands addObject:t == landingTarget ? @"skip destination" : @"skip anchor"];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, .08 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, skipAcknowledgementDelay * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         testState.track = t;
         testState.future = prefetchedNext ? (t == landingTarget ? @[prefetchedNext] : @[landingTarget,prefetchedNext]) : @[landingTarget];
         testState.isPaused = NO;
@@ -250,8 +251,12 @@ static id skipForward(SPTPlayerTrack *t) {
     assert(([commands isEqualToArray:@[@"advance into voice",@"advance into voice"]]));
     // A reordered final song from Spotify's queue must not flicker Pause/Play.
     // The output gate still covers every intermediate item until the voice lands.
-    state.track = copyFive; state.isPaused = NO; state.future = @[five,outro,fresh];
+    state.track = copyFive; state.position = 0; state.isPaused = NO; state.future = @[five,outro,fresh];
     landingTarget = outro; commands = [NSMutableArray array]; sHandingOver = NO;
+    // The test begins on a copy at position zero. Its first poll must not
+    // confuse the still-pending targeted skip with a completed same-UID hop.
+    // Deliberately deliver the fake core's acknowledgement after four polls.
+    skipAcknowledgementDelay = .23;
     skipRepeatedCurrentIntoOutro(outro);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, .04 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         assert(atomic_load(&sg_djTransitionMuted));
@@ -261,7 +266,10 @@ static id skipForward(SPTPlayerTrack *t) {
     while (sHandingOver && limit.timeIntervalSinceNow > 0)
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     assert(!sHandingOver && !atomic_load(&sg_djTransitionMuted) && state.track == outro);
+    if (![commands isEqualToArray:@[@"skip destination"]])
+        NSLog(@"Unexpected commands before outro acknowledgement: %@", commands);
     assert([commands isEqualToArray:@[@"skip destination"]]);
+    skipAcknowledgementDelay = .08;
     puts("DJ history, duplicate outro and uninterrupted transport bridge: PASS");''')
     path.write_text(prelude + '\n'.join(function(n) for n in names) + handover + tests)
     subprocess.run(['xcrun','clang','-fobjc-arc','-Werror','-Wno-unused-function','-framework','Foundation',str(path),'-o',str(Path(tmp)/'check')],check=True)
