@@ -18,7 +18,6 @@
 #import "Native/Player/NowPlaying.h"
 #import "Shared/LiveActivity/LiveActivity.h"
 #import "Shared/Lossless/SGLossless.h"
-#import "Shared/Player/DJQueue.h"
 #import "Redesigned/Lyrics/LyricsText.h"
 #import "Redesigned/Lyrics/LyricsLook.h"
 #import "Redesigned/Navbar/Navbar.h"
@@ -170,10 +169,7 @@ UIViewController *SGPlayerSettingsPage(void) {
        @"streams its own copy, at its lowest quality while the next song has a file. Karaoke and speeds other than "
        @"1x keep Spotify's sound. Applies after you restart Spotify.")];
 
-    [sections addObject:SGNotedSection(@"DJ", @[
-        SGSwitchRow(@"DJ queue", @"The DJ's next songs in the queue", SGKeyDJQueue),
-    ], @"The songs the DJ has picked next show in the queue, where you can reorder and remove them. The DJ picks a few "
-       @"songs at a time, so the queue shows those. Applies after you restart Spotify.")];
+    [sections addObject:SGDJSettingsSection()];
 
     // The redesign's page leads with a card of its player and the background's control, the background's
     // rows and the Mini player section under it.

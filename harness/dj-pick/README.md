@@ -46,3 +46,13 @@ Final live checks:
   the queue populated again and ordered=false. An owned/manual queue copy cannot
   falsely confirm a new DJ set. Failure/cancellation can prepare the preserved
   old order again; a successful landing discards that old order.
+
+Live settings: Player › DJ offers independent New DJ set button and Neutral request
+fallback switches, both on by default. The exact English fallback text is shown in
+the section note, along with its scope (both native and queue Pick). In the
+simulator both switches were flipped off through their UISwitch controls. The
+queue button disappeared; setting it back on restored it within the running
+session. With fallback still off, pressing it left the current item unchanged and
+produced no Pick recovery events over seven seconds. Both switches were restored
+on. The harness also checks disabling before the retry and disabling after a
+request was already sent (the latter still tracks its landing for queue cleanup).

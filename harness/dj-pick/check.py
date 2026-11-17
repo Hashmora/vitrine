@@ -11,6 +11,9 @@ prelude = r'''
 #import "Protobuf.h"
 #include <assert.h>
 #define SGLog(...) do {} while (0)
+#define SGKeyDJPickFallback @"spotifyglass.djpick.fallback"
+static BOOL fallbackEnabled = YES;
+static BOOL SGEnabled(NSString *key) { return fallbackEnabled; }
 @interface SPTPlayerTrack : NSObject
 @property NSString *URI, *UID, *provider;
 @property NSDictionary *metadata;
@@ -55,6 +58,7 @@ static FakePlayer *player(void) {
 }
 static SGDJPickAttempt *attempt(FakePlayer *p) {
     callbacks = errors = ended = changedCount = 0;
+    fallbackEnabled = YES;
     SGDJPickAttempt *a = [SGDJPickAttempt new];
     a.player = p; a.context = p.state.contextURI; a.URI = p.state.track.URI; a.UID = p.state.track.UID;
     a.page = p.state.track.metadata[@"page_instance_id"]; a.interaction = p.state.track.metadata[@"interaction_id"];
@@ -126,6 +130,13 @@ int main(void) { @autoreleasepool {
     [a pollAt:101]; assert(callbacks == 0); // an old hand-queued/prefetched song is not a new DJ set
     p.state.track.URI = @"spotify:media:intro"; p.state.track.UID = @"list_intro_item"; p.state.track.provider = @"context";
     [a pollAt:102]; assert(callbacks == 1 && changedCount == 1);
+
+    p = player(); a = attempt(p); fallbackEnabled = NO;
+    [a pollAt:106]; assert(callbacks == 1 && p.requests == 0 && changedCount == 0);
+
+    p = player(); a = attempt(p); [a pollAt:106]; fallbackEnabled = NO;
+    p.state.track.URI = @"spotify:media:already-sent-intro";
+    [a pollAt:107]; assert(callbacks == 1 && p.requests == 1 && changedCount == 1);
 
     assert(DJPickContext([SPTPlayerState new]) == nil);
     puts("DJ Pick: native landing, single fallback, wire payload, timeout and cancellation: PASS");
