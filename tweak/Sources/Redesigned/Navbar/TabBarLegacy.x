@@ -793,6 +793,15 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
         SGRLegacyLens *lens = [self lens];
         CGFloat hostX = self.frame.origin.x + g.currentLocation.x;
         if (g.state == UIGestureRecognizerStateBegan) {
+            // Feed the lens the *rendered* centers, not the item's nominal slots:
+            // UIKit's spacing varies with the tab count and the split-tab layout.
+            NSMutableArray<NSNumber *> *centers = [NSMutableArray arrayWithCapacity:self.items.count];
+            for (UITabBarItem *tab in self.items) {
+                CGFloat x = [self renderedCenterXForItem:tab];
+                if (!isnan(x)) [centers addObject:@(self.frame.origin.x + x)];
+            }
+            [centers sortUsingSelector:@selector(compare:)];
+            [lens setTabCenters:centers];
             CGFloat lo, hi;
             [self trackBoundsMin:&lo max:&hi];
             [lens beginTouchAtX:hostX minCenter:lo maxCenter:hi];

@@ -16,6 +16,10 @@ static const CGFloat kLensHeldBend = 0.4;
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
 static const CGFloat kLensGrow = 18, kLensOverscroll = 14;
+// At the middle of two 92pt-spaced tabs a 101pt-wide bubble at 1.2x samples only ~84pt of
+// the backdrop: neither icon center is in its field of view. Widen just in that gap,
+// enough to include the neighboring 24pt glyphs without widening the pill at rest.
+static const CGFloat kLensGlyphSide = 24, kLensMaxGapGrow = 48;
 // The bubble's shape is one deformation, d: wider and shorter for d > 0, narrower and taller for d < 0, the height
 // giving way by kLensVolume of what the width gains so the bubble keeps its volume, and d held to kLensMaxDeform either
 // way, so a flick never swells it. Its size does not grow with speed. d is the squash spring below (the bubble's body
@@ -89,6 +93,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // The squash spring and the speed it last saw (see kLensSquashKick).
     CGFloat _sq, _vSq, _prevSpeed;
     CGFloat _minCenter, _maxCenter;
+    NSArray<NSNumber *> *_tabCenters;
     BOOL _glassOn;
     // A bubble nobody holds is not run frame by frame on the main thread, which a tab loading under it would stall
     // (the glass froze for as long as the page took). Its whole run is worked out at once and handed to Core
@@ -175,6 +180,10 @@ static BOOL bubbles(void) {
     return SGUseLegacyGlass();
 }
 
+- (void)setTabCenters:(NSArray<NSNumber *> *)centers {
+    _tabCenters = [centers copy];
+}
+
 - (void)beginTouchAtX:(CGFloat)x minCenter:(CGFloat)minCenter maxCenter:(CGFloat)maxCenter {
     // Reduce Motion: the pill stays a pill and moves with the selection, as it did.
     if (CGRectIsEmpty(_restFrame) || self.hidden || SGRReduceMotion()) return;
@@ -194,6 +203,20 @@ static BOOL bubbles(void) {
     if (!_touching) return;
     CGFloat center = rubber(x, _minCenter, _maxCenter);
     CGFloat width = _restFrame.size.width + (bubbles() ? kLensGrow : 0);
+    if (bubbles()) {
+        // The lens magnifies about its own center, so a narrow lens can sample
+        // nothing between two widely spaced glyphs. Grow smoothly between their
+        // real rendered centers; at each center retain the original bubble size.
+        for (NSUInteger i = 1; i < _tabCenters.count; i++) {
+            CGFloat left = _tabCenters[i - 1].doubleValue, right = _tabCenters[i].doubleValue;
+            CGFloat gap = right - left;
+            if (gap <= 0 || center < left || center > right) continue;
+            CGFloat t = (center - left) / gap;
+            CGFloat needed = MAX(0, kLensMagnification * (gap + kLensGlyphSide) - width);
+            width += MIN(kLensMaxGapGrow, needed) * (4 * t * (1 - t));
+            break;
+        }
+    }
     _tL = center - width / 2;
     _tR = center + width / 2;
     [self start];
@@ -261,7 +284,8 @@ static BOOL bubbles(void) {
 // pill's); the look is a transform, so no frame of glass is laid out again while it moves.
 - (void)getPose:(SGLensSample)st center:(CGPoint *)center sx:(CGFloat *)sx sy:(CGFloat *)sy {
     CGFloat baseWidth = MAX(1, self.bounds.size.width), baseHeight = MAX(1, self.bounds.size.height);
-    CGFloat nominal = MAX(1, _restFrame.size.width + kLensGrow * st.lift);
+    // The spring is allowed to reach the gap width before drawing its pose.
+    CGFloat nominal = MAX(1, _restFrame.size.width + (kLensGrow + kLensMaxGapGrow) * st.lift);
     CGFloat width = MIN(MAX(baseHeight * 0.8, st.R - st.L), nominal * (1 + kLensMaxLag));
     CGFloat speed = fabs(st.vL + st.vR) / 2;
     CGFloat stretch = kLensMaxSpeedStretch * tanh(speed / kLensStretchSpeed);
