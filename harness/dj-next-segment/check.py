@@ -26,6 +26,8 @@ skip = function('skipToNextDJSegment')
 poll = function('pollNextSegmentSkip')
 assert 'SGDJQueueBeginPick()' in skip and 'SGPlayerSetDJTransitionMuted(YES)' in skip
 assert 'skipForward(anchor)' in poll and 'skipForward(next)' in poll
+assert 'sNextSegmentPhysicalAdvances >= 2' in poll and 'skipForward(nil)' in poll
+assert 'if (isCoreQueued(next)) return;' in poll
 assert 'jumpWithCompletion:' not in skip + poll
 assert 'signal:parameters:' not in skip + poll
 assert 'SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip)' in queue
@@ -65,7 +67,7 @@ int main(void) { @autoreleasepool {
     assert(!isNewSegmentItem(track(@"spotify:track:old", @"old-song", @"old-page", @"context")));
     assert(!isNewSegmentItem(track(@"spotify:track:old", @"old-song", nil, @"context")));
     assert(!isNewSegmentItem(track(@"spotify:media:outro", @"old-outro", nil, @"context")));
-    assert(!isNewSegmentItem(track(@"spotify:track:old", @"new-uid", @"old-page", @"context")));
+    assert(isNewSegmentItem(track(@"spotify:track:new", @"new-uid", @"old-page", @"context")));
     assert(isNewSegmentItem(track(@"spotify:media:intro", @"old-intro", @"new-page", @"context")));
     assert(isNewSegmentItem(track(@"spotify:track:new", @"new-uid", nil, @"context")));
     assert(!isNewSegmentItem(track(@"spotify:track:new", @"new-uid", @"new-page", @"queue")));
