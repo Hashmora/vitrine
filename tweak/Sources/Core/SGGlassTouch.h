@@ -20,3 +20,9 @@ void SGGlassInteractive(UIView *host, UIView *pane);
 
 // The same where the touches land on `touched` (a button laid over the control) while `host` is what moves.
 void SGGlassInteractiveVia(UIView *touched, UIView *host, UIView *pane);
+
+// Shared glass pill: the interactive spring belongs to `host`, but sibling
+// controls drawn above it must move with the lens. Weakly observes the peers;
+// no reparenting or touch-target changes are made. Optional, currently used
+// only by the grouped Library header buttons.
+void SGGlassInteractiveViaPeers(UIView *touched, UIView *host, UIView *pane, NSArray<UIView *> *peers);

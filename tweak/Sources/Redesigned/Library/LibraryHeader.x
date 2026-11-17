@@ -482,7 +482,7 @@ static void layoutRoot(UIView *page) {
             // the shared glass, as the search capsule and filter chips do.
             UIView *holder = pane.superview;
             if (SGUseLegacyGlass() && pane && holder) {
-                for (UIView *control in trailing) SGGlassInteractiveVia(control, holder, pane);
+                for (UIView *control in trailing) SGGlassInteractiveViaPeers(control, holder, pane, trailing);
                 SGRUnclipUpTo(holder, ^BOOL(UIView *v) { return v == header; });
             }
             for (UIView *control in trailing) {
