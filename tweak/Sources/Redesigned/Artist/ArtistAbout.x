@@ -48,7 +48,9 @@ static void dressButton(UIView *button) {
     // on every Follow/Following change, with no manual width mutation.
     SGRGlassCapsuleInside(button, &kButtonGlassKey, button.bounds.size, NO);
     SGRUnclipUpTo(button, ^BOOL(UIView *v) {
-        return [NSStringFromClass(v.class) hasSuffix:@"CreatorBiographyCardLayout"];
+        // Stop BEFORE the outer card. Unclipping the BiographyCardLayout itself
+        // lost its 16pt rounded corners after toggling Follow.
+        return [NSStringFromClass(v.superview.class) hasSuffix:@"CreatorBiographyCardLayout"];
     });
 }
 
