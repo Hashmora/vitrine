@@ -5,7 +5,7 @@ import subprocess, tempfile
 source = (Path(__file__).resolve().parents[2] / 'tweak/Sources/Shared/Player/DJQueue.x').read_text()
 def function(name):
     import re
-    match = re.search(r'^(?:static )?[^\n]+\b' + name + r'\([^\n]*\) \{', source, re.M)
+    match = re.search(r'^[A-Za-z_][^\n]*\b' + name + r'\([^\n]*\) \{', source, re.M)
     assert match, name
     start = match.start(); pos = match.end(); depth = 1
     while depth:
@@ -36,12 +36,13 @@ static NSMutableDictionary *sCopyOf;
 static NSMutableArray<SPTPlayerTrack *> *sPlayed;
 static NSMutableSet *sHidden, *sPassed, *sPlayedBefore, *sVoiced;
 static BOOL sDJActive = YES, sOrdered, sHandingOver, sAdvancing, sPlayingMoved;
-static SPTPlayerTrack *wanted;
+static SPTPlayerTrack *wanted, *sAheadQueued;
+static SPTPlayerTrack *lastOfSegment(SPTPlayerState *state);
 static BOOL isDJSession(SPTPlayerState *state) { return YES; }
 static SPTPlayerTrack *wantedNext(void) { return wanted; }
 static SPTPlayerTrack *originalOf(SPTPlayerTrack *track) { return track; }
 '''
-names = ['baseUID','historyUID','sameGroup','isDJTrack','inDJ','isHidden','wasPlayed','staysHidden','playedIndex','playedBefore','playedAfter','historyFutureRows','isCoreQueued','coreNextUnplayed','isUnspent','reachableInFuture','skipPastSpent','repeatedCurrentOutro']
+names = ['baseUID','historyUID','sameGroup','isDJTrack','inDJ','isHidden','wasPlayed','staysHidden','playedIndex','playedBefore','playedAfter','historyFutureRows','isCoreQueued','queuedCopyOf','coreNextUnplayed','isUnspent','reachableInFuture','skipPastSpent','repeatedCurrentOutro','onlyThisLeft','lastLogicalNext']
 tests = r'''
 static SPTPlayerTrack *song(NSString *uid) {
     SPTPlayerTrack *t = [SPTPlayerTrack new]; t.UID = uid;
@@ -91,6 +92,17 @@ int main(void) { @autoreleasepool {
     state.track = five; wanted = fresh; assert(skipPastSpent(state) == fresh); wanted = song(@"not-reachable"); assert(skipPastSpent(state) == nil); wanted = nil;
     SPTPlayerTrack *hand = song(@"qHand"); hand.provider = @"queue";
     state.future = @[hand,three,fresh]; assert(skipPastSpent(state) == nil);
+    // An already queued logical last song still needs the physical context anchor.
+    sPlayed = [@[four,five,one,two] mutableCopy]; [sHidden removeObject:@"3"];
+    state.track = two; state.future = @[copy,three,four,five,outro]; sAheadQueued = wanted = three;
+    assert(onlyThisLeft(state, three)); assert(lastLogicalNext(state) == three);
+    state.future = @[three,four,five,outro]; assert(lastLogicalNext(state) == three);
+    state.future = @[copy,three,four,five,outro];
+    // A queue copy of the physical last is not proof that the core reached that last item.
+    sPlayed = [@[four,one,two,five] mutableCopy]; state.track = copyFive;
+    assert(onlyThisLeft(state, three)); assert(lastLogicalNext(state) == three);
+    state.future = @[hand,copy,three,four,five,outro]; assert(lastLogicalNext(state) == nil);
+    sPlayed = [@[one,two,three,four,five] mutableCopy]; sAheadQueued = wanted = nil;
     puts("DJ history and spent-track decisions: PASS");
 } }
 '''
@@ -115,7 +127,8 @@ static atomic_uint_fast64_t sg_djMutedBuffers;
 @end
 static SPTPlayerState *testState;
 static SPTPlayerTrack *landingTarget;
-static SPTPlayerTrack *nextPhysicalSong;
+static SPTPlayerTrack *nextPhysicalSong, *prefetchedNext;
+static NSUInteger queueCalls;
 static NSMutableArray *commands;
 static NSString *sHandOverAnchorUID;
 static SPTPlayerTrack *sHandOverDisplayTrack;
@@ -142,7 +155,7 @@ static NSString *trackKey(SPTPlayerTrack *t) { return t.UID; }
 }
 @end
 static id queuePlayer(void) { static TestPlayer *p; if (!p) p = [TestPlayer new]; return p; }
-static BOOL queueInCore(id t) { return YES; }
+static BOOL queueInCore(id t) { queueCalls++; return YES; }
 static void hideTrack(id t, id reason) {}
 static void refreshReaders(void) {}
 static void noteCopy(id a, id b) {}
@@ -151,7 +164,9 @@ static id skipForward(SPTPlayerTrack *t) {
     if (!t) { [commands addObject:@"advance into voice"]; t = nextPhysicalSong ?: landingTarget; nextPhysicalSong = nil; }
     else [commands addObject:t == landingTarget ? @"skip destination" : @"skip anchor"];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, .08 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        testState.track = t; testState.future = @[landingTarget]; testState.isPaused = NO;
+        testState.track = t;
+        testState.future = prefetchedNext ? (t == landingTarget ? @[prefetchedNext] : @[landingTarget,prefetchedNext]) : @[landingTarget];
+        testState.isPaused = NO;
     }); return @YES;
 }
 ''' + function('shownDJTrack') + function('shownDJStateBase') + function('lastOfSegment') + function('finishDJLanding') + function('landAtSegmentEnd')
@@ -174,6 +189,16 @@ static id skipForward(SPTPlayerTrack *t) {
     assert(!sHandingOver && !atomic_load(&sg_djTransitionMuted) && !state.isPaused && state.track == landingTarget);
     NSArray *expected = @[@"pause requested", @"pause acknowledged", @"skip anchor", @"skip destination", @"resume"];
     assert([commands isEqual:expected]);
+    // Reuse an existing queued copy, generate the next segment before starting it.
+    sPlayed = [@[four,five,one,two] mutableCopy];
+    state.track = two; state.future = @[copy,three,four,five,outro]; state.isPaused = NO;
+    landingTarget = copy; prefetchedNext = fresh; sAheadQueued = three; commands = [NSMutableArray array]; queueCalls = 0;
+    landAtSegmentEnd(three);
+    limit = [NSDate dateWithTimeIntervalSinceNow:3];
+    while (sHandingOver && limit.timeIntervalSinceNow > 0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    assert(!sHandingOver && state.track == copy && state.future.firstObject == fresh && queueCalls == 0);
+    prefetchedNext = nil; sAheadQueued = nil; sPlayed = [@[one,two,three,four,five] mutableCopy];
     // UID confirmation alone would open the gate on the song before the shared-UID voice.
     sHandingOver = YES; sHandOverAnchorUID = five.UID; sHandOverDisplayTrack = four;
     assert(shownDJTrack(five) == four); assert(shownDJTrack(outro) == four);

@@ -45,3 +45,15 @@ before releasing the voice. The checks assert that the gate stays closed while
 those songs are current and that the displayed song/clock remain the held snapshot.
 `dj.state` in driver builds exposes raw/shown items and the render gate's muted
 buffer count for simulator diagnosis.
+
+Logical-final-song prefetch regression: an owned queued copy is ignored when
+checking whether only that logical song remains, reused rather than queued twice,
+and played after the context anchor has produced the next segment. The checks
+also cover an unqueued logical last and a current queue copy of the physical last.
+The deadline watcher remains active across future-only reports.
+
+Live simulator check: moved Favorite Lie ahead of KRYPTONITE/YOSEMITE, then let
+KRYPTONITE finish automatically. The internal Favorite Lie anchor retained
+KRYPTONITE on screen; the main play button stayed Pause in all sampled handover
+states. YOSEMITE started automatically with the next segment's introduction and
+five songs already present in the core future.

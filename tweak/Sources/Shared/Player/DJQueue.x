@@ -1020,6 +1020,7 @@ static NSString *sHandOverAnchorUID;
 static SPTPlayerTrack *sHandOverDisplayTrack;
 static SPTPlayerState *sHandOverDisplayState;
 static BOOL onlyThisLeft(SPTPlayerState *state, SPTPlayerTrack *target);
+static SPTPlayerTrack *lastLogicalNext(SPTPlayerState *state);
 
 // `track` has an "Up next" card before it in the core's future that has not been heard (the DJ's words after a track
 // have its uid too, and come after it).
@@ -1149,9 +1150,11 @@ static id advanceTo(SPTPlayerTrack *target, BOOL voiceFirst) {
     }
     // The last of the segment that has not played, with ones that played or were removed after it in the core's order:
     // gone to directly, the core is not on its last track and makes no next segment until it has played through those.
-    if (!aheadThere && onlyThisLeft(state, target)) {
-        if (sAheadQueued) dropQueued(SGURIString(sAheadQueued.URI), @"the segment's last is played");
-        sAheadQueued = nil;
+    if (onlyThisLeft(state, target)) {
+        if (sAheadQueued && !sameGroup(sAheadQueued, target)) {
+            dropQueued(SGURIString(sAheadQueued.URI), @"the segment's last is played");
+            sAheadQueued = nil;
+        }
         id landed = landAtSegmentEnd(target);
         if (landed) return landed;
     }
@@ -2023,6 +2026,10 @@ static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
 
 %hook SPTEsperantoPlayer
 - (id)skipToNextTrackWithOptions:(id)options track:(SPTPlayerTrack *)track loggingParams:(id)params {
+    if (!track && sDJActive && !sAdvancing && !sHandingOver) {
+        SPTPlayerTrack *last = lastLogicalNext(SGPlayerState());
+        if (last) { id landed = landAtSegmentEnd(last); if (landed) return landed; }
+    }
     if (!track && sDJActive && !sAdvancing && !sHandingOver && segmentSpent(SGPlayerState())) {
         id landed = landAtSegmentEnd(nil);
         if (landed) return landed;
@@ -2175,8 +2182,8 @@ static BOOL onlyThisLeft(SPTPlayerState *state, SPTPlayerTrack *target) {
     for (SPTPlayerTrack *t in state.future) {
         // The copy put in ahead for another track is taken out on the way (a tap with one in the core's queue went
         // straight to the last row, the core still had a passed track after it, and no next segment came).
-        if (isCoreQueued(t) && sAheadQueued && [SGURIString(t.URI) isEqualToString:SGURIString(sAheadQueued.URI)] &&
-            !sameGroup(sAheadQueued, target)) continue;
+        if (isCoreQueued(t) && ((sAheadQueued && [SGURIString(t.URI) isEqualToString:SGURIString(sAheadQueued.URI)]) ||
+            (sCopyOf[t.UID] && sameGroup(t, target)))) continue;
         if (isCoreQueued(t)) return NO;
         if ([SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) break;
         if (sameGroup(t, target)) {
@@ -2189,7 +2196,17 @@ static BOOL onlyThisLeft(SPTPlayerState *state, SPTPlayerTrack *target) {
         if (seen) after = YES;
     }
     SPTPlayerTrack *last = lastOfSegment(state);
-    return seen && after && last && !sameGroup(last, state.track);
+    return seen && after && last && (!sameGroup(last, state.track) || isCoreQueued(state.track));
+}
+
+// Enter the user's final song only after the context has requested the next
+// segment. This is needed even when that song is already the core's next item:
+// tracks after it in the physical context may have played earlier from copies.
+static SPTPlayerTrack *lastLogicalNext(SPTPlayerState *state) {
+    if (!sOrdered || !isDJSession(state) || playedAfter(state.track)) return nil;
+    SPTPlayerTrack *target = wantedNext();
+    if (!target || sameGroup(target, state.track)) return nil;
+    return onlyThisLeft(state, target) ? target : nil;
 }
 
 // The core makes the next segment only once it is on this one's last track, and on the way it would play for a moment
@@ -2242,14 +2259,17 @@ static void finishDJLanding(id<SPTPlayer> player, SPTPlayerTrack *target, NSStri
 static id landAtSegmentEnd(SPTPlayerTrack *play) {
     SPTPlayerState *state = SGPlayerState();
     SPTPlayerTrack *last = lastOfSegment(state);
-    if (sHandingOver || !last || sameGroup(last, state.track)) return nil;
+    if (sHandingOver || !last || (sameGroup(last, state.track) && !isCoreQueued(state.track))) return nil;
     sHandOverDisplayState = SGPlayerState();
     sHandOverDisplayTrack = asDJTrack(sHandOverDisplayState.track) ?: sHandOverDisplayState.track;
     sHandingOver = YES;
     sHandOverAnchorUID = historyUID(last);
     SGPlayerSetDJTransitionMuted(YES);
     if (play) {
-        if (!queueInCore(play)) { sHandingOver = NO; sHandOverAnchorUID = nil; sHandOverDisplayTrack = nil; sHandOverDisplayState = nil; SGPlayerSetDJTransitionMuted(NO); return nil; }
+        SPTPlayerTrack *existing = queuedCopyOf(play, state, NULL);
+        BOOL pending = sameGroup(sAheadQueued, play);
+        if (existing) noteCopy(existing, play);
+        if (!existing && !pending && !queueInCore(play)) { sHandingOver = NO; sHandOverAnchorUID = nil; sHandOverDisplayTrack = nil; sHandOverDisplayState = nil; SGPlayerSetDJTransitionMuted(NO); return nil; }
         hideTrack(play, @"played through the queue");
         refreshReaders();
     }
@@ -2437,12 +2457,14 @@ static void skipRepeatedCurrentIntoOutro(SPTPlayerTrack *voice) {
 }
 
 static BOOL needsHandOver(SPTPlayerState *state) {
-    return repeatedCurrentOutro(state) != nil || segmentSpent(state) || atSegmentEnd(state) || skipPastSpent(state) != nil;
+    return lastLogicalNext(state) != nil || repeatedCurrentOutro(state) != nil || segmentSpent(state) || atSegmentEnd(state) || skipPastSpent(state) != nil;
 }
 
 static void handOver(void) {
     if (sHandingOver) return;
     SPTPlayerState *state = SGPlayerState();
+    SPTPlayerTrack *last = lastLogicalNext(state);
+    if (last) { landAtSegmentEnd(last); return; }
     SPTPlayerTrack *outro = repeatedCurrentOutro(state);
     if (outro) { skipRepeatedCurrentIntoOutro(outro); return; }
     if (segmentSpent(state)) { landAtSegmentEnd(nil); return; }
@@ -2458,19 +2480,20 @@ static void handOver(void) {
 // Looked at again whenever the player comes to a track, plays or pauses; while nothing of the segment is left, the time to
 // the track's end is watched (a seek tells the state's observers nothing).
 static void scheduleHandOver(void) {
-    if (sHandOverTimer.isValid && needsHandOver(SGPlayerState())) return;
-    [sHandOverTimer invalidate];
-    sHandOverTimer = nil;
-    if (sHandingOver || !needsHandOver(SGPlayerState())) return;
+    if (!sDJActive || !isDJSession(SGPlayerState())) {
+        [sHandOverTimer invalidate]; sHandOverTimer = nil;
+        return;
+    }
+    if (sHandOverTimer.isValid) return;
+    // Future/order reports may arrive after the track callback. Keep watching the
+    // session, rather than disabling the only clock check on a transient snapshot.
     sHandOverTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *timer) {
         SPTPlayerState *now = SGPlayerState();
-        if (sHandingOver || !needsHandOver(now)) { [timer invalidate]; if (sHandOverTimer == timer) sHandOverTimer = nil; return; }
-        if (now.isPaused || now.duration <= 0) return;
+        if (!sDJActive || !isDJSession(now)) { [timer invalidate]; if (sHandOverTimer == timer) sHandOverTimer = nil; return; }
+        if (sHandingOver || now.isPaused || now.duration <= 0) return;
         double speed = now.playbackSpeed > 0 ? now.playbackSpeed : 1;
         if ((now.duration - now.position) / speed > kHandOverLead) return;
-        [timer invalidate];
-        if (sHandOverTimer == timer) sHandOverTimer = nil;
-        handOver();
+        if (needsHandOver(now)) handOver();
     }];
 }
 
