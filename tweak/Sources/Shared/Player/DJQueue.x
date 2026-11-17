@@ -1726,16 +1726,12 @@ static void drawNewSegmentButton(UIView *page) {
             drawNewSegmentButton(sQueuePageView);
             SGLog(@"queue: New DJ set uses %@ jumpWithCompletion:", NSStringFromClass([jumper class]));
             // 9.1.90's native completion is void (^)(NSError *). Spotify owns
-            // fetching and playback; only discard our old order after it accepts the jump.
+            // fetching and playback. DJPick.x waits for a real landing before finishing.
             void (^complete)(NSError *) = ^(NSError *error) {
                 SGLog(@"queue: New DJ set result: %@", error ?: @"success");
                 dispatch_async(dispatch_get_main_queue(), ^{
                     sPickingSegment = NO;
-                    if (!error && isDJSession(SGPlayerState())) {
-                        if (sAheadQueued) dropQueued(SGURIString(sAheadQueued.URI), @"new DJ set requested");
-                        sAheadQueued = nil;
-                        forgetOrder();
-                    } else if (error) {
+                    if (error) {
                         [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Couldn't change DJ set"
                                            detail:error.localizedDescription symbol:@"exclamationmark.circle"];
                     }
@@ -1781,6 +1777,31 @@ static void drawNewSegmentButton(UIView *page) {
     if (button.superview != host) [host addSubview:button];
     [host bringSubviewToFront:button];
     button.hidden = NO;
+}
+
+void SGDJQueueBeginPick(void) {
+    if (!sDJActive) return;
+    sPickingSegment = YES;
+    // A prompt replaces the context, but the core preserves its hand queue.
+    // Remove our prepared old song before that replacement can consume it.
+    SPTPlayerTrack *prepared = sAheadQueued;
+    sAheadQueued = nil;
+    if (prepared) dropQueued(SGURIString(prepared.URI), @"waiting for a new DJ set");
+    drawNewSegmentButton(sQueuePageView);
+}
+void SGDJQueueFinishPick(BOOL changed) {
+    sPickingSegment = NO;
+    if (changed && sDJActive) {
+        if (sAheadQueued) dropQueued(SGURIString(sAheadQueued.URI), @"new DJ set landed");
+        sAheadQueued = nil;
+        forgetOrder();
+    }
+    if (sDJActive) {
+        sSignature = nil;
+        refreshReaders();
+        if (!changed) queueAhead(); // restore the old order's preparation after a cancelled/failed Pick
+    }
+    drawNewSegmentButton(sQueuePageView);
 }
 
 static void placeReorderHandle(UITableViewCell *cell) {

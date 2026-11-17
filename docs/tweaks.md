@@ -830,8 +830,14 @@ Spotify's own through.
 - **New DJ set:** a compact action beside Edit on the DJ queue header duplicates the request sheet's
   “Let DJ pick”. It uses Spotify's own `AIDJService` / `CompositeJumpable` and `jumpWithCompletion:`;
   the 9.1.90 classes, factory selector and NSError completion were checked against its binary and native tap.
-  Repeated taps and reorder enforcement wait for the reply. Success drops only this feature's queued copy
-  and custom order; an error preserves the order and shows a notice. The action hides during Edit.
+  `DJPick.x` also repairs the native button: the local `jump` acknowledgement can be successful while the
+  playlist service later answers HTTP 502. A real landing in another page/interaction is required, rather than
+  a local acknowledgement or ordinary next song in the old set. After six seconds without one, one neutral
+  suggested `prompt` asks for a new mix through the working native request path. Explicit requests/skips,
+  pausing, a context change and timeouts stop the pending retry. Repeated taps share the attempt. The custom
+  queue's order is inactive while waiting and is discarded only on an actual landing; errors preserve it.
+  The owned prefetch is removed before the request so it cannot play ahead of the new set; hand queue stays.
+  The queue action hides during Edit. Checked by `harness/dj-pick/` and the queue regression harness.
 - **Artwork:** Home and Recents use the DJ's public cover (the DJ card's recorded `image_url`), cached locally.
   Each look owns its drawing hooks. Reused Library cells are never a source of another item's artwork.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
