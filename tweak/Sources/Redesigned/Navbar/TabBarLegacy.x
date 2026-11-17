@@ -38,6 +38,10 @@ static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it t
 // icon out as if one sat below it, so the icon is nudged down by kNavIconOnlyImageShift (the two are tuned
 // together).
 static const CGFloat kNavPlatterHeight = 64;
+// UIKit normally gives each tab a 56pt button. When Spotify shows its 52pt
+// connection indicator, UIKit gives it 63pt instead, pushing the title below
+// the 58pt selection lens even though our capsule itself stays 64pt high.
+static const CGFloat kNavButtonHeight = 56;
 static const CGFloat kNavPlatterHeightIconOnly = 52;
 static const CGFloat kNavIconOnlyImageShift = 6;
 static const CGFloat kNavItemSpacing = 4;
@@ -579,6 +583,18 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
+    // The Offline / Slow connection message consumes Spotify's bottom safe area.
+    // UIKit then stretches UITabBarButton from 56 to 63pt inside our unchanged
+    // 64pt capsule, dropping titles below the selection lens. Keep only the
+    // *buttons* at the ordinary row height, leaving the capsule, lens and
+    // Spotify's necessary upward move above the message untouched.
+    for (UIView *button in tabButtons(self)) {
+        CGRect frame = button.frame;
+        if (frame.size.height <= kNavButtonHeight + 0.5) continue;
+        frame.size.height = kNavButtonHeight;
+        button.frame = frame;
+        [button layoutIfNeeded]; // let UIKit reposition its own icon and title
+    }
     pruneStrayButtons(self);
     paintGlyphs(self);
     // The pill can be placed before UIKit has put the buttons where they end up, so every pass re-checks it.

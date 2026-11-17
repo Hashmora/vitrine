@@ -68,7 +68,7 @@ static const CGFloat kActionInset = 9;
 // The space between the label and the glass round the action.
 static const CGFloat kLabelGap = 16;
 
-static char kGlassKey, kFilmKey, kDimKey, kActionGlassKey, kDressedKey, kQueueLoggedWidthKey;
+static char kGlassKey, kFilmKey, kDimKey, kActionGlassKey, kDressedKey;
 // The toast on screen, for the tab bar's minimize to move.
 static __weak UIView *sg_snackbar;
 
@@ -120,25 +120,6 @@ static NSString *queueTitle(UIView *label) {
     // In some Spotify builds the UILabel temporarily has only the prefix.
     if ([current isEqualToString:@"Added to"]) return @"Added to Queue";
     return nil;
-}
-
-static BOOL settleQueueText(UIView *content) {
-    if (![NSStringFromClass(content.class) containsString:@"SnackbarWithActionView"]) return NO;
-    UIView *label = nil, *action = nil;
-    contentParts(content, &label, &action);
-    NSString *title = queueTitle(label);
-    UILabel *text = label ? innerLabel(label) : nil;
-    if (!title || !text) return NO;
-    [UIView performWithoutAnimation:^{
-        // The accessibility title can be complete even while the inner UILabel
-        // is still holding the animated, wrapped prefix. Replace it in place.
-        if (![text.text isEqualToString:title]) text.text = title;
-        SGForEachView(label, ^(UIView *view) {
-            [view.layer removeAllAnimations];
-            if (!CGAffineTransformIsIdentity(view.transform)) view.transform = CGAffineTransformIdentity;
-        });
-    }];
-    return YES;
 }
 
 // The action's size: its frame once Spotify has laid it out, its word's until then.
@@ -282,13 +263,13 @@ static void dressSnackbar(UIView *snackbar) {
     sg_snackbar = snackbar;
     CGFloat maxWidth = snackbar.bounds.size.width - kSideInset * 2;
     BOOL hosted = content && isHostingView(content);
-    BOOL queue = content && !hosted && settleQueueText(content);
+    UIView *label = nil, *action = nil;
+    if (content && !hosted) contentParts(content, &label, &action);
+    BOOL queue = action && queueTitle(label) != nil;
     CGFloat width = !content ? maxWidth : hosted ? hostedCardWidth(content, maxWidth) : cardWidth(content, maxWidth);
     // By bounds and centre: the card carries a transform below (the minimized tab bar), and a frame set under one is undefined.
     CGRect bounds = CGRectMake(0, 0, width, snackbar.bounds.size.height);
     CGPoint center = CGPointMake(round((snackbar.bounds.size.width - width) / 2) + width / 2, snackbar.bounds.size.height / 2);
-    // Spotify can invoke this pass within its entrance animation. The whole
-    // snackbar is allowed to move, but never animate a late capsule resize.
     void (^placeCard)(void) = ^{
         if (!CGRectEqualToRect(card.bounds, bounds)) card.bounds = bounds;
         if (!CGPointEqualToPoint(card.center, center)) card.center = center;
@@ -296,8 +277,7 @@ static void dressSnackbar(UIView *snackbar) {
     if (queue) [UIView performWithoutAnimation:placeCard];
     else placeCard();
     followNowPlayingBar(snackbar);
-    // The floating glass and action glass must not inherit Spotify's
-    // entrance animation when this first, final Queue geometry is applied.
+    // Keep first-frame Queue geometry outside the snackbar's entrance animation.
     if (queue) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
@@ -324,20 +304,8 @@ static void dressSnackbar(UIView *snackbar) {
     SGForEachView(card, ^(UIView *view) {
         if (isActionButton(view)) dressAction(view);
     });
-
     if (queue) [CATransaction commit];
 
-    if (queue) {
-        NSNumber *previous = objc_getAssociatedObject(snackbar, &kQueueLoggedWidthKey);
-        if (!previous || fabs(previous.doubleValue - width) > 0.5) {
-            UIView *label = nil, *action = nil;
-            contentParts(content, &label, &action);
-            SGLog(@"toast: queue width %.1f title '%@' inner '%@' label %@ action %@", width,
-                  label.accessibilityLabel, innerLabel(label).text,
-                  NSStringFromCGRect(label.frame), NSStringFromCGRect(action.frame));
-            objc_setAssociatedObject(snackbar, &kQueueLoggedWidthKey, @(width), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-    }
     static dispatch_once_t once;
     dispatch_once(&once, ^{ SGLog(@"toast: glass over a card of %@", NSStringFromCGRect(card.bounds)); });
 }
@@ -442,10 +410,7 @@ static void shownAgain(UIView *snackbar) {
 // Spotify lays the label and the action out again for its own width whenever the content lays out.
 static void relayoutContent(UIView *content) {
     UIView *snackbar = content.superview.superview;
-    if (snackbar && objc_getAssociatedObject(snackbar, &kDressedKey)) {
-        settleQueueText(content);
-        layoutContent(content);
-    }
+    if (snackbar && objc_getAssociatedObject(snackbar, &kDressedKey)) layoutContent(content);
 }
 
 // A frame Spotify gives the content (its 374) is the card's instead, so the Open button is never placed past the card's edge.
@@ -462,11 +427,7 @@ static CGRect heldToCard(UIView *content, CGRect frame) {
 }
 
 - (void)layoutSubviews {
-    // The native layout can overwrite the label while animating its suffix.
-    // Correct it on both sides of that pass, before our width calculation.
-    settleQueueText((UIView *)self);
     %orig;
-    settleQueueText((UIView *)self);
     relayoutContent((UIView *)self);
 }
 %end
