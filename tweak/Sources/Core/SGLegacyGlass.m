@@ -560,7 +560,9 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
 }
 
 - (void)setMagnification:(CGFloat)magnification {
-    magnification = MAX(1, magnification);
+    // The raised Legacy Tab Bar lens uses a slight backdrop reduction. Other
+    // glass panes still request 1 or more and keep their previous behaviour.
+    magnification = MAX(0.96, magnification);
     if (_magnification == magnification) return;
     _magnification = magnification;
     _meshSize = CGSizeZero;   // the mesh is made again on the next pass
