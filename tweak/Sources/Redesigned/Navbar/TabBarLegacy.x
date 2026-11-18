@@ -45,8 +45,8 @@ static const CGFloat kNavItemSpacing = 0;  // another 2pt closer, without resizi
 static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before the now playing card has a radius to follow
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
 static const CGFloat kSelPillInset = 2;     // a slightly taller bubble with more tab title headroom
-static const CGFloat kSelPillXInset = 2;  // wider resting underlay, still with even side gaps
-static const CGFloat kLensOverhang = 5;     // the held bubble stands a little taller above and below the capsule
+static const CGFloat kSelPillXInset = 1;  // wider resting underlay, still with even side gaps
+static const CGFloat kLensOverhang = 6;     // the held bubble stands a little taller above and below the capsule
 static const CGFloat kBarPressScale = 1.018; // the capsule breathes more gently while the bubble is up
 static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
@@ -169,6 +169,15 @@ static CALayer *discHole(UIImage *glyph, CGFloat size) {
     return layer;
 }
 
+static void applyCreatePose(UIView *disc, UIView *glyph, BOOL open) {
+    BOOL tinted = tintedTabs();
+    disc.alpha = open ? 1 : 0;
+    disc.transform = open ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.4, 0.4);
+    glyph.transform = open ? CGAffineTransformMakeRotation(M_PI_4) : CGAffineTransformIdentity;
+    glyph.tintColor = open ? UIColor.blackColor : UIColor.whiteColor;
+    glyph.alpha = open && tinted ? 0 : 1;
+}
+
 // Create's menu open: its plus turns 45 degrees, black, onto a white disc that grows in behind it; closed, back again.
 // With Tabs in the accent the disc is the accent's and the plus is cut out of it.
 static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
@@ -179,13 +188,12 @@ static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
     disc.layer.mask = tinted ? discHole(image, disc.bounds.size.width) : nil;
     [UIView animateWithDuration:0.32 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0
         options:UIViewAnimationOptionBeginFromCurrentState animations:^{
-        disc.alpha = open ? 1 : 0;
-        disc.transform = open ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.4, 0.4);
-        glyph.transform = open ? CGAffineTransformMakeRotation(M_PI_4) : CGAffineTransformIdentity;
-        // Create is an action, not the active page; its resting plus stays white.
-        glyph.tintColor = open ? UIColor.blackColor : UIColor.whiteColor;
-        glyph.alpha = open && tinted ? 0 : 1;
-    } completion:nil];
+        applyCreatePose(disc, glyph, open);
+    } completion:^(__unused BOOL finished) {
+        [UIView performWithoutAnimation:^{
+            applyCreatePose(disc, glyph, open);
+        }];
+    }];
 }
 
 // Create's menu dims the page behind the bar, and the bar reads best then: the glass carries that dimming itself,
@@ -696,7 +704,15 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
         disc.layer.cornerRadius = discSize / 2;
     }
     disc.center = overlay.center;
-    if ((disc.alpha > 0.5) == open && (open || CGAffineTransformIsIdentity(overlay.transform))) return;
+    BOOL animating = disc.layer.animationKeys.count || overlay.layer.animationKeys.count;
+    if ((disc.alpha > 0.5) == open && (open || CGAffineTransformIsIdentity(overlay.transform)) && !animating) return;
+    if (animating) {
+        [disc.layer removeAllAnimations];
+        [overlay.layer removeAllAnimations];
+        [UIView performWithoutAnimation:^{
+            applyCreatePose(disc, overlay, !open);
+        }];
+    }
     if (open) disc.transform = CGAffineTransformMakeScale(0.4, 0.4);
     turnCreate(disc, overlay, open);
 }
