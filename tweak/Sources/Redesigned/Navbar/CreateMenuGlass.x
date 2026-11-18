@@ -15,7 +15,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 
 static NSString *const kCardIdentifier = @"CreateMenu.ScrollView";
-static char kCardKey, kCardGlassKey;
+static char kCardKey, kCardGlassKey, kLegacyBarGlassKey;
 
 static void glassCard(UIViewController *controller) {
     UIView *root = controller.viewIfLoaded;
@@ -24,8 +24,21 @@ static void glassCard(UIViewController *controller) {
     if (!host) return;
     CGFloat radius = card.layer.cornerRadius;
     UIView *glass = SGGlassFor(host, &kCardGlassKey);
-    if (!CGRectEqualToRect(glass.frame, card.frame)) glass.frame = card.frame;
-    SGShapeGlass(glass, radius, NO);
+    CGRect pane = card.frame;
+    // Spotify's Create sheet has a transparent forwarding strip at the bottom,
+    // over the tab bar's Create button. The menu glass must NOT fill that strip:
+    // doing so produces an opaque, clipped rectangle over the legacy capsule.
+    UIView *barGlass = root.window ? SGRFindByIdentifier(root.window, @"Vitrine.LegacyTabBarCapsule", &kLegacyBarGlassKey) : nil;
+    if (barGlass && barGlass.window == root.window && !barGlass.hidden && barGlass.alpha > 0.01) {
+        CGRect tabFrame = [barGlass convertRect:barGlass.bounds toView:host];
+        CGFloat stop = CGRectGetMinY(tabFrame) - 2;
+        if (CGRectGetMinY(pane) < stop && CGRectGetMaxY(pane) > stop) {
+            pane.size.height = MAX(0, stop - CGRectGetMinY(pane));
+        }
+    }
+    glass.hidden = pane.size.height < 1;
+    if (!CGRectEqualToRect(glass.frame, pane)) glass.frame = pane;
+    SGShapeGlass(glass, MIN(radius, pane.size.height / 2), NO);
     SGRThickenSheetGlass(glass, radius);
     if (SGIsVisibleColor(card.layer.backgroundColor)) card.backgroundColor = UIColor.clearColor;
 }

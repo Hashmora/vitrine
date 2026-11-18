@@ -29,6 +29,7 @@
 
 static char kBarKey, kHostKey, kNavGlassKey, kNavTintKey, kSelPillKey, kRetriesKey, kGlyphOverlayKey, kOutlineLiveKey, kFilledLiveKey, kCreateDiscKey, kGlyphsTakenKey;
 static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, kTemplateKey;
+static char kAccentCopyKey, kAccentIconKey, kAccentNameKey;
 // The bar is a floating capsule, not a full-width slab.
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
@@ -40,7 +41,7 @@ static const CGFloat kNavPlatterHeight = 60;
 static const CGFloat kNavButtonHeight = 56;
 static const CGFloat kNavPlatterHeightIconOnly = 60;
 static const CGFloat kNavIconOnlyImageShift = 4;
-static const CGFloat kNavItemSpacing = 4;
+static const CGFloat kNavItemSpacing = 2;  // bring neighboring icons 2pt closer without stretching the lens
 static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before the now playing card has a radius to follow
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
 static const CGFloat kSelPillInset = 3;     // vertical gap to the capsule edge
@@ -434,7 +435,8 @@ static void pruneStrayButtons(UITabBar *bar) {
     }
 }
 
-// Tabs in the accent affects the selected icon and title only; unselected tabs stay white.
+// Tabs in the accent paints only the *portion* of each icon/name within the lens.
+// The actual tab buttons stay white; a masked duplicate supplies the accent.
 static BOOL tintedTabs(void) {
     return SGFlag(SGRKeyTabAccent, NO);
 }
@@ -443,19 +445,18 @@ static UIColor *openTabColor(void) {
     return tintedTabs() ? SGRAccent() : UIColor.whiteColor;
 }
 
-// UITabBarAppearance and our custom icon overlays must agree on both states.
-// Cache by selected color; normal is always white, even when accent is enabled.
+// The underlying glyphs stay white so the moving accent mask can reveal arbitrary
+// fractions of a glyph as the lens crosses it, instead of switching whole icons.
 static void applyTabColors(UITabBar *bar) {
-    UIColor *open = openTabColor();
-    if ([objc_getAssociatedObject(bar, &kTabColorKey) isEqual:open]) return;
-    objc_setAssociatedObject(bar, &kTabColorKey, open, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (objc_getAssociatedObject(bar, &kTabColorKey)) return;
+    objc_setAssociatedObject(bar, &kTabColorKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     UITabBarAppearance *appearance = [UITabBarAppearance new];
     [appearance configureWithTransparentBackground];
     for (UITabBarItemAppearance *layout in @[appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance]) {
         layout.normal.iconColor = UIColor.whiteColor;
         layout.normal.titleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor};
-        layout.selected.iconColor = open;
-        layout.selected.titleTextAttributes = @{NSForegroundColorAttributeName: open};
+        layout.selected.iconColor = UIColor.whiteColor;
+        layout.selected.titleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor};
     }
     bar.standardAppearance = appearance;
     bar.scrollEdgeAppearance = appearance;
@@ -480,8 +481,6 @@ static void paintGlyphs(UITabBar *bar) {
     NSArray<UIView *> *buttons = tabButtons(bar);
     if (!items.count || buttons.count != items.count) return;
     applyTabColors(bar);
-    UIColor *open = openTabColor();
-    BOOL tinted = tintedTabs();
     for (NSUInteger i = 0; i < items.count; i++) {
         UITabBarItem *item = items[i];
         UIView *button = buttons[i];
@@ -495,7 +494,7 @@ static void paintGlyphs(UITabBar *bar) {
         // Create is selected while its menu is up, but is no tab to open: turnCreate draws it then.
         BOOL create = [bar isKindOfClass:SGRLegacyTabBar.class] && i < ((SGRLegacyTabBar *)bar).sources.count
             && isCreateSource(((SGRLegacyTabBar *)bar).sources[i]);
-        if (want && tinted) want = templateOf(want);
+        if (want && tintedTabs()) want = templateOf(want);
         if (!native || !want) {
             overlay.hidden = YES;
             continue;
@@ -515,8 +514,8 @@ static void paintGlyphs(UITabBar *bar) {
         if (!CGSizeEqualToSize(overlay.bounds.size, nativeFrame.size)) overlay.bounds = (CGRect){CGPointZero, nativeFrame.size};
         if (!CGPointEqualToPoint(overlay.center, nativeCenter)) overlay.center = nativeCenter;
         if (overlay.image != want) overlay.image = want;
-        // Only the current tab is accented. Create's rotating plus is handled by turnCreate while its menu is open.
-        UIColor *tint = selected ? open : UIColor.whiteColor;
+        // Color is applied by the clipped accent copy, not as a whole-item tint.
+        UIColor *tint = UIColor.whiteColor;
         BOOL createOpen = create && !CGAffineTransformIsIdentity(overlay.transform);
         if (!createOpen && ![overlay.tintColor isEqual:tint]) overlay.tintColor = tint;
         overlay.hidden = NO;
@@ -528,6 +527,88 @@ static void paintGlyphs(UITabBar *bar) {
         }
         native.hidden = YES;
     }
+}
+
+// The accent artwork lives in the host (over the white UITabBar, under the
+// magnifying glass). A mask with the lens's *animated* geometry clips both glyphs
+// and text. A half-covered icon is half green and half white, as in iOS 26.
+static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *lens) {
+    UIView *copy = objc_getAssociatedObject(host, &kAccentCopyKey);
+    if (!tintedTabs() || sg_minimized || !lens || lens.hidden) {
+        lens.tintOverlay = nil;
+        copy.hidden = YES;
+        return;
+    }
+    if (!copy) {
+        copy = [UIView new];
+        copy.userInteractionEnabled = NO;
+        copy.accessibilityElementsHidden = YES;
+        copy.backgroundColor = UIColor.clearColor;
+        objc_setAssociatedObject(host, &kAccentCopyKey, copy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (copy.superview != host) [host insertSubview:copy aboveSubview:bar];
+    if (!CGRectEqualToRect(copy.frame, host.bounds)) copy.frame = host.bounds;
+    copy.hidden = NO;
+    NSMutableSet<UIView *> *used = [NSMutableSet set];
+    NSArray<UIView *> *buttons = tabButtons(bar);
+    if (buttons.count != bar.items.count) { lens.tintOverlay = nil; copy.hidden = YES; return; }
+    UIColor *accent = SGRAccent();
+    for (NSUInteger i = 0; i < buttons.count; i++) {
+        UIView *button = buttons[i];
+        BOOL createOpen = bar.awaitingCreateClose && i < bar.sources.count && isCreateSource(bar.sources[i]);
+        UIImageView *whiteIcon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
+        if (whiteIcon && !whiteIcon.hidden && whiteIcon.image) {
+            UIImageView *colorIcon = objc_getAssociatedObject(button, &kAccentIconKey);
+            if (!colorIcon) {
+                colorIcon = [UIImageView new];
+                colorIcon.userInteractionEnabled = NO;
+                colorIcon.contentMode = UIViewContentModeCenter;
+                objc_setAssociatedObject(button, &kAccentIconKey, colorIcon, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            if (colorIcon.superview != copy) [copy addSubview:colorIcon];
+            UIImage *image = templateOf(whiteIcon.image);
+            if (colorIcon.image != image) colorIcon.image = image;
+            colorIcon.tintColor = accent;
+            // The Create plus becomes a cutout in its disc while the menu is up.
+            colorIcon.alpha = createOpen ? 0 : whiteIcon.alpha;
+            colorIcon.bounds = whiteIcon.bounds;
+            colorIcon.center = [whiteIcon convertPoint:CGPointMake(CGRectGetMidX(whiteIcon.bounds), CGRectGetMidY(whiteIcon.bounds)) toView:host];
+            colorIcon.transform = whiteIcon.transform;
+            [used addObject:colorIcon];
+        }
+        // The only title under the icon; keep font, baseline and truncation aligned
+        // with UIKit instead of drawing a second, different typography treatment.
+        UILabel *whiteName = nil;
+        for (UIView *v in button.subviews) {
+            if ([v isKindOfClass:UILabel.class] && !v.hidden && v.bounds.size.width > 0) {
+                whiteName = (UILabel *)v;
+                break;
+            }
+        }
+        if (whiteName && whiteName.text.length) {
+            UILabel *colorName = objc_getAssociatedObject(button, &kAccentNameKey);
+            if (!colorName) {
+                colorName = [UILabel new];
+                colorName.userInteractionEnabled = NO;
+                colorName.backgroundColor = UIColor.clearColor;
+                objc_setAssociatedObject(button, &kAccentNameKey, colorName, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            if (colorName.superview != copy) [copy addSubview:colorName];
+            colorName.text = whiteName.text;
+            colorName.font = whiteName.font;
+            colorName.textColor = accent;
+            colorName.textAlignment = whiteName.textAlignment;
+            colorName.numberOfLines = whiteName.numberOfLines;
+            colorName.adjustsFontSizeToFitWidth = whiteName.adjustsFontSizeToFitWidth;
+            colorName.minimumScaleFactor = whiteName.minimumScaleFactor;
+            colorName.alpha = whiteName.alpha;
+            colorName.bounds = whiteName.bounds;
+            colorName.center = [whiteName convertPoint:CGPointMake(CGRectGetMidX(whiteName.bounds), CGRectGetMidY(whiteName.bounds)) toView:host];
+            [used addObject:colorName];
+        }
+    }
+    for (UIView *v in [copy.subviews copy]) if (![used containsObject:v]) [v removeFromSuperview];
+    lens.tintOverlay = copy;
 }
 
 // Spotify's own Create item turns its plus onto a white disc while the menu is open (turnCreate). That runs on the
@@ -721,6 +802,19 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
 
 // UIKit's item views are private: the item under a touch is the one whose title label or glyph is nearest.
 - (UITabBarItem *)itemAt:(CGPoint)point {
+    // The Create button can have no image matching the item's cached glyph while
+    // Spotify rotates its plus. Use the rendered button slots, not text or icon
+    // identity, so Create still participates in highlighting and dragging.
+    NSArray<UIView *> *buttons = tabButtons(self);
+    if (buttons.count == self.items.count && buttons.count) {
+        NSUInteger bestIndex = 0;
+        CGFloat best = CGFLOAT_MAX;
+        for (NSUInteger i = 0; i < buttons.count; i++) {
+            CGFloat distance = fabs(CGRectGetMidX(buttons[i].frame) - point.x);
+            if (distance < best) { best = distance; bestIndex = i; }
+        }
+        return self.items[bestIndex];
+    }
     __block UITabBarItem *nearest = nil;
     __block CGFloat best = CGFLOAT_MAX;
     SGForEachView(self, ^(UIView *v) {
@@ -802,7 +896,8 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
 
     if (g.state == UIGestureRecognizerStateBegan || g.state == UIGestureRecognizerStateChanged) {
         // syncBar here, or the pill only moves on some later Spotify event.
-        if (item && !itemIsCreate && item != self.selectedItem) {
+        if (item && item != self.selectedItem) {
+            // Hovering Create moves the pill there; its menu still opens only on release.
             self.selectedItem = item;
             if (stockBar) syncBar(stockBar);
         }
@@ -810,15 +905,6 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
         SGRLegacyLens *lens = [self lens];
         CGFloat hostX = self.frame.origin.x + g.currentLocation.x;
         if (g.state == UIGestureRecognizerStateBegan) {
-            // Feed the lens the *rendered* centers, not the item's nominal slots:
-            // UIKit's spacing varies with the tab count and the split-tab layout.
-            NSMutableArray<NSNumber *> *centers = [NSMutableArray arrayWithCapacity:self.items.count];
-            for (UITabBarItem *tab in self.items) {
-                CGFloat x = [self renderedCenterXForItem:tab];
-                if (!isnan(x)) [centers addObject:@(self.frame.origin.x + x)];
-            }
-            [centers sortUsingSelector:@selector(compare:)];
-            [lens setTabCenters:centers];
             CGFloat lo, hi;
             [self trackBoundsMin:&lo max:&hi];
             [lens beginTouchAtX:hostX minCenter:lo maxCenter:hi];
@@ -848,6 +934,9 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
         self.gestureStartItem = nil;
     } else if (g.state == UIGestureRecognizerStateCancelled) {
         setBarPressed(self, NO);
+        // A cancelled drag (e.g. an incoming modal) must not leave Create
+        // selected when its menu was never opened.
+        if (self.gestureStartItem && !self.awaitingCreateClose) self.selectedItem = self.gestureStartItem;
         [[self lens] endTouch];
         if (stockBar) syncBar(stockBar);
         self.gestureStartItem = nil;
@@ -1385,6 +1474,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
         bar.drag = drag;
         objc_setAssociatedObject(stockBar, &kBarKey, bar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         SGRLegacyTabBarHost *host = [SGRLegacyTabBarHost new];
+        host.accessibilityIdentifier = @"Vitrine.LegacyTabBarHost";
         [host addSubview:bar];
         objc_setAssociatedObject(stockBar, &kHostKey, host, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
@@ -1538,6 +1628,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
 
     // A glass capsule behind the bar, as NowPlayingBar.x backs the mini player; radius half its height.
     UIView *navGlass = SGGlassFor(host, &kNavGlassKey);
+    navGlass.accessibilityIdentifier = @"Vitrine.LegacyTabBarCapsule";
     navGlass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     CGRect glassFrame = platterFrame;
     // By bounds and center: placeCompact rolls the capsule out of the circle under a mask, and these passes come during it.
@@ -1576,6 +1667,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
         selPill.hidden = YES;
     }
     placeCompact(stockBar, bar, host, sources, platterFrame, apartFrame, navGlass, navTint, selPill);
+    syncLensAccent(bar, host, selPill);
     // The now playing card fills what the circles leave of the row, and follows them when they move.
     static CGRect lastLead, lastTrail;
     static BOOL following;

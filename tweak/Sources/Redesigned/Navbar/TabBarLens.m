@@ -16,9 +16,8 @@ static const CGFloat kLensHeldBend = 0.46;
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
 static const CGFloat kLensGrow = 18, kLensOverscroll = 14;
-// A modest gap-only widening works with the gentler magnification rather than trying to cover both
-// 24pt glyphs by stretching the glass. Keep the lens nearly round between the tabs.
-static const CGFloat kLensGlyphSide = 24, kLensMaxGapGrow = 14;
+// The held lens keeps one width across the full tab row: no gap-dependent growth.
+// The softer magnification and the closer item centers keep glyphs visible through it.
 // Signed deformation: rightward motion spreads the bubble and lowers its height;
 // leftward motion narrows it and raises its height. When the finger stops, a slow
 // spring briefly reverses that shape before relaxing. A signed velocity (rather
@@ -89,7 +88,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // The squash spring and the speed it last saw (see kLensSquashKick).
     CGFloat _sq, _vSq, _prevSpeed;
     CGFloat _minCenter, _maxCenter;
-    NSArray<NSNumber *> *_tabCenters;
+    CALayer *_tintMask;
     BOOL _glassOn;
     // A bubble nobody holds is not run frame by frame on the main thread, which a tab loading under it would stall
     // (the glass froze for as long as the page took). Its whole run is worked out at once and handed to Core
@@ -176,8 +175,19 @@ static BOOL bubbles(void) {
     return SGUseLegacyGlass();
 }
 
-- (void)setTabCenters:(NSArray<NSNumber *> *)centers {
-    _tabCenters = [centers copy];
+// The mask is in the same host coordinates as the lens. Its *shape* follows both
+// the moving spring and the layer keyframe playback after the finger is released.
+- (void)setTintOverlay:(UIView *)tintOverlay {
+    if (_tintOverlay == tintOverlay) return;
+    _tintOverlay.layer.mask = nil;
+    _tintOverlay = tintOverlay;
+    if (!tintOverlay) { _tintMask = nil; return; }
+    _tintMask = [CALayer layer];
+    _tintMask.backgroundColor = UIColor.whiteColor.CGColor;
+    _tintMask.cornerCurve = kCACornerCurveContinuous;
+    _tintMask.masksToBounds = YES;
+    tintOverlay.layer.mask = _tintMask;
+    [self applyPose];
 }
 
 - (void)beginTouchAtX:(CGFloat)x minCenter:(CGFloat)minCenter maxCenter:(CGFloat)maxCenter {
@@ -199,20 +209,6 @@ static BOOL bubbles(void) {
     if (!_touching) return;
     CGFloat center = rubber(x, _minCenter, _maxCenter);
     CGFloat width = _restFrame.size.width + (bubbles() ? kLensGrow : 0);
-    if (bubbles()) {
-        // Prefer capturing the adjacent glyphs by refraction, and add only a
-        // small smooth width allowance midway through a real inter-tab gap.
-        // At each glyph center the held lens keeps its original width.
-        for (NSUInteger i = 1; i < _tabCenters.count; i++) {
-            CGFloat left = _tabCenters[i - 1].doubleValue, right = _tabCenters[i].doubleValue;
-            CGFloat gap = right - left;
-            if (gap <= 0 || center < left || center > right) continue;
-            CGFloat t = (center - left) / gap;
-            CGFloat needed = MAX(0, kLensMagnification * (gap + kLensGlyphSide) - width);
-            width += MIN(kLensMaxGapGrow, needed) * (4 * t * (1 - t));
-            break;
-        }
-    }
     _tL = center - width / 2;
     _tR = center + width / 2;
     [self start];
@@ -280,8 +276,7 @@ static BOOL bubbles(void) {
 // pill's); the look is a transform, so no frame of glass is laid out again while it moves.
 - (void)getPose:(SGLensSample)st center:(CGPoint *)center sx:(CGFloat *)sx sy:(CGFloat *)sy {
     CGFloat baseWidth = MAX(1, self.bounds.size.width), baseHeight = MAX(1, self.bounds.size.height);
-    // The spring can reach the small extra gap allowance before drawing its pose.
-    CGFloat nominal = MAX(1, _restFrame.size.width + (kLensGrow + kLensMaxGapGrow) * st.lift);
+    CGFloat nominal = MAX(1, _restFrame.size.width + kLensGrow * st.lift);
     CGFloat width = MIN(MAX(baseHeight * 0.8, st.R - st.L), nominal * (1 + kLensMaxLag));
     CGFloat signedSpeed = (st.vL + st.vR) / 2;
     CGFloat stretch = kLensDirectionalStretch * tanh(signedSpeed / kLensStretchSpeed);
@@ -305,6 +300,15 @@ static BOOL bubbles(void) {
         self.center = center;
         self.transform = CGAffineTransformMakeScale(sx, sy);
     }];
+    if (_tintMask) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        _tintMask.bounds = (CGRect){CGPointZero, self.bounds.size};
+        _tintMask.cornerRadius = self.bounds.size.height / 2;
+        _tintMask.position = center;
+        _tintMask.transform = CATransform3DMakeScale(sx, sy, 1);
+        [CATransaction commit];
+    }
 }
 
 - (void)snapToRest {
@@ -406,6 +410,9 @@ static BOOL bubbles(void) {
     [self.layer removeAnimationForKey:@"lens.x"];
     [self.layer removeAnimationForKey:@"lens.sx"];
     [self.layer removeAnimationForKey:@"lens.sy"];
+    [_tintMask removeAnimationForKey:@"lens.x"];
+    [_tintMask removeAnimationForKey:@"lens.sx"];
+    [_tintMask removeAnimationForKey:@"lens.sy"];
 }
 
 // A finger down, or a new place to go, while a run is playing: the springs carry on from where the run is now.
@@ -473,6 +480,20 @@ static BOOL bubbles(void) {
     add(@"lens.x", @"position.x", xs);
     add(@"lens.sx", @"transform.scale.x", sxs);
     add(@"lens.sy", @"transform.scale.y", sys);
+    // Core Animation runs the released lens on the render server; match that
+    // playback on the accent mask, instead of leaving the color behind at release.
+    if (_tintMask) {
+        void (^maskRun)(NSString *, NSString *, NSArray *) = ^(NSString *key, NSString *path, NSArray *values) {
+            CAKeyframeAnimation *a = [CAKeyframeAnimation animationWithKeyPath:path];
+            a.values = values;
+            a.duration = duration;
+            a.calculationMode = kCAAnimationLinear;
+            [_tintMask addAnimation:a forKey:key];
+        };
+        maskRun(@"lens.x", @"position.x", xs);
+        maskRun(@"lens.sx", @"transform.scale.x", sxs);
+        maskRun(@"lens.sy", @"transform.scale.y", sys);
+    }
     _playback = samples;
     _playStart = CACurrentMediaTime();
 }
