@@ -14,7 +14,7 @@ static const CGFloat kLensHeldBend = 0.90;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
-static const CGFloat kLensGrow = 18, kLensOverscroll = 14;
+static const CGFloat kLensGrow = 26, kLensOverscroll = 14;
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
 // The softer magnification and the closer item centers keep glyphs visible through it.
 // Signed deformation: rightward motion spreads the bubble and lowers its height;
@@ -76,15 +76,15 @@ static void SGSetSideRimMask(UIView *film, CGRect bounds) {
     mask.endPoint = CGPointMake(1, 0.5);
     mask.colors = @[
         (id)[UIColor colorWithWhite:1 alpha:1].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.92].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.20].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.82].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.12].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.20].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.92].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.12].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.82].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:1].CGColor
     ];
-    mask.locations = @[@0, @0.12, @0.24, @0.38, @0.62, @0.76, @0.88, @1];
+    mask.locations = @[@0, @0.10, @0.18, @0.30, @0.70, @0.82, @0.90, @1];
 }
 
 @implementation SGRLensLink
@@ -124,9 +124,9 @@ static const CGFloat kPlayStep = 1.0 / 120;
     if (!(self = [super initWithFrame:frame])) return nil;
     self.userInteractionEnabled = NO;
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    _heldOutset = 6;
+    _heldOutset = 7;
     _rest = [UIView new];
-    _rest.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+    _rest.backgroundColor = [UIColor colorWithWhite:0 alpha:0.42];
     _rest.layer.cornerCurve = kCACornerCurveContinuous;
     [self addSubview:_rest];
     _pane = SGGlassFor(self, &kLensPaneKey);
@@ -281,8 +281,8 @@ static BOOL bubbles(void) {
     }
     void (^change)(void) = ^{
         SGRShowGlass(self->_pane, on);
-        self->_film.alpha = on ? 0.14 : 0;
-        self->_rest.alpha = on ? 0 : 1;
+        self->_film.alpha = on ? 0.10 : 0;
+        self->_rest.alpha = on ? 0.24 : 1;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
