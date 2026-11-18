@@ -19,25 +19,22 @@ static const CGFloat kLensGrow = 18, kLensOverscroll = 14;
 // A modest gap-only widening works with the gentler magnification rather than trying to cover both
 // 24pt glyphs by stretching the glass. Keep the lens nearly round between the tabs.
 static const CGFloat kLensGlyphSide = 24, kLensMaxGapGrow = 14;
-// The bubble's shape is one deformation, d: wider and shorter for d > 0, narrower and taller for d < 0, the height
-// giving way by kLensVolume of what the width gains so the bubble keeps its volume, and d held to kLensMaxDeform either
-// way, so a flick never swells it. Its size does not grow with speed. d is the squash spring below (the bubble's body
-// catching up as its speed changes) and a slight stretch along a fast move (up to kLensMaxSpeedStretch, by tanh of the
-// speed of its middle in pt/s). The edges' own lag widens it a little more, held to kLensMaxLag of its width.
-static const CGFloat kLensStretchSpeed = 2400, kLensMaxSpeedStretch = 0.2;
-static const CGFloat kLensMaxDeform = 0.30, kLensVolume = 0.8, kLensMaxLag = 0.25;
+// Signed deformation: rightward motion spreads the bubble and lowers its height;
+// leftward motion narrows it and raises its height. When the finger stops, a slow
+// spring briefly reverses that shape before relaxing. A signed velocity (rather
+// than its absolute value) is essential for the two directions to feel distinct.
+static const CGFloat kLensStretchSpeed = 1300, kLensDirectionalStretch = 0.14;
+static const CGFloat kLensMaxDeform = 0.22, kLensVolume = 0.8, kLensMaxLag = 0.18;
 // The surface tension: once the edges are near their targets, they pull each other back to the bubble's width, with
 // a damper of their own, so a stretched bubble draws in and gives a small bounce rather than ringing. It is off
 // while the bubble is chasing a finger (the stretch is what shows the chase), and fades in over the last
 // kLensTensionReach points of the middle's distance.
-static const CGFloat kLensTension = 300, kLensTensionRatio = 0.45, kLensTensionReach = 24;
-// The squash: what the bubble's mass does as its speed changes, the jelly of it. The edges are stopped within a tenth of
-// a second, but the body keeps going, so each loss of speed kicks a spring of its own by kLensSquashKick per pt/s lost
-// (a gain kicks it the other way, less). It rings at about 2.4 Hz with a damping ratio of 0.3: a stop from a flick goes
-// narrow and tall, back past round a little, and settles in two bounces. A finger landing pokes it (kLensPoke) and one
-// let go pokes it back, so the bubble gives even with no move.
-static const CGFloat kLensSquashOmega = 15, kLensSquashRatio = 0.3, kLensSquashKick = 0.008;
-static const CGFloat kLensPoke = 1.5;
+static const CGFloat kLensTension = 210, kLensTensionRatio = 0.55, kLensTensionReach = 30;
+// Slower body response than the moving edges: deceleration in either direction
+// kicks the squash *opposite* to its moving shape, with a small damped rebound.
+// Acceleration gives a much gentler kick so the lens does not jitter while dragged.
+static const CGFloat kLensSquashOmega = 9, kLensSquashRatio = 0.48, kLensSquashKick = 0.004;
+static const CGFloat kLensPoke = 0.8;
 
 typedef struct { CGFloat k, c; } SGRSpring;   // unit mass
 
@@ -286,8 +283,8 @@ static BOOL bubbles(void) {
     // The spring can reach the small extra gap allowance before drawing its pose.
     CGFloat nominal = MAX(1, _restFrame.size.width + (kLensGrow + kLensMaxGapGrow) * st.lift);
     CGFloat width = MIN(MAX(baseHeight * 0.8, st.R - st.L), nominal * (1 + kLensMaxLag));
-    CGFloat speed = fabs(st.vL + st.vR) / 2;
-    CGFloat stretch = kLensMaxSpeedStretch * tanh(speed / kLensStretchSpeed);
+    CGFloat signedSpeed = (st.vL + st.vR) / 2;
+    CGFloat stretch = kLensDirectionalStretch * tanh(signedSpeed / kLensStretchSpeed);
     CGFloat d = MAX(-kLensMaxDeform, MIN(kLensMaxDeform, (st.sq + stretch) * st.lift));
     CGFloat held = 1 + 2 * _heldOutset / baseHeight * st.lift;
     *sx = width * (1 + d) / baseWidth;
@@ -350,7 +347,7 @@ static BOOL bubbles(void) {
 - (void)advance:(CGFloat)h {
     CGFloat dir = (_tL + _tR) / 2 - (_L + _R) / 2;
     BOOL moving = fabs(dir) > 0.75;
-    SGRSpring front = spring(2400, 0.80), back = spring(650, 0.62), even = spring(1100, 0.74);
+    SGRSpring front = spring(1300, 0.82), back = spring(460, 0.68), even = spring(720, 0.77);
     SGRSpring forL = !moving ? even : (dir < 0 ? front : back);
     SGRSpring forR = !moving ? even : (dir > 0 ? front : back);
     SGSpring lift = _liftTarget > 0.5 ? SGGlassLiftOn : SGGlassLiftOff;   // the press's own
@@ -365,14 +362,13 @@ static BOOL bubbles(void) {
     }
     stepEdge(&_L, &_vL, _tL, forL, h);
     stepEdge(&_R, &_vR, _tR, forR, h);
-    // The squash: kicked by the speed the edges lose (a sum over the stop, so the step does not matter), then a
-    // spring of its own.
-    CGFloat speed = fabs(_vL + _vR) / 2;
-    // A gain in speed stretches a little (a third as much), so the jitter of a finger's speed nets out instead of
-    // adding up to a squash while it drags.
-    CGFloat gained = speed - _prevSpeed;
-    _vSq += kLensSquashKick * (gained < 0 ? gained : gained * 0.35);
-    _prevSpeed = speed;
+    // Keep the velocity signed: slowing to a stop from a rightward swipe produces
+    // a taller rebound, and stopping a leftward swipe produces a flatter one.
+    CGFloat signedSpeed = (_vL + _vR) / 2;
+    CGFloat delta = signedSpeed - _prevSpeed;
+    BOOL slowing = fabs(signedSpeed) < fabs(_prevSpeed);
+    _vSq += kLensSquashKick * (slowing ? delta : delta * 0.28);
+    _prevSpeed = signedSpeed;
     CGFloat sqa = -kLensSquashOmega * kLensSquashOmega * _sq - 2 * kLensSquashRatio * kLensSquashOmega * _vSq;
     _vSq += sqa * h;
     _sq = MAX(-kLensMaxDeform, MIN(kLensMaxDeform, _sq + _vSq * h));
@@ -421,7 +417,7 @@ static BOOL bubbles(void) {
     [self dropPlayback];
     _L = st.L; _R = st.R; _vL = st.vL; _vR = st.vR; _lift = st.lift; _vLift = st.vLift;
     _sq = st.sq; _vSq = st.vSq;
-    _prevSpeed = fabs(st.vL + st.vR) / 2;
+    _prevSpeed = (st.vL + st.vR) / 2;
     [self applyPose];
 }
 

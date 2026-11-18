@@ -33,19 +33,20 @@ static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, k
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
 // The capsule itself, never the safe-area room under it: SGRTabBarGlassHeight() can be 83pt on a Face ID phone
-// (harness/tabbar/README.md) because it includes the home-indicator strip. Keep the capsule 56pt tall,
-// like the glass mini-player above it (measured on iOS 18.6), whether tab captions are on or off.
-// UIKit leaves a little space under its tab labels; the buttons need a shorter 52pt row so both captions
-// and icons stay within the 50pt selection pill even when the connection banner changes the safe area.
-static const CGFloat kNavPlatterHeight = 56;
-static const CGFloat kNavButtonHeight = 52;
-static const CGFloat kNavPlatterHeightIconOnly = 56;
+// (harness/tabbar/README.md) because it includes the home-indicator strip. Keep the capsule 60pt tall
+// in both label modes; the 56pt UIKit button row stays within the 54pt selection lens when Spotify's
+// connection banner changes the safe area. Capsule width and tab spacing are unchanged.
+static const CGFloat kNavPlatterHeight = 60;
+static const CGFloat kNavButtonHeight = 56;
+static const CGFloat kNavPlatterHeightIconOnly = 60;
 static const CGFloat kNavIconOnlyImageShift = 4;
 static const CGFloat kNavItemSpacing = 4;
 static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before the now playing card has a radius to follow
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
-static const CGFloat kSelPillInset = 3;     // gap between the selection pill and the capsule's edge
-static const CGFloat kLensOverhang = 3;     // how far the held bubble stands out of the capsule's rim, above and below
+static const CGFloat kSelPillInset = 3;     // vertical gap to the capsule edge
+static const CGFloat kSelPillXInset = 1;    // slightly broader selection at rest, without moving any tab
+static const CGFloat kLensOverhang = 3;     // held lens height beyond the capsule rim
+static const CGFloat kBarPressScale = 1.025; // whole capsule lifts subtly with its selection bubble
 static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
 static BOOL sg_minimized;
@@ -180,7 +181,8 @@ static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
         disc.alpha = open ? 1 : 0;
         disc.transform = open ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.4, 0.4);
         glyph.transform = open ? CGAffineTransformMakeRotation(M_PI_4) : CGAffineTransformIdentity;
-        glyph.tintColor = open ? UIColor.blackColor : accent;
+        // Create is an action, not the active page; its resting plus stays white.
+        glyph.tintColor = open ? UIColor.blackColor : UIColor.whiteColor;
         glyph.alpha = open && tinted ? 0 : 1;
     } completion:nil];
 }
@@ -432,8 +434,7 @@ static void pruneStrayButtons(UITabBar *bar) {
     }
 }
 
-// The tabs' color: the accent with Tabs in the accent on (SGRKeyTabAccent), else white. Every tab takes it; the open
-// one stands out by its filled glyph, as it does in white.
+// Tabs in the accent affects the selected icon and title only; unselected tabs stay white.
 static BOOL tintedTabs(void) {
     return SGFlag(SGRKeyTabAccent, NO);
 }
@@ -442,8 +443,8 @@ static UIColor *openTabColor(void) {
     return tintedTabs() ? SGRAccent() : UIColor.whiteColor;
 }
 
-// The bar's appearance, every tab in openTabColor, set again only when that changes: with an appearance set, tintColor
-// alone does not decide the colors.
+// UITabBarAppearance and our custom icon overlays must agree on both states.
+// Cache by selected color; normal is always white, even when accent is enabled.
 static void applyTabColors(UITabBar *bar) {
     UIColor *open = openTabColor();
     if ([objc_getAssociatedObject(bar, &kTabColorKey) isEqual:open]) return;
@@ -451,8 +452,8 @@ static void applyTabColors(UITabBar *bar) {
     UITabBarAppearance *appearance = [UITabBarAppearance new];
     [appearance configureWithTransparentBackground];
     for (UITabBarItemAppearance *layout in @[appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance]) {
-        layout.normal.iconColor = open;
-        layout.normal.titleTextAttributes = @{NSForegroundColorAttributeName: open};
+        layout.normal.iconColor = UIColor.whiteColor;
+        layout.normal.titleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor};
         layout.selected.iconColor = open;
         layout.selected.titleTextAttributes = @{NSForegroundColorAttributeName: open};
     }
@@ -514,14 +515,12 @@ static void paintGlyphs(UITabBar *bar) {
         if (!CGSizeEqualToSize(overlay.bounds.size, nativeFrame.size)) overlay.bounds = (CGRect){CGPointZero, nativeFrame.size};
         if (!CGPointEqualToPoint(overlay.center, nativeCenter)) overlay.center = nativeCenter;
         if (overlay.image != want) overlay.image = want;
-        // Every pass, every tab, so a switch of the setting reaches them all. Create's plus while its menu is up (turned
-        // on its disc) is turnCreate's.
-        UIColor *tint = open;
+        // Only the current tab is accented. Create's rotating plus is handled by turnCreate while its menu is open.
+        UIColor *tint = selected ? open : UIColor.whiteColor;
         BOOL createOpen = create && !CGAffineTransformIsIdentity(overlay.transform);
         if (!createOpen && ![overlay.tintColor isEqual:tint]) overlay.tintColor = tint;
         overlay.hidden = NO;
-        // The name under it too: UIKit does not repaint it from the appearance as the selection changes on this bar,
-        // any more than it does the icon, so it stayed white under an accent icon.
+        // UIKit doesn't reliably refresh the name during an in-place selection change.
         for (UIView *v in button.subviews) {
             if (![v isKindOfClass:UILabel.class]) continue;
             UILabel *name = (UILabel *)v;
@@ -576,13 +575,35 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
 
 #pragma mark - the system bar
 
+// Animate the *contents* of the legacy host, not its frame. Keeping the host's
+// geometry unchanged avoids retriggering Spotify's safe-area and tab-item layout
+// while the finger holds the bubble. The glass, tint, tabs and lens grow together.
+static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
+    UIView *host = bar.stockBar ? objc_getAssociatedObject(bar.stockBar, &kHostKey) : nil;
+    if (!host) return;
+    pressed &= SGUseLegacyGlass() && !SGRReduceMotion() && !sg_minimized;
+    CATransform3D target = pressed ? CATransform3DMakeScale(kBarPressScale, kBarPressScale, 1) : CATransform3DIdentity;
+    if (CATransform3DEqualToTransform(host.layer.sublayerTransform, target)) return;
+    CALayer *shown = host.layer.presentationLayer;
+    CATransform3D from = shown ? shown.sublayerTransform : host.layer.sublayerTransform;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    host.layer.sublayerTransform = target;
+    [CATransaction commit];
+    CABasicAnimation *anim = [CABasicAnimation animationWithKeyPath:@"sublayerTransform"];
+    anim.fromValue = [NSValue valueWithCATransform3D:from];
+    anim.toValue = [NSValue valueWithCATransform3D:target];
+    anim.duration = pressed ? 0.32 : 0.46;
+    anim.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.18 :0.0 :0.22 :1.0];
+    [host.layer addAnimation:anim forKey:@"vitrine.legacyTabPress"];
+}
+
 @implementation SGRLegacyTabBar
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    // UIKit can stretch UITabBarButton when Spotify shows a connection banner.
-    // Cap its internal row at 52pt: a 56pt capsule leaves only a 50pt lens,
-    // so titles must not keep UIKit's old 56/63pt positions and spill out.
+    // Spotify's connection banner can stretch UITabBarButton to 63pt. Keep the normal
+    // 56pt row in the 60pt capsule so captions stay inside the 54pt selection lens.
     for (UIView *button in tabButtons(self)) {
         CGRect frame = button.frame;
         if (frame.size.height <= kNavButtonHeight + 0.5) continue;
@@ -776,6 +797,7 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
 
     if (g.state == UIGestureRecognizerStateBegan) {
         self.gestureStartItem = self.selectedItem;
+        setBarPressed(self, YES);
     }
 
     if (g.state == UIGestureRecognizerStateBegan || g.state == UIGestureRecognizerStateChanged) {
@@ -804,6 +826,7 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
             [lens moveTouchToX:hostX];
         }
     } else if (g.state == UIGestureRecognizerStateEnded) {
+        setBarPressed(self, NO);
         // Create is selected before the bubble is let go, so it settles on Create and not back on the open tab.
         if (itemIsCreate && !self.apartSelected) {
             self.selectedItem = item;
@@ -824,6 +847,7 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
         }
         self.gestureStartItem = nil;
     } else if (g.state == UIGestureRecognizerStateCancelled) {
+        setBarPressed(self, NO);
         [[self lens] endTouch];
         if (stockBar) syncBar(stockBar);
         self.gestureStartItem = nil;
@@ -1115,7 +1139,8 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
     if (lead) {
         if (tintedTabs() && leadImage) leadImage = templateOf(leadImage);
         if (lead.glyph.image != leadImage) lead.glyph.image = leadImage;
-        if (![lead.glyph.tintColor isEqual:openTabColor()]) lead.glyph.tintColor = openTabColor();
+        UIColor *leadTint = !trailSelected && leadItem == bar.selectedItem ? openTabColor() : UIColor.whiteColor;
+        if (![lead.glyph.tintColor isEqual:leadTint]) lead.glyph.tintColor = leadTint;
         lead.item = leadItem;
         lead.accessibilityLabel = leadIndex < sources.count ? labelIn(sources[leadIndex]).text : nil;
         if (!lead.onTap) {
@@ -1134,7 +1159,8 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
     if (trail) {
         if (tintedTabs() && trailImage) trailImage = templateOf(trailImage);
         if (trail.glyph.image != trailImage) trail.glyph.image = trailImage;
-        if (CGAffineTransformIsIdentity(trail.glyph.transform) && ![trail.glyph.tintColor isEqual:openTabColor()]) trail.glyph.tintColor = openTabColor();
+        UIColor *trailTint = trailSelected ? openTabColor() : UIColor.whiteColor;
+        if (CGAffineTransformIsIdentity(trail.glyph.transform) && ![trail.glyph.tintColor isEqual:trailTint]) trail.glyph.tintColor = trailTint;
         trail.item = trailItem;
         trail.holdsCreate = trailSource && isCreateSource(trailSource);
         if (!trail.holdsCreate) [trail setCreateOpen:NO];
@@ -1534,10 +1560,10 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     // The pill follows bar.selectedItem, not Spotify's labels, which repaint late. syncBar is its only writer.
     NSUInteger selIndex = [bar.items indexOfObject:bar.selectedItem];
     if (selIndex != NSNotFound && selIndex < sources.count) {
-        CGFloat pillWidth = itemWidth - kSelPillInset * 2;
+        CGFloat pillWidth = itemWidth - kSelPillXInset * 2;
         CGFloat centerX = [bar renderedCenterXForItem:bar.selectedItem];
         CGFloat slotX = isnan(centerX)
-            ? bar.frame.origin.x + selIndex * (itemWidth + kNavItemSpacing) + kSelPillInset
+            ? bar.frame.origin.x + selIndex * (itemWidth + kNavItemSpacing) + kSelPillXInset
             : bar.frame.origin.x + centerX - pillWidth / 2;
         CGRect pillFrame = CGRectMake(slotX, bar.frame.origin.y + kSelPillInset, pillWidth, bar.frame.size.height - kSelPillInset * 2);
         BOOL wasVisible = !selPill.hidden;

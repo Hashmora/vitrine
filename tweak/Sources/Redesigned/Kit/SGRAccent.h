@@ -13,9 +13,9 @@ NSInteger SGRAccentRGB(void);    // the color in effect, 0xRRGGBB, Spotify's gre
 // Black or white, whichever reads on `accent`: the redesign's green is bright, and white text on it is lost.
 UIColor *SGRInkOnAccent(UIColor *accent);
 
-// Tabs in the accent (Redesigned/Navbar/TabBarLegacy.x): every tab's icon and name on the capsule tab bar below iOS 26
-// in the accent, Create's plus and the minimized bar's circles too, the open one told by its filled icon as in white;
-// white, as the bar had it, until switched on. Applies as the bar lays out again.
+// Tabs in the accent (Redesigned/Navbar/TabBarLegacy.x): only the selected icon and name in the
+// capsule tab bar below iOS 26 use the accent. Other tabs stay white; compact circles follow selection.
+// Applies as the bar lays out again.
 #define SGRKeyTabAccent @"spotifyglass.redesign.tabbar.accent"
 
 // What a UIColor made from these components comes out as: one of Spotify's greens turns into the accent while it is
