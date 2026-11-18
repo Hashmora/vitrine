@@ -2,7 +2,7 @@
 // draw the same three or four CreateMenuItemRows, but they are laid out differently, so each gets what fits it:
 //
 // - The tab bar's Create menu (CreateMenu_CreateMenuPageImpl) is a floating card, not a full sheet: the
-//   sheet-view is 307 pt tall with no fill and reaches down over the tab bar, where the transparent
+//   sheet-view is taller than the card and reaches down over the tab bar, where the transparent
 //   CreateMenu.ForwardingView hands touches to the Create tab that has turned into the close button. A pane
 //   over the whole sheet-view would cover the tab bar, so the glass goes behind the card alone
 //   (CreateMenu.ScrollView, #1F1F1F, r=16, inset 8 pt from the sides), and the card's own grey goes clear.
@@ -15,13 +15,40 @@
 #import "Redesigned/Kit/SGRKit.h"
 
 static NSString *const kCardIdentifier = @"CreateMenu.ScrollView";
-static char kCardKey, kCardGlassKey, kLegacyBarGlassKey;
+static char kCardKey, kCardGlassKey, kLegacyBarGlassKey, kSpacerKey;
 
 static void glassCard(UIViewController *controller) {
     UIView *root = controller.viewIfLoaded;
     UIView *card = root ? SGRFindByIdentifier(root, kCardIdentifier, &kCardKey) : nil;
     UIView *host = card.superview;
     if (!host) return;
+    // The shared sheet pass can glass the outer 379pt `sheet-view` while
+    // Create is still loading. That sheet includes an 83pt transparent touch
+    // forwarding region over the tab bar. Remove *only* its outer chrome;
+    // the 288pt menu card below retains its own separate pane.
+    UIView *sheet = SGRSheetPaneOf(root);
+    if (sheet) {
+        SGRRemoveSheetGlass(sheet);
+        if (sgr_sheetChromeRoot == sheet) sgr_sheetChromeRoot = nil;
+        for (UIView *v = sheet; v && ![NSStringFromClass(v.class) isEqualToString:@"UIDropShadowView"]; v = v.superview) {
+            v.backgroundColor = UIColor.clearColor;
+            v.opaque = NO;
+            v.layer.opaque = NO;
+        }
+        // This is a floating menu, not a solid bottom sheet with a shadow
+        // stretching down over the tab bar.
+        for (UIView *v = sheet.superview; v; v = v.superview) {
+            if ([NSStringFromClass(v.class) isEqualToString:@"UIDropShadowView"]) {
+                v.layer.shadowOpacity = 0;
+                break;
+            }
+        }
+        root.backgroundColor = UIColor.clearColor;
+        root.opaque = NO;
+        root.layer.opaque = NO;
+        UIView *spacer = SGRFindByIdentifier(root, @"CreateMenu.Spacer", &kSpacerKey);
+        if (spacer) { spacer.backgroundColor = UIColor.clearColor; spacer.opaque = NO; spacer.layer.opaque = NO; }
+    }
     CGFloat radius = card.layer.cornerRadius;
     UIView *glass = SGGlassFor(host, &kCardGlassKey);
     CGRect pane = card.frame;
