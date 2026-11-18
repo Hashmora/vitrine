@@ -41,13 +41,13 @@ static const CGFloat kNavPlatterHeight = 60;
 static const CGFloat kNavButtonHeight = 56;
 static const CGFloat kNavPlatterHeightIconOnly = 60;
 static const CGFloat kNavIconOnlyImageShift = 4;
-static const CGFloat kNavItemSpacing = 2;  // bring neighboring icons 2pt closer without stretching the lens
+static const CGFloat kNavItemSpacing = 0;  // another 2pt closer, without resizing the icons
 static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before the now playing card has a radius to follow
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
 static const CGFloat kSelPillInset = 3;     // vertical gap to the capsule edge
-static const CGFloat kSelPillXInset = 1;    // slightly broader selection at rest, without moving any tab
-static const CGFloat kLensOverhang = 5;     // slightly taller bubble at full lift, balanced with the enlarged tab bar
-static const CGFloat kBarPressScale = 1.025; // whole capsule lifts subtly with its selection bubble
+static const CGFloat kSelPillXInset = -0.5; // 3pt broader at rest without moving any tab
+static const CGFloat kLensOverhang = 9;     // held rim clears the bar; captions remain legible above it
+static const CGFloat kBarPressScale = 1.05; // the entire capsule expands with the held lens
 static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
 static BOOL sg_minimized;
@@ -557,6 +557,17 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
         UIView *button = buttons[i];
         BOOL createOpen = bar.awaitingCreateClose && i < bar.sources.count && isCreateSource(bar.sources[i]);
         UIImageView *whiteIcon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
+        // Some Spotify items paint their original image before Vitrine has
+        // captured both glyph states. Mirror that visible image too, so the
+        // moving accent is not restricted to the one item with a ready overlay.
+        if (!whiteIcon || whiteIcon.hidden || !whiteIcon.image) {
+            whiteIcon = nil;
+            for (UIView *view in button.subviews) {
+                if (![view isKindOfClass:UIImageView.class] || view.hidden) continue;
+                UIImageView *candidate = (UIImageView *)view;
+                if (candidate.image && candidate.bounds.size.width >= 2) { whiteIcon = candidate; break; }
+            }
+        }
         if (whiteIcon && !whiteIcon.hidden && whiteIcon.image) {
             UIImageView *colorIcon = objc_getAssociatedObject(button, &kAccentIconKey);
             if (!colorIcon) {
@@ -569,6 +580,7 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
             UIImage *image = templateOf(whiteIcon.image);
             if (colorIcon.image != image) colorIcon.image = image;
             colorIcon.tintColor = accent;
+            colorIcon.contentMode = whiteIcon.contentMode;
             // The Create plus becomes a cutout in its disc while the menu is up.
             colorIcon.alpha = createOpen ? 0 : whiteIcon.alpha;
             colorIcon.bounds = whiteIcon.bounds;
@@ -674,7 +686,7 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
     CABasicAnimation *anim = [CABasicAnimation animationWithKeyPath:@"sublayerTransform"];
     anim.fromValue = [NSValue valueWithCATransform3D:from];
     anim.toValue = [NSValue valueWithCATransform3D:target];
-    anim.duration = pressed ? 0.32 : 0.46;
+    anim.duration = pressed ? 0.42 : 0.58;
     anim.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.18 :0.0 :0.22 :1.0];
     [host.layer addAnimation:anim forKey:@"vitrine.legacyTabPress"];
 }
@@ -694,6 +706,11 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
     }
     pruneStrayButtons(self);
     paintGlyphs(self);
+    // UIKit may move buttons and their images in a later layout pass after syncBar.
+    // Rebuild the *entire* accent copy from the actual white glyphs (not only the
+    // selected tab) so Home, Search, Library and Create are treated equally.
+    UIView *host = self.stockBar ? objc_getAssociatedObject(self.stockBar, &kHostKey) : nil;
+    if (host && !self.hidden) syncLensAccent(self, host, [self lens]);
     // The pill can be placed before UIKit has put the buttons where they end up, so every pass re-checks it.
     SGRLegacyLens *pill = [self lens];
     CGFloat centerX = pill && !pill.hidden ? [self renderedCenterXForItem:self.selectedItem] : NAN;
@@ -1564,6 +1581,10 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
         // UIKit lays the icon out as if a label sat under it, so without labels it is nudged down to centre.
         UIEdgeInsets wantInsets = hideLabels ? UIEdgeInsetsMake(kNavIconOnlyImageShift, 0, -kNavIconOnlyImageShift, 0) : UIEdgeInsetsZero;
         if (!UIEdgeInsetsEqualToEdgeInsets(item.imageInsets, wantInsets)) item.imageInsets = wantInsets;
+        // Nudge the caption towards its icon, not the capsule's bottom edge.
+        UIOffset titleOffset = hideLabels ? UIOffsetZero : UIOffsetMake(0, -2);
+        if (item.titlePositionAdjustment.horizontal != titleOffset.horizontal ||
+            item.titlePositionAdjustment.vertical != titleOffset.vertical) item.titlePositionAdjustment = titleOffset;
         if (!selected && isActive(sources[i]) && !isCreateSource(sources[i])) selected = item;
     }
     if (apartSource && !fold) {
@@ -1643,8 +1664,8 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     if (!CGSizeEqualToSize(navTint.bounds.size, glassFrame.size)) navTint.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navTint.center, glassCenter)) navTint.center = glassCenter;
 
-    // The selection bubble, above the tint and below the transparent bar so the icon draws on top; while a finger holds
-    // it, it stands over the bar so its glass bends and magnifies the icons (TabBarLens.m).
+    // The selection bubble stands above the capsule tint but below the real tab artwork.
+    // Its edges bend the backdrop; the icons and captions remain unscaled (TabBarLens.m).
     SGRLegacyLens *selPill = (SGRLegacyLens *)SGLazyChild(host, &kSelPillKey, ^UIView *{ return [SGRLegacyLens new]; });
     if (selPill.superview != host) [host insertSubview:selPill aboveSubview:navTint];
     selPill.heldOutset = kSelPillInset + kLensOverhang;
