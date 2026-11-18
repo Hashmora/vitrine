@@ -560,9 +560,7 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
 }
 
 - (void)setMagnification:(CGFloat)magnification {
-    // The legacy tab lens alone may request a subtle zoom-out of the backdrop.
-    // Every other pane continues to use its existing >= 1 magnification.
-    magnification = MAX(0.9, magnification);
+    magnification = MAX(1, magnification);
     if (_magnification == magnification) return;
     _magnification = magnification;
     _meshSize = CGSizeZero;   // the mesh is made again on the next pass

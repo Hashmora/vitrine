@@ -5,25 +5,23 @@
 
 static char kLensPaneKey, kLensFilmKey;
 
-// Slightly reduce the background inside the lens (not the icons), as in the
-// iOS 26 bar. The centre stays sharp; refraction is concentrated at the rim.
-static const CGFloat kLensMagnification = 0.975;
-// The held bubble does not blur what it shows: the panes' 2 pt blur, magnified with the icons, left them a smear.
-static const CGFloat kLensHeldBlur = 0, kLensRestBlur = 2;
-// Stronger bend at the rim, with no magnification in the centre.
-static const CGFloat kLensHeldBend = 0.84;
+// A shallow central magnification lets the raised pane refract the actual tab
+// artwork again. Most of the displacement still happens near the glass rim.
+static const CGFloat kLensMagnification = 1.065;
+static const CGFloat kLensHeldBlur = 0.8, kLensRestBlur = 2;
+static const CGFloat kLensHeldBend = 0.58;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
-static const CGFloat kLensGrow = 22, kLensOverscroll = 14;
+static const CGFloat kLensGrow = 14, kLensOverscroll = 14;
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
 // The softer magnification and the closer item centers keep glyphs visible through it.
 // Signed deformation: rightward motion spreads the bubble and lowers its height;
 // leftward motion narrows it and raises its height. When the finger stops, a slow
 // spring briefly reverses that shape before relaxing. A signed velocity (rather
 // than its absolute value) is essential for the two directions to feel distinct.
-static const CGFloat kLensStretchSpeed = 1050, kLensDirectionalStretch = 0.19;
-static const CGFloat kLensMaxDeform = 0.23, kLensVolume = 0.82, kLensMaxLag = 0.18;
+static const CGFloat kLensStretchSpeed = 1150, kLensDirectionalStretch = 0.14;
+static const CGFloat kLensMaxDeform = 0.16, kLensVolume = 0.72, kLensMaxLag = 0.10;
 // The surface tension: once the edges are near their targets, they pull each other back to the bubble's width, with
 // a damper of their own, so a stretched bubble draws in and gives a small bounce rather than ringing. It is off
 // while the bubble is chasing a finger (the stretch is what shows the chase), and fades in over the last
@@ -32,7 +30,7 @@ static const CGFloat kLensTension = 150, kLensTensionRatio = 0.53, kLensTensionR
 // Slower body response than the moving edges: deceleration in either direction
 // kicks the squash *opposite* to its moving shape, with a small damped rebound.
 // Acceleration gives a much gentler kick so the lens does not jitter while dragged.
-static const CGFloat kLensSquashOmega = 7.4, kLensSquashRatio = 0.50, kLensSquashKick = 0.0052;
+static const CGFloat kLensSquashOmega = 7.4, kLensSquashRatio = 0.50, kLensSquashKick = 0.0042;
 static const CGFloat kLensPoke = 0.8;
 
 typedef struct { CGFloat k, c; } SGRSpring;   // unit mass
@@ -78,7 +76,9 @@ static const CGFloat kPlayStep = 1.0 / 120;
     UIView *_rest;
     UIView *_pane;
     UIView *_film;
-    UIView *_rim; // small specular outline, not a translucent fill
+    // The pane already draws a directional specular rim; do not double it
+    // with a uniformly white UIKit border.
+    __weak UIView *_restAbove;
     CADisplayLink *_link;
     // The two edges: where they are, how fast they go and where they are going.
     CGFloat _L, _R, _vL, _vR, _tL, _tR;
@@ -109,15 +109,8 @@ static const CGFloat kPlayStep = 1.0 / 120;
     [UIView performWithoutAnimation:^{ SGRShowGlass(self->_pane, NO); }];
     _film = SGRGlassFilm(self, &kLensFilmKey, _pane, 0);
     _film.alpha = 0;
-    // The held centre has no white film; a separate thin rim outlines the clear glass.
+    // The pane's own mesh and specular highlight provide the outline.
     _film.backgroundColor = UIColor.clearColor;
-    _rim = [UIView new];
-    _rim.userInteractionEnabled = NO;
-    _rim.backgroundColor = UIColor.clearColor;
-    _rim.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.38].CGColor;
-    _rim.layer.borderWidth = 0.8;
-    _rim.alpha = 0;
-    [self addSubview:_rim];
     return self;
 }
 
@@ -137,9 +130,6 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // The specular film is a white veil at full bubble lift; refraction
     // should be visible without a second bright surface on top of it.
     _film.alpha = 0;
-    _rim.frame = bounds;
-    _rim.layer.cornerRadius = radius;
-    _rim.layer.cornerCurve = kCACornerCurveContinuous;
 }
 
 - (void)didMoveToWindow {
@@ -248,8 +238,9 @@ static BOOL bubbles(void) {
 - (void)showGlass:(BOOL)on animated:(BOOL)animated {
     if (_glassOn == on) return;
     _glassOn = on;
-    // Keep the tab artwork above the pane even while the bubble is raised: only
-    // the backdrop bends, while the icons and labels stay perfectly crisp.
+    // While raised, the pane must actually sit above the tab artwork: a
+    // CABackdropLayer only refracts layers *behind* it. At rest it goes back
+    // under the white icons and titles.
     [self standOverTabs:on];
     if ([_pane isKindOfClass:SGLegacyGlassView.class]) {
         SGLegacyGlassView *glass = (SGLegacyGlassView *)_pane;
@@ -265,28 +256,27 @@ static BOOL bubbles(void) {
         SGRShowGlass(self->_pane, on);
         self->_film.alpha = 0;
         self->_rest.alpha = on ? 0 : 1;
-        self->_rim.alpha = on ? 1 : 0;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
 }
 
-// Keep the optical lens between the capsule's background and the actual tab
-// artwork. The original images and captions remain above it, unchanged in
-// size and sharpness; only the glass behind them refracts. The held outline
-// still protrudes above the capsule because the lens grows vertically.
+// The raised backdrop must include the tab icons and titles in its sample.
+// Keep their true coordinates in the underlying bar, then return the resting
+// pill to its original stacking order on release.
 - (void)standOverTabs:(BOOL)over {
     UIView *host = self.superview;
     if (!host) return;
-    (void)over;
-    for (UIView *view in host.subviews) {
-        if ([view isKindOfClass:UITabBar.class]) {
-            if ([host.subviews indexOfObject:self] > [host.subviews indexOfObject:view]) {
-                [host insertSubview:self belowSubview:view];
-            }
-            break;
-        }
+    if (over) {
+        NSUInteger at = [host.subviews indexOfObject:self];
+        if (at == NSNotFound || at + 1 >= host.subviews.count) return;
+        _restAbove = host.subviews[at + 1];
+        [host bringSubviewToFront:self];
+        return;
     }
+    UIView *above = _restAbove;
+    _restAbove = nil;
+    if (above.superview == host) [host insertSubview:self belowSubview:above];
 }
 
 // Where the bubble is for the state it is in: the middle, and how wide and how tall it looks. Its size is fixed (the
