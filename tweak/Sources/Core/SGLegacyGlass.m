@@ -334,7 +334,7 @@ static SGMeshTemplate *SGBuildTemplate(CGFloat radius, BOOL classic) {
 }
 
 // The mesh for `size`, from the cached template of its corner radius.
-static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CGFloat lensScale, BOOL classic) {
+static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CGFloat lensScale, BOOL classic, BOOL lateral) {
     radius = MIN(radius, MIN(size.width, size.height) / 2);
     if (radius <= 0 || size.width < 1 || size.height < 1) return nil;
 
@@ -364,7 +364,11 @@ static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CG
         CGFloat w = insetV + (v.baseY + v.scaleY * H) / H * usableV;
         // Magnified about the middle: the point samples nearer the middle, by the magnification, then bends as usual.
         CGFloat su = 0.5 + (u - 0.5) / magnification, sw = 0.5 + (w - 0.5) / magnification;
-        CGPoint from = CGPointMake(MAX(0.0, MIN(1.0, su + v.dispX * dU)), MAX(0.0, MIN(1.0, sw + v.dispY * dV)));
+        // The tab lens has no upper/lower rim refraction. Shape its side
+        // crescents with a vertical envelope that vanishes at y = 0 and 1.
+        CGFloat envelope = lateral ? pow(MAX(0, 1 - pow(2 * w - 1, 2)), 1.6) : 1;
+        CGPoint from = CGPointMake(MAX(0.0, MIN(1.0, su + v.dispX * dU * envelope)),
+                                   MAX(0.0, MIN(1.0, sw + (lateral ? 0 : v.dispY * dV))));
         vertices[i] = (SGMeshVertex){from, {u, w, v.depth}};
     }
     id transform = SGMakeMeshTransform(vertices, vertexCount, (SGMeshFace *)tmpl.faces.bytes, tmpl.faces.length / sizeof(SGMeshFace));
@@ -559,6 +563,13 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     _backdropLayer.filters = filters.count ? filters : nil;
 }
 
+- (void)setLateralRefraction:(BOOL)lateralRefraction {
+    if (_lateralRefraction == lateralRefraction) return;
+    _lateralRefraction = lateralRefraction;
+    _meshSize = CGSizeZero;
+    [self setNeedsLayout];
+}
+
 - (void)setMagnification:(CGFloat)magnification {
     // The raised Legacy Tab Bar lens uses a slight backdrop reduction. Other
     // glass panes still request 1 or more and keep their previous behaviour.
@@ -629,7 +640,7 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     [CATransaction setDisableActions:YES];
     self.layer.cornerRadius = radius;
     _backdropLayer.frame = self.bounds;
-    id mesh = SGMakeGlassMesh(size, radius, _magnification, _lensScale, classic);
+    id mesh = SGMakeGlassMesh(size, radius, _magnification, _lensScale, classic, _lateralRefraction);
     // No mesh (a radius of 0): the last one goes rather than staying for a shape it was not made for.
     [_backdropLayer setValue:mesh forKey:@"meshTransform"];
     [CATransaction commit];
