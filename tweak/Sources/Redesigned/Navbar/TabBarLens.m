@@ -3,26 +3,26 @@
 #import "Redesigned/Kit/SGRGlass.h"
 #import "Redesigned/Kit/SGRTokens.h"
 
-static char kLensPaneKey, kLensFilmKey;
+static char kLensPaneKey, kLensFilmKey, kLensFilmMaskKey;
 
 // The raised lens differs from the capsule: almost no blur or colour lift in
 // the middle, slightly reduced backdrop scale, and most of the refraction in
 // the specular rim. The icons stay legible in the centre like on iOS 26.
-static const CGFloat kLensMagnification = 0.98;
-static const CGFloat kLensHeldBlur = 0.12, kLensRestBlur = 2;
-static const CGFloat kLensHeldBend = 0.95;
+static const CGFloat kLensMagnification = 0.985;
+static const CGFloat kLensHeldBlur = 0.08, kLensRestBlur = 2;
+static const CGFloat kLensHeldBend = 0.90;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
-static const CGFloat kLensGrow = 14, kLensOverscroll = 14;
+static const CGFloat kLensGrow = 18, kLensOverscroll = 14;
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
 // The softer magnification and the closer item centers keep glyphs visible through it.
 // Signed deformation: rightward motion spreads the bubble and lowers its height;
 // leftward motion narrows it and raises its height. When the finger stops, a slow
 // spring briefly reverses that shape before relaxing. A signed velocity (rather
 // than its absolute value) is essential for the two directions to feel distinct.
-static const CGFloat kLensStretchSpeed = 1150, kLensDirectionalStretch = 0.14;
-static const CGFloat kLensMaxDeform = 0.16, kLensVolume = 0.72, kLensMaxLag = 0.10;
+static const CGFloat kLensStretchSpeed = 1080, kLensDirectionalStretch = 0.15;
+static const CGFloat kLensMaxDeform = 0.17, kLensVolume = 0.70, kLensMaxLag = 0.11;
 // The surface tension: once the edges are near their targets, they pull each other back to the bubble's width, with
 // a damper of their own, so a stretched bubble draws in and gives a small bounce rather than ringing. It is off
 // while the bubble is chasing a finger (the stretch is what shows the chase), and fades in over the last
@@ -31,7 +31,7 @@ static const CGFloat kLensTension = 150, kLensTensionRatio = 0.53, kLensTensionR
 // Slower body response than the moving edges: deceleration in either direction
 // kicks the squash *opposite* to its moving shape, with a small damped rebound.
 // Acceleration gives a much gentler kick so the lens does not jitter while dragged.
-static const CGFloat kLensSquashOmega = 7.4, kLensSquashRatio = 0.50, kLensSquashKick = 0.0042;
+static const CGFloat kLensSquashOmega = 6.4, kLensSquashRatio = 0.54, kLensSquashKick = 0.0040;
 static const CGFloat kLensPoke = 0.8;
 
 typedef struct { CGFloat k, c; } SGRSpring;   // unit mass
@@ -62,6 +62,30 @@ static CGFloat rubber(CGFloat x, CGFloat lo, CGFloat hi) {
 @interface SGRLegacyLens ()
 - (void)tick:(CADisplayLink *)link;
 @end
+
+static void SGSetSideRimMask(UIView *film, CGRect bounds) {
+    if (!film) return;
+    CAGradientLayer *mask = objc_getAssociatedObject(film, &kLensFilmMaskKey);
+    if (!mask) {
+        mask = [CAGradientLayer layer];
+        objc_setAssociatedObject(film, &kLensFilmMaskKey, mask, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        film.layer.mask = mask;
+    }
+    mask.frame = bounds;
+    mask.startPoint = CGPointMake(0, 0.5);
+    mask.endPoint = CGPointMake(1, 0.5);
+    mask.colors = @[
+        (id)[UIColor colorWithWhite:1 alpha:1].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.92].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.20].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.20].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:0.92].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:1].CGColor
+    ];
+    mask.locations = @[@0, @0.12, @0.24, @0.38, @0.62, @0.76, @0.88, @1];
+}
 
 @implementation SGRLensLink
 - (void)tick:(CADisplayLink *)link {
@@ -111,7 +135,8 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _film = SGRGlassFilm(self, &kLensFilmKey, _pane, 0);
     _film.alpha = 0;
     // The pane's own mesh and specular highlight provide the outline.
-    _film.backgroundColor = UIColor.clearColor;
+    _film.backgroundColor = UIColor.whiteColor;
+    _film.userInteractionEnabled = NO;
     return self;
 }
 
@@ -128,8 +153,8 @@ static const CGFloat kPlayStep = 1.0 / 120;
     if (!CGRectEqualToRect(_pane.frame, bounds)) _pane.frame = bounds;
     SGShapeGlass(_pane, radius, YES);
     SGRGlassFilm(self, &kLensFilmKey, _pane, radius);
-    // The specular film is a white veil at full bubble lift; refraction
-    // should be visible without a second bright surface on top of it.
+    SGSetSideRimMask(_film, _film.bounds);
+    // The lens rim reads on the sides, not as a bright ring above and below.
     _film.alpha = 0;
 }
 
@@ -252,10 +277,11 @@ static BOOL bubbles(void) {
         glass.blurRadius = on ? kLensHeldBlur : kLensRestBlur;
         glass.lensScale = on ? kLensHeldBend : 1;
         glass.sharp = on;
+        glass.rimless = on;
     }
     void (^change)(void) = ^{
         SGRShowGlass(self->_pane, on);
-        self->_film.alpha = 0;
+        self->_film.alpha = on ? 0.14 : 0;
         self->_rest.alpha = on ? 0 : 1;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
@@ -371,7 +397,7 @@ static BOOL bubbles(void) {
 - (void)advance:(CGFloat)h {
     CGFloat dir = (_tL + _tR) / 2 - (_L + _R) / 2;
     BOOL moving = fabs(dir) > 0.75;
-    SGRSpring front = spring(820, 0.83), back = spring(280, 0.70), even = spring(420, 0.78);
+    SGRSpring front = spring(660, 0.84), back = spring(215, 0.72), even = spring(320, 0.80);
     SGRSpring forL = !moving ? even : (dir < 0 ? front : back);
     SGRSpring forR = !moving ? even : (dir > 0 ? front : back);
     SGSpring lift = _liftTarget > 0.5 ? SGGlassLiftOn : SGGlassLiftOff;   // the press's own

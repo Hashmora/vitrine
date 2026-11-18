@@ -44,10 +44,10 @@ static const CGFloat kNavIconOnlyImageShift = 4;
 static const CGFloat kNavItemSpacing = 0;  // another 2pt closer, without resizing the icons
 static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before the now playing card has a radius to follow
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
-static const CGFloat kSelPillInset = 3;     // vertical gap to the capsule edge
-static const CGFloat kSelPillXInset = 3;  // equal 3pt side gaps, including Home and Create
-static const CGFloat kLensOverhang = 4;     // a modest lift beyond the capsule, without a giant bubble
-static const CGFloat kBarPressScale = 1.032; // a small capsule response without magnifying the bubble twice
+static const CGFloat kSelPillInset = 2;     // a slightly taller bubble with more tab title headroom
+static const CGFloat kSelPillXInset = 2;  // wider resting underlay, still with even side gaps
+static const CGFloat kLensOverhang = 5;     // the held bubble stands a little taller above and below the capsule
+static const CGFloat kBarPressScale = 1.018; // the capsule breathes more gently while the bubble is up
 static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
 static BOOL sg_minimized;
@@ -473,6 +473,17 @@ static UIImage *templateOf(UIImage *image) {
     return made;
 }
 
+static UIImage *snapshotButtonTemplate(UIView *button) {
+    if (!button || button.bounds.size.width < 1 || button.bounds.size.height < 1) return nil;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat formatForTraitCollection:button.traitCollection];
+    format.opaque = NO;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:button.bounds.size format:format];
+    UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        [button.layer renderInContext:context.CGContext];
+    }];
+    return image ? [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate] : nil;
+}
+
 // UITabBar does not repaint an icon between its outline and filled bitmaps when the selection changes on this bar,
 // so each item's glyph is drawn by an image view of ours laid over UIKit's in the item's button (selectedImage on
 // the selected item, image on the rest) and UIKit's is hidden. Run from layout and the selection setter.
@@ -572,7 +583,28 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
                 if (candidate.image && candidate.bounds.size.width > 1) { whiteIcon = candidate; break; }
             }
         }
-        if (whiteIcon && !whiteIcon.hidden && whiteIcon.image && !createOpen) {
+        BOOL createItem = i < bar.sources.count && isCreateSource(bar.sources[i]);
+        if (!createItem && !createOpen) {
+            UIImageView *tintedWhole = objc_getAssociatedObject(button, &kAccentIconKey);
+            if (!tintedWhole) {
+                tintedWhole = [UIImageView new];
+                tintedWhole.userInteractionEnabled = NO;
+                objc_setAssociatedObject(button, &kAccentIconKey, tintedWhole, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            if (tintedWhole.superview != copy) [copy addSubview:tintedWhole];
+            UIImage *whole = snapshotButtonTemplate(button);
+            if (whole) {
+                tintedWhole.image = whole;
+                tintedWhole.tintColor = accent;
+                tintedWhole.contentMode = UIViewContentModeScaleToFill;
+                tintedWhole.bounds = button.bounds;
+                tintedWhole.center = [button.superview convertPoint:button.center toView:copy];
+                tintedWhole.transform = button.transform;
+                tintedWhole.alpha = button.alpha;
+                tintedWhole.hidden = NO;
+                [used addObject:tintedWhole];
+            }
+        } else if (whiteIcon && !whiteIcon.hidden && whiteIcon.image && !createOpen) {
             UIImageView *tintedIcon = objc_getAssociatedObject(button, &kAccentIconKey);
             if (!tintedIcon) {
                 tintedIcon = [UIImageView new];
@@ -585,8 +617,6 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
             tintedIcon.tintColor = accent;
             tintedIcon.contentMode = whiteIcon.contentMode;
             tintedIcon.bounds = whiteIcon.bounds;
-            // Convert the original's parent-space centre; applying its own
-            // transform again to an already transformed rect shifts icons.
             tintedIcon.center = [whiteIcon.superview convertPoint:whiteIcon.center toView:copy];
             tintedIcon.transform = whiteIcon.transform;
             tintedIcon.alpha = whiteIcon.alpha * button.alpha;
@@ -600,7 +630,7 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
                 break;
             }
         }
-        if (whiteTitle && whiteTitle.text.length) {
+        if (createItem && whiteTitle && whiteTitle.text.length) {
             UILabel *tintedTitle = objc_getAssociatedObject(button, &kAccentNameKey);
             if (!tintedTitle) {
                 tintedTitle = [UILabel new];
@@ -680,7 +710,7 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
     UIView *host = bar.stockBar ? objc_getAssociatedObject(bar.stockBar, &kHostKey) : nil;
     if (!host) return;
     pressed &= SGUseLegacyGlass() && !SGRReduceMotion() && !sg_minimized;
-    CATransform3D target = pressed ? CATransform3DMakeScale(kBarPressScale, kBarPressScale, 1) : CATransform3DIdentity;
+    CATransform3D target = pressed ? CATransform3DMakeScale(kBarPressScale, 0.978, 1) : CATransform3DIdentity;
     if (CATransform3DEqualToTransform(host.layer.sublayerTransform, target)) return;
     CALayer *shown = host.layer.presentationLayer;
     CATransform3D from = shown ? shown.sublayerTransform : host.layer.sublayerTransform;
@@ -691,7 +721,7 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
     CABasicAnimation *anim = [CABasicAnimation animationWithKeyPath:@"sublayerTransform"];
     anim.fromValue = [NSValue valueWithCATransform3D:from];
     anim.toValue = [NSValue valueWithCATransform3D:target];
-    anim.duration = pressed ? 0.42 : 0.58;
+    anim.duration = pressed ? 0.48 : 0.70;
     anim.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.18 :0.0 :0.22 :1.0];
     [host.layer addAnimation:anim forKey:@"vitrine.legacyTabPress"];
 }
