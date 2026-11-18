@@ -618,9 +618,22 @@ UIView *SGRSheetPaneOf(UIView *view) {
     return nil;
 }
 
+// Create is a floating 288pt card inside a taller sheet whose last 83pt
+// forwards taps through to the legacy tab bar. Once its page is present,
+// do not put generic bottom-sheet glass back across that transparent strip.
+static BOOL sheetContainsCreateMenu(UIView *view, NSUInteger depth) {
+    if (!view || depth > 12) return NO;
+    if ([view.accessibilityIdentifier isEqualToString:@"CreateMenu"]) return YES;
+    for (UIView *sub in view.subviews) {
+        if (sheetContainsCreateMenu(sub, depth + 1)) return YES;
+    }
+    return NO;
+}
+
 UIView *SGRGlassSheetChrome(UIView *content) {
     if (@available(iOS 26.0, *)) return nil;
     UIView *pane = SGRSheetPaneOf(content);
+    if (pane && sheetContainsCreateMenu(pane, 0)) return nil;
     return pane ? chromeSheetView(pane) : nil;
 }
 

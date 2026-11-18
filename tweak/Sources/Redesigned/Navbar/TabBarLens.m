@@ -7,7 +7,7 @@ static char kLensPaneKey, kLensFilmKey;
 
 // Slightly less central magnification exposes more of each neighboring tab inside the held lens. This lets
 // the refraction pick up adjacent glyphs in the gaps without needing a wide horizontal bulge.
-static const CGFloat kLensMagnification = 1.10;
+static const CGFloat kLensMagnification = 1.14;
 // The held bubble does not blur what it shows: the panes' 2 pt blur, magnified with the icons, left them a smear.
 static const CGFloat kLensHeldBlur = 0, kLensRestBlur = 2;
 // Moderate edge bend draws nearby glyphs into the lens without smearing their centers.
@@ -15,7 +15,7 @@ static const CGFloat kLensHeldBend = 0.46;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
-static const CGFloat kLensGrow = 18, kLensOverscroll = 14;
+static const CGFloat kLensGrow = 22, kLensOverscroll = 14;
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
 // The softer magnification and the closer item centers keep glyphs visible through it.
 // Signed deformation: rightward motion spreads the bubble and lowers its height;
@@ -129,6 +129,9 @@ static const CGFloat kPlayStep = 1.0 / 120;
     if (!CGRectEqualToRect(_pane.frame, bounds)) _pane.frame = bounds;
     SGShapeGlass(_pane, radius, YES);
     SGRGlassFilm(self, &kLensFilmKey, _pane, radius);
+    // The specular film is a white veil at full bubble lift; refraction
+    // should be visible without a second bright surface on top of it.
+    _film.alpha = 0;
 }
 
 - (void)didMoveToWindow {
@@ -242,6 +245,9 @@ static BOOL bubbles(void) {
     [self standOverTabs:on];
     if ([_pane isKindOfClass:SGLegacyGlassView.class]) {
         SGLegacyGlassView *glass = (SGLegacyGlassView *)_pane;
+        // Use clear glass while held: keep the tabs' own color instead of
+        // boosting it into a milky white patch against the dark capsule.
+        glass.clear = on;
         glass.magnification = on ? kLensMagnification : 1;
         glass.blurRadius = on ? kLensHeldBlur : kLensRestBlur;
         glass.lensScale = on ? kLensHeldBend : 1;
@@ -249,7 +255,7 @@ static BOOL bubbles(void) {
     }
     void (^change)(void) = ^{
         SGRShowGlass(self->_pane, on);
-        self->_film.alpha = on ? 1 : 0;
+        self->_film.alpha = 0;
         self->_rest.alpha = on ? 0 : 1;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
@@ -291,6 +297,13 @@ static BOOL bubbles(void) {
     return (SGLensSample){_L, _R, _vL, _vR, _lift, _vLift, _sq, _vSq};
 }
 
+// The tint mask belongs to a copy inside the UITabBar. Its position must
+// use that bar's coordinates, not the surrounding host's coordinates.
+- (CGPoint)tintPointForHostPoint:(CGPoint)point {
+    if (!_tintOverlay || !self.superview) return point;
+    return [self.superview convertPoint:point toView:_tintOverlay];
+}
+
 - (void)applyPose {
     if (CGRectIsEmpty(_restFrame)) return;
     CGPoint center;
@@ -305,7 +318,7 @@ static BOOL bubbles(void) {
         [CATransaction setDisableActions:YES];
         _tintMask.bounds = (CGRect){CGPointZero, self.bounds.size};
         _tintMask.cornerRadius = self.bounds.size.height / 2;
-        _tintMask.position = center;
+        _tintMask.position = [self tintPointForHostPoint:center];
         _tintMask.transform = CATransform3DMakeScale(sx, sy, 1);
         [CATransaction commit];
     }
@@ -458,11 +471,13 @@ static BOOL bubbles(void) {
     NSMutableArray<NSNumber *> *xs = [NSMutableArray arrayWithCapacity:count];
     NSMutableArray<NSNumber *> *sxs = [NSMutableArray arrayWithCapacity:count];
     NSMutableArray<NSNumber *> *sys = [NSMutableArray arrayWithCapacity:count];
+    NSMutableArray<NSNumber *> *maskXs = [NSMutableArray arrayWithCapacity:count];
     for (NSUInteger i = 0; i < count; i++) {
         CGPoint center;
         CGFloat sx, sy;
         [self getPose:all[i] center:&center sx:&sx sy:&sy];
         [xs addObject:@(center.x)];
+        [maskXs addObject:@([self tintPointForHostPoint:center].x)];
         [sxs addObject:@(sx)];
         [sys addObject:@(sy)];
     }
@@ -490,7 +505,7 @@ static BOOL bubbles(void) {
             a.calculationMode = kCAAnimationLinear;
             [_tintMask addAnimation:a forKey:key];
         };
-        maskRun(@"lens.x", @"position.x", xs);
+        maskRun(@"lens.x", @"position.x", maskXs);
         maskRun(@"lens.sx", @"transform.scale.x", sxs);
         maskRun(@"lens.sy", @"transform.scale.y", sys);
     }

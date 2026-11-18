@@ -46,7 +46,7 @@ static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before 
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
 static const CGFloat kSelPillInset = 3;     // vertical gap to the capsule edge
 static const CGFloat kSelPillXInset = 1;    // slightly broader selection at rest, without moving any tab
-static const CGFloat kLensOverhang = 3;     // held lens height beyond the capsule rim
+static const CGFloat kLensOverhang = 5;     // slightly taller bubble at full lift, balanced with the enlarged tab bar
 static const CGFloat kBarPressScale = 1.025; // whole capsule lifts subtly with its selection bubble
 static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
@@ -529,9 +529,9 @@ static void paintGlyphs(UITabBar *bar) {
     }
 }
 
-// The accent artwork lives in the host (over the white UITabBar, under the
-// magnifying glass). A mask with the lens's *animated* geometry clips both glyphs
-// and text. A half-covered icon is half green and half white, as in iOS 26.
+// Keep the accent artwork in the *same tab bar* as its white glyphs. When
+// Spotify/Vitrine scales the bar and the glass magnifies it, both colors now
+// share the same transforms. The lens clips the accent copy in bar coordinates.
 static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *lens) {
     UIView *copy = objc_getAssociatedObject(host, &kAccentCopyKey);
     if (!tintedTabs() || sg_minimized || !lens || lens.hidden) {
@@ -546,8 +546,8 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
         copy.backgroundColor = UIColor.clearColor;
         objc_setAssociatedObject(host, &kAccentCopyKey, copy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    if (copy.superview != host) [host insertSubview:copy aboveSubview:bar];
-    if (!CGRectEqualToRect(copy.frame, host.bounds)) copy.frame = host.bounds;
+    if (copy.superview != bar) [bar addSubview:copy];
+    if (!CGRectEqualToRect(copy.frame, bar.bounds)) copy.frame = bar.bounds;
     copy.hidden = NO;
     NSMutableSet<UIView *> *used = [NSMutableSet set];
     NSArray<UIView *> *buttons = tabButtons(bar);
@@ -572,7 +572,7 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
             // The Create plus becomes a cutout in its disc while the menu is up.
             colorIcon.alpha = createOpen ? 0 : whiteIcon.alpha;
             colorIcon.bounds = whiteIcon.bounds;
-            colorIcon.center = [whiteIcon convertPoint:CGPointMake(CGRectGetMidX(whiteIcon.bounds), CGRectGetMidY(whiteIcon.bounds)) toView:host];
+            colorIcon.center = [whiteIcon convertPoint:CGPointMake(CGRectGetMidX(whiteIcon.bounds), CGRectGetMidY(whiteIcon.bounds)) toView:copy];
             colorIcon.transform = whiteIcon.transform;
             [used addObject:colorIcon];
         }
@@ -603,7 +603,7 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
             colorName.minimumScaleFactor = whiteName.minimumScaleFactor;
             colorName.alpha = whiteName.alpha;
             colorName.bounds = whiteName.bounds;
-            colorName.center = [whiteName convertPoint:CGPointMake(CGRectGetMidX(whiteName.bounds), CGRectGetMidY(whiteName.bounds)) toView:host];
+            colorName.center = [whiteName convertPoint:CGPointMake(CGRectGetMidX(whiteName.bounds), CGRectGetMidY(whiteName.bounds)) toView:copy];
             [used addObject:colorName];
         }
     }
