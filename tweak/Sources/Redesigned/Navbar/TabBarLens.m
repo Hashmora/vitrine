@@ -5,11 +5,12 @@
 
 static char kLensPaneKey, kLensFilmKey;
 
-// A shallow central magnification lets the raised pane refract the actual tab
-// artwork again. Most of the displacement still happens near the glass rim.
-static const CGFloat kLensMagnification = 1.065;
-static const CGFloat kLensHeldBlur = 0.8, kLensRestBlur = 2;
-static const CGFloat kLensHeldBend = 0.58;
+// The raised lens differs from the capsule: almost no blur or colour lift in
+// the middle, slightly reduced backdrop scale, and most of the refraction in
+// the specular rim. The icons stay legible in the centre like on iOS 26.
+static const CGFloat kLensMagnification = 0.98;
+static const CGFloat kLensHeldBlur = 0.12, kLensRestBlur = 2;
+static const CGFloat kLensHeldBend = 0.95;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
@@ -244,8 +245,8 @@ static BOOL bubbles(void) {
     [self standOverTabs:on];
     if ([_pane isKindOfClass:SGLegacyGlassView.class]) {
         SGLegacyGlassView *glass = (SGLegacyGlassView *)_pane;
-        // Use clear glass while held: keep the tabs' own color instead of
-        // boosting it into a milky white patch against the dark capsule.
+        // The capsule has a coloured/darkened glass surface. The lens does not:
+        // it samples an almost sharp backdrop with refraction confined to the rim.
         glass.clear = on;
         glass.magnification = on ? kLensMagnification : 1;
         glass.blurRadius = on ? kLensHeldBlur : kLensRestBlur;

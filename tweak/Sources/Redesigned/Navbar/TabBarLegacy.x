@@ -29,7 +29,7 @@
 
 static char kBarKey, kHostKey, kNavGlassKey, kNavTintKey, kSelPillKey, kRetriesKey, kGlyphOverlayKey, kOutlineLiveKey, kFilledLiveKey, kCreateDiscKey, kGlyphsTakenKey;
 static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, kTemplateKey;
-static char kAccentCopyKey, kAccentButtonKey;
+static char kAccentCopyKey, kAccentIconKey, kAccentNameKey;
 // The bar is a floating capsule, not a full-width slab.
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
@@ -45,7 +45,7 @@ static const CGFloat kNavItemSpacing = 0;  // another 2pt closer, without resizi
 static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before the now playing card has a radius to follow
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
 static const CGFloat kSelPillInset = 3;     // vertical gap to the capsule edge
-static const CGFloat kSelPillXInset = -0.5; // 3pt broader at rest without moving any tab
+static const CGFloat kSelPillXInset = 3;  // equal 3pt side gaps, including Home and Create
 static const CGFloat kLensOverhang = 4;     // a modest lift beyond the capsule, without a giant bubble
 static const CGFloat kBarPressScale = 1.032; // a small capsule response without magnifying the bubble twice
 static __weak UIView *sg_stockBar;
@@ -494,8 +494,12 @@ static void paintGlyphs(UITabBar *bar) {
         // Create is selected while its menu is up, but is no tab to open: turnCreate draws it then.
         BOOL create = [bar isKindOfClass:SGRLegacyTabBar.class] && i < ((SGRLegacyTabBar *)bar).sources.count
             && isCreateSource(((SGRLegacyTabBar *)bar).sources[i]);
+        // Keep Create's current glyph while the menu rotates the plus. Replacing
+        // selectedImage mid-spring would restart its animation.
+        BOOL createAnimating = create && ((SGRLegacyTabBar *)bar).awaitingCreateClose;
+        if (createAnimating && overlay.image) want = overlay.image;
         if (want && tintedTabs()) want = templateOf(want);
-        if (!native || !want) {
+        if (!want || (!native && !overlay)) {
             overlay.hidden = YES;
             continue;
         }
@@ -509,14 +513,14 @@ static void paintGlyphs(UITabBar *bar) {
         if (overlay.superview != button) [button addSubview:overlay];
         // bounds + center, not frame: the overlay of Create is rotated while its menu is up, and assigning
         // a frame to a transformed view scrambles it.
-        CGRect nativeFrame = native.frame;
+        CGRect nativeFrame = native ? native.frame : overlay.frame;
         CGPoint nativeCenter = CGPointMake(CGRectGetMidX(nativeFrame), CGRectGetMidY(nativeFrame));
-        if (!CGSizeEqualToSize(overlay.bounds.size, nativeFrame.size)) overlay.bounds = (CGRect){CGPointZero, nativeFrame.size};
-        if (!CGPointEqualToPoint(overlay.center, nativeCenter)) overlay.center = nativeCenter;
+        if (native && !CGSizeEqualToSize(overlay.bounds.size, nativeFrame.size)) overlay.bounds = (CGRect){CGPointZero, nativeFrame.size};
+        if (native && !CGPointEqualToPoint(overlay.center, nativeCenter)) overlay.center = nativeCenter;
         if (overlay.image != want) overlay.image = want;
         // Color is applied by the clipped accent copy, not as a whole-item tint.
         UIColor *tint = UIColor.whiteColor;
-        BOOL createOpen = create && !CGAffineTransformIsIdentity(overlay.transform);
+        BOOL createOpen = createAnimating || (create && !CGAffineTransformIsIdentity(overlay.transform));
         if (!createOpen && ![overlay.tintColor isEqual:tint]) overlay.tintColor = tint;
         overlay.hidden = NO;
         // UIKit doesn't reliably refresh the name during an in-place selection change.
@@ -525,16 +529,15 @@ static void paintGlyphs(UITabBar *bar) {
             UILabel *name = (UILabel *)v;
             if (![name.textColor isEqual:tint]) name.textColor = tint;
         }
-        native.hidden = YES;
+        if (native) native.hidden = YES;
     }
 }
 
-// Each UIKit button is a single visual source for both the white artwork and
-// its accented duplicate. Rendering its *whole* layer preserves the real
-// icon/title geometry even when Spotify nests its image or title deeper than
-// the usual UITabBarButton subviews. The duplicates share the bar's coordinate
-// system and are revealed only by the lens mask, so color never switches an
-// entire item on/off as the bubble moves across it.
+// The accent is made from the *actual displayed* icon and title, not a
+// bitmap of the whole UITabBarButton. Capturing a button's CALayer every
+// layout pass included Create's animated disc, and put a stale image over the
+// rotating plus. Matching UIKit subviews keeps both colours at one baseline.
+// The common host layer/mask gives partial tint while dragging between tabs.
 static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *lens) {
     UIView *copy = objc_getAssociatedObject(host, &kAccentCopyKey);
     if (!tintedTabs() || sg_minimized || !lens || lens.hidden) {
@@ -549,35 +552,77 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
         copy.backgroundColor = UIColor.clearColor;
         objc_setAssociatedObject(host, &kAccentCopyKey, copy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    if (copy.superview != bar) [bar addSubview:copy];
-    if (!CGRectEqualToRect(copy.frame, bar.bounds)) copy.frame = bar.bounds;
+    // Both the lens and this copy live in the same host coordinates. The
+    // host's press scale then transforms the original and the tint together.
+    if (copy.superview != host) [host insertSubview:copy aboveSubview:bar];
+    if (!CGRectEqualToRect(copy.frame, host.bounds)) copy.frame = host.bounds;
     copy.hidden = NO;
     NSArray<UIView *> *buttons = tabButtons(bar);
     if (buttons.count != bar.items.count) { lens.tintOverlay = nil; copy.hidden = YES; return; }
     UIColor *accent = SGRAccent();
-    NSMutableSet<UIView *> *used = [NSMutableSet setWithCapacity:buttons.count];
-    for (UIView *button in buttons) {
-        CGSize size = button.bounds.size;
-        if (size.width < 2 || size.height < 2 || button.hidden) continue;
-        UIImageView *accented = objc_getAssociatedObject(button, &kAccentButtonKey);
-        if (!accented) {
-            accented = [UIImageView new];
-            accented.userInteractionEnabled = NO;
-            accented.contentMode = UIViewContentModeScaleToFill;
-            objc_setAssociatedObject(button, &kAccentButtonKey, accented, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSMutableSet<UIView *> *used = [NSMutableSet setWithCapacity:buttons.count * 2];
+    for (NSUInteger i = 0; i < buttons.count; i++) {
+        UIView *button = buttons[i];
+        BOOL createOpen = bar.awaitingCreateClose && i < bar.sources.count && isCreateSource(bar.sources[i]);
+        UIImageView *whiteIcon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
+        if ((!whiteIcon || whiteIcon.hidden || !whiteIcon.image) && !createOpen) {
+            for (UIView *view in button.subviews) {
+                if (![view isKindOfClass:UIImageView.class] || view.hidden) continue;
+                UIImageView *candidate = (UIImageView *)view;
+                if (candidate.image && candidate.bounds.size.width > 1) { whiteIcon = candidate; break; }
+            }
         }
-        // The snapshot has the very same baseline, glyph outlines, and
-        // native transforms as the visible button. It excludes the accent
-        // duplicates, which are siblings rather than children of the button.
-        UIImage *snapshot = renderLayer(button.layer, size);
-        if (!snapshot) { accented.hidden = YES; continue; }
-        if (accented.superview != copy) [copy addSubview:accented];
-        accented.hidden = NO;
-        accented.image = snapshot;
-        accented.tintColor = accent;
-        accented.alpha = button.alpha;
-        accented.frame = [button convertRect:button.bounds toView:copy];
-        [used addObject:accented];
+        if (whiteIcon && !whiteIcon.hidden && whiteIcon.image && !createOpen) {
+            UIImageView *tintedIcon = objc_getAssociatedObject(button, &kAccentIconKey);
+            if (!tintedIcon) {
+                tintedIcon = [UIImageView new];
+                tintedIcon.userInteractionEnabled = NO;
+                objc_setAssociatedObject(button, &kAccentIconKey, tintedIcon, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            if (tintedIcon.superview != copy) [copy addSubview:tintedIcon];
+            UIImage *image = templateOf(whiteIcon.image);
+            if (tintedIcon.image != image) tintedIcon.image = image;
+            tintedIcon.tintColor = accent;
+            tintedIcon.contentMode = whiteIcon.contentMode;
+            tintedIcon.bounds = whiteIcon.bounds;
+            // Convert the original's parent-space centre; applying its own
+            // transform again to an already transformed rect shifts icons.
+            tintedIcon.center = [whiteIcon.superview convertPoint:whiteIcon.center toView:copy];
+            tintedIcon.transform = whiteIcon.transform;
+            tintedIcon.alpha = whiteIcon.alpha * button.alpha;
+            tintedIcon.hidden = NO;
+            [used addObject:tintedIcon];
+        }
+        UILabel *whiteTitle = nil;
+        for (UIView *view in button.subviews) {
+            if ([view isKindOfClass:UILabel.class] && !view.hidden && view.bounds.size.width > 1) {
+                whiteTitle = (UILabel *)view;
+                break;
+            }
+        }
+        if (whiteTitle && whiteTitle.text.length) {
+            UILabel *tintedTitle = objc_getAssociatedObject(button, &kAccentNameKey);
+            if (!tintedTitle) {
+                tintedTitle = [UILabel new];
+                tintedTitle.backgroundColor = UIColor.clearColor;
+                tintedTitle.userInteractionEnabled = NO;
+                objc_setAssociatedObject(button, &kAccentNameKey, tintedTitle, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            if (tintedTitle.superview != copy) [copy addSubview:tintedTitle];
+            tintedTitle.text = whiteTitle.text;
+            tintedTitle.font = whiteTitle.font;
+            tintedTitle.textColor = accent;
+            tintedTitle.textAlignment = whiteTitle.textAlignment;
+            tintedTitle.numberOfLines = whiteTitle.numberOfLines;
+            tintedTitle.adjustsFontSizeToFitWidth = whiteTitle.adjustsFontSizeToFitWidth;
+            tintedTitle.minimumScaleFactor = whiteTitle.minimumScaleFactor;
+            tintedTitle.bounds = whiteTitle.bounds;
+            tintedTitle.center = [whiteTitle.superview convertPoint:whiteTitle.center toView:copy];
+            tintedTitle.transform = whiteTitle.transform;
+            tintedTitle.alpha = whiteTitle.alpha * button.alpha;
+            tintedTitle.hidden = NO;
+            [used addObject:tintedTitle];
+        }
     }
     for (UIView *view in [copy.subviews copy]) if (![used containsObject:view]) [view removeFromSuperview];
     lens.tintOverlay = copy;
