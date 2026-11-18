@@ -778,7 +778,7 @@ typedef NS_ENUM(NSInteger, SGRNavbarSection) {
     switch (path.section) {
         case SGRNavbarSectionSwitch: {
             if (path.row == 1) {
-                SGFillCell(cell, @"Tabs in the accent", @"Every tab's icon and name; white when off", nil, nil);
+                SGFillCell(cell, @"Tabs in the accent", @"Only the selected tab's icon and name; white when off", nil, nil);
                 UISwitch *toggle = [UISwitch new];
                 toggle.onTintColor = SGGreen();
                 toggle.on = SGFlag(SGRKeyTabAccent, NO);
