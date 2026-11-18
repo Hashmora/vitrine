@@ -29,24 +29,24 @@
 
 static char kBarKey, kHostKey, kNavGlassKey, kNavTintKey, kSelPillKey, kRetriesKey, kGlyphOverlayKey, kOutlineLiveKey, kFilledLiveKey, kCreateDiscKey, kGlyphsTakenKey;
 static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, kTemplateKey;
+static char kCreateTargetKey, kCreateGenerationKey;
 static char kAccentCopyKey, kAccentIconKey, kAccentNameKey;
 // The bar is a floating capsule, not a full-width slab.
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
-// The capsule itself, never the safe-area room under it: SGRTabBarGlassHeight() can be 83pt on a Face ID phone
-// (harness/tabbar/README.md) because it includes the home-indicator strip. Keep the capsule 60pt tall
-// in both label modes; the 56pt UIKit button row stays within the 54pt selection lens when Spotify's
-// connection banner changes the safe area. Capsule width and tab spacing are unchanged.
-static const CGFloat kNavPlatterHeight = 60;
-static const CGFloat kNavButtonHeight = 56;
-static const CGFloat kNavPlatterHeightIconOnly = 60;
+// The capsule itself, never the safe-area room under it: SGRTabBarGlassHeight() can be 83pt on a Face ID phone.
+// Native iOS 26's measured platter is 62pt tall, buttons 54pt, and the lens 54pt resting / 70pt held.
+// Fix only the four-tab full bar to the measured overlapping slot geometry; other layouts remain adaptive.
+static const CGFloat kNavPlatterHeight = 62;
+static const CGFloat kNavButtonHeight = 54;
+static const CGFloat kNavPlatterHeightIconOnly = 62;
 static const CGFloat kNavIconOnlyImageShift = 4;
 static const CGFloat kNavItemSpacing = 0;  // another 2pt closer, without resizing the icons
 static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before the now playing card has a radius to follow
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
-static const CGFloat kSelPillInset = 2;     // a slightly taller bubble with more tab title headroom
-static const CGFloat kSelPillXInset = 1;  // wider resting underlay, still with even side gaps
-static const CGFloat kLensOverhang = 6;     // the held bubble stands a little taller above and below the capsule
+static const CGFloat kSelPillInset = 4;     // a slightly taller bubble with more tab title headroom
+static const CGFloat kSelPillXInset = 4;  // wider resting underlay, still with even side gaps
+static const CGFloat kLensOverhang = 4;     // the held bubble stands a little taller above and below the capsule
 static const CGFloat kBarPressScale = 1.018; // the capsule breathes more gently while the bubble is up
 static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
@@ -133,6 +133,7 @@ static CGRect sg_leadFrame, sg_trailFrame;
 @property (nonatomic, weak) UIView *sourceBeforeCreate;
 @property (nonatomic, copy) NSString *labelBeforeCreate;
 @property (nonatomic) BOOL awaitingCreateClose;
+@property (nonatomic) NSUInteger createEpoch;
 @end
 
 static void syncBar(UIView *stockBar);
@@ -180,19 +181,31 @@ static void applyCreatePose(UIView *disc, UIView *glyph, BOOL open) {
 
 // Create's menu open: its plus turns 45 degrees, black, onto a white disc that grows in behind it; closed, back again.
 // With Tabs in the accent the disc is the accent's and the plus is cut out of it.
+// The last requested state, not a presentation-layer alpha, is authoritative.
+// Every transition gets a generation; an interrupted close cannot restore a
+// rotated glyph after a newer open has started (or vice versa).
 static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
+    NSNumber *target = objc_getAssociatedObject(disc, &kCreateTargetKey);
+    if (target && target.boolValue == open) return;
+    NSUInteger generation = [objc_getAssociatedObject(disc, &kCreateGenerationKey) unsignedIntegerValue] + 1;
+    objc_setAssociatedObject(disc, &kCreateTargetKey, @(open), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(disc, &kCreateGenerationKey, @(generation), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     UIColor *accent = openTabColor();
     BOOL tinted = tintedTabs();
     disc.backgroundColor = tinted ? accent : UIColor.whiteColor;
     UIImage *image = [glyph isKindOfClass:UIImageView.class] ? ((UIImageView *)glyph).image : nil;
     disc.layer.mask = tinted ? discHole(image, disc.bounds.size.width) : nil;
+    if (!target && !open) {
+        [UIView performWithoutAnimation:^{ applyCreatePose(disc, glyph, NO); }];
+        return;
+    }
     [UIView animateWithDuration:0.32 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0
-        options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
         applyCreatePose(disc, glyph, open);
     } completion:^(__unused BOOL finished) {
-        [UIView performWithoutAnimation:^{
-            applyCreatePose(disc, glyph, open);
-        }];
+        NSNumber *current = objc_getAssociatedObject(disc, &kCreateGenerationKey);
+        if (current.unsignedIntegerValue != generation) return;
+        [UIView performWithoutAnimation:^{ applyCreatePose(disc, glyph, open); }];
     }];
 }
 
@@ -481,17 +494,6 @@ static UIImage *templateOf(UIImage *image) {
     return made;
 }
 
-static UIImage *snapshotButtonTemplate(UIView *button) {
-    if (!button || button.bounds.size.width < 1 || button.bounds.size.height < 1) return nil;
-    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat formatForTraitCollection:button.traitCollection];
-    format.opaque = NO;
-    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:button.bounds.size format:format];
-    UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
-        [button.layer renderInContext:context.CGContext];
-    }];
-    return image ? [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate] : nil;
-}
-
 // UITabBar does not repaint an icon between its outline and filled bitmaps when the selection changes on this bar,
 // so each item's glyph is drawn by an image view of ours laid over UIKit's in the item's button (selectedImage on
 // the selected item, image on the rest) and UIKit's is hidden. Run from layout and the selection setter.
@@ -515,7 +517,10 @@ static void paintGlyphs(UITabBar *bar) {
             && isCreateSource(((SGRLegacyTabBar *)bar).sources[i]);
         // Keep Create's current glyph while the menu rotates the plus. Replacing
         // selectedImage mid-spring would restart its animation.
-        BOOL createAnimating = create && ((SGRLegacyTabBar *)bar).awaitingCreateClose;
+        UIView *createDisc = create ? objc_getAssociatedObject(button, &kCreateDiscKey) : nil;
+        BOOL createAnimating = create && (((SGRLegacyTabBar *)bar).awaitingCreateClose ||
+             createDisc.layer.animationKeys.count > 0 ||
+             [objc_getAssociatedObject(createDisc, &kCreateTargetKey) boolValue]);
         if (createAnimating && overlay.image) want = overlay.image;
         if (want && tintedTabs()) want = templateOf(want);
         if (!want || (!native && !overlay)) {
@@ -552,118 +557,100 @@ static void paintGlyphs(UITabBar *bar) {
     }
 }
 
-// The accent is made from the *actual displayed* icon and title, not a
-// bitmap of the whole UITabBarButton. Capturing a button's CALayer every
-// layout pass included Create's animated disc, and put a stale image over the
-// rotating plus. Matching UIKit subviews keeps both colours at one baseline.
-// The common host layer/mask gives partial tint while dragging between tabs.
+// The real UITabBar is the normal ContentView; this full second set is
+// SelectedContentView. Both sets read the very same item glyphs, label metrics
+// and button positions. No CALayer snapshots, and no static Create animation.
+// One mask cuts the coloured set to the lens at rest and throughout playback.
 static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *lens) {
-    UIView *copy = objc_getAssociatedObject(host, &kAccentCopyKey);
+    UIView *selected = objc_getAssociatedObject(host, &kAccentCopyKey);
     if (!tintedTabs() || sg_minimized || !lens || lens.hidden) {
         lens.tintOverlay = nil;
-        copy.hidden = YES;
+        selected.hidden = YES;
         return;
     }
-    if (!copy) {
-        copy = [UIView new];
-        copy.userInteractionEnabled = NO;
-        copy.accessibilityElementsHidden = YES;
-        copy.backgroundColor = UIColor.clearColor;
-        objc_setAssociatedObject(host, &kAccentCopyKey, copy, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!selected) {
+        selected = [UIView new];
+        selected.accessibilityIdentifier = @"Vitrine.LegacySelectedContentView";
+        selected.userInteractionEnabled = NO;
+        selected.accessibilityElementsHidden = YES;
+        selected.backgroundColor = UIColor.clearColor;
+        objc_setAssociatedObject(host, &kAccentCopyKey, selected, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    // Both the lens and this copy live in the same host coordinates. The
-    // host's press scale then transforms the original and the tint together.
-    if (copy.superview != host) [host insertSubview:copy aboveSubview:bar];
-    if (!CGRectEqualToRect(copy.frame, host.bounds)) copy.frame = host.bounds;
-    copy.hidden = NO;
+    if (selected.superview != host) [host addSubview:selected];
+    // Selected content sits above the clear lens; ordinary content below it is
+    // the separate backdrop/warp source, as on the native tab platter.
+    if ([host.subviews indexOfObject:selected] < [host.subviews indexOfObject:lens])
+        [host bringSubviewToFront:selected];
+    if (!CGRectEqualToRect(selected.frame, host.bounds)) selected.frame = host.bounds;
+    selected.hidden = NO;
     NSArray<UIView *> *buttons = tabButtons(bar);
-    if (buttons.count != bar.items.count) { lens.tintOverlay = nil; copy.hidden = YES; return; }
-    UIColor *accent = SGRAccent();
+    if (buttons.count != bar.items.count) { lens.tintOverlay = nil; selected.hidden = YES; return; }
     NSMutableSet<UIView *> *used = [NSMutableSet setWithCapacity:buttons.count * 2];
+    UIColor *accent = SGRAccent();
     for (NSUInteger i = 0; i < buttons.count; i++) {
         UIView *button = buttons[i];
-        BOOL createOpen = bar.awaitingCreateClose && i < bar.sources.count && isCreateSource(bar.sources[i]);
-        UIImageView *whiteIcon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
-        if ((!whiteIcon || whiteIcon.hidden || !whiteIcon.image) && !createOpen) {
-            for (UIView *view in button.subviews) {
-                if (![view isKindOfClass:UIImageView.class] || view.hidden) continue;
-                UIImageView *candidate = (UIImageView *)view;
-                if (candidate.image && candidate.bounds.size.width > 1) { whiteIcon = candidate; break; }
+        BOOL create = i < bar.sources.count && isCreateSource(bar.sources[i]);
+        UIView *createDisc = create ? objc_getAssociatedObject(button, &kCreateDiscKey) : nil;
+        BOOL createOpen = create && (bar.awaitingCreateClose || createDisc.layer.animationKeys.count > 0 ||
+                          [objc_getAssociatedObject(createDisc, &kCreateTargetKey) boolValue]);
+        UIImageView *nativeIcon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
+        UIImage *glyph = nativeIcon.image ?: ((i < bar.items.count) ? bar.items[i].image : nil);
+        if (glyph && !createOpen) {
+            UIImageView *coloredIcon = objc_getAssociatedObject(button, &kAccentIconKey);
+            if (!coloredIcon) {
+                coloredIcon = [UIImageView new];
+                coloredIcon.userInteractionEnabled = NO;
+                coloredIcon.contentMode = UIViewContentModeCenter;
+                objc_setAssociatedObject(button, &kAccentIconKey, coloredIcon, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             }
+            if (coloredIcon.superview != selected) [selected addSubview:coloredIcon];
+            UIImage *tintedImage = templateOf(glyph);
+            if (coloredIcon.image != tintedImage) coloredIcon.image = tintedImage;
+            coloredIcon.tintColor = accent;
+            if (nativeIcon && nativeIcon.superview) {
+                coloredIcon.bounds = nativeIcon.bounds;
+                coloredIcon.center = [nativeIcon.superview convertPoint:nativeIcon.center toView:selected];
+                coloredIcon.transform = nativeIcon.transform;
+                coloredIcon.alpha = nativeIcon.alpha * button.alpha;
+            } else {
+                coloredIcon.bounds = CGRectMake(0, 0, 24, 24);
+                coloredIcon.center = [button convertPoint:CGPointMake(CGRectGetMidX(button.bounds), 20) toView:selected];
+                coloredIcon.transform = CGAffineTransformIdentity;
+                coloredIcon.alpha = button.alpha;
+            }
+            coloredIcon.hidden = NO;
+            [used addObject:coloredIcon];
         }
-        BOOL createItem = i < bar.sources.count && isCreateSource(bar.sources[i]);
-        if (!createItem && !createOpen) {
-            UIImageView *tintedWhole = objc_getAssociatedObject(button, &kAccentIconKey);
-            if (!tintedWhole) {
-                tintedWhole = [UIImageView new];
-                tintedWhole.userInteractionEnabled = NO;
-                objc_setAssociatedObject(button, &kAccentIconKey, tintedWhole, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            }
-            if (tintedWhole.superview != copy) [copy addSubview:tintedWhole];
-            UIImage *whole = snapshotButtonTemplate(button);
-            if (whole) {
-                tintedWhole.image = whole;
-                tintedWhole.tintColor = accent;
-                tintedWhole.contentMode = UIViewContentModeScaleToFill;
-                tintedWhole.bounds = button.bounds;
-                tintedWhole.center = [button.superview convertPoint:button.center toView:copy];
-                tintedWhole.transform = button.transform;
-                tintedWhole.alpha = button.alpha;
-                tintedWhole.hidden = NO;
-                [used addObject:tintedWhole];
-            }
-        } else if (whiteIcon && !whiteIcon.hidden && whiteIcon.image && !createOpen) {
-            UIImageView *tintedIcon = objc_getAssociatedObject(button, &kAccentIconKey);
-            if (!tintedIcon) {
-                tintedIcon = [UIImageView new];
-                tintedIcon.userInteractionEnabled = NO;
-                objc_setAssociatedObject(button, &kAccentIconKey, tintedIcon, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            }
-            if (tintedIcon.superview != copy) [copy addSubview:tintedIcon];
-            UIImage *image = templateOf(whiteIcon.image);
-            if (tintedIcon.image != image) tintedIcon.image = image;
-            tintedIcon.tintColor = accent;
-            tintedIcon.contentMode = whiteIcon.contentMode;
-            tintedIcon.bounds = whiteIcon.bounds;
-            tintedIcon.center = [whiteIcon.superview convertPoint:whiteIcon.center toView:copy];
-            tintedIcon.transform = whiteIcon.transform;
-            tintedIcon.alpha = whiteIcon.alpha * button.alpha;
-            tintedIcon.hidden = NO;
-            [used addObject:tintedIcon];
-        }
-        UILabel *whiteTitle = nil;
+        UILabel *nativeTitle = nil;
         for (UIView *view in button.subviews) {
-            if ([view isKindOfClass:UILabel.class] && !view.hidden && view.bounds.size.width > 1) {
-                whiteTitle = (UILabel *)view;
+            if ([view isKindOfClass:UILabel.class] && !view.hidden && view.bounds.size.width > 1 && ((UILabel *)view).text.length) {
+                nativeTitle = (UILabel *)view;
                 break;
             }
         }
-        if (createItem && whiteTitle && whiteTitle.text.length) {
-            UILabel *tintedTitle = objc_getAssociatedObject(button, &kAccentNameKey);
-            if (!tintedTitle) {
-                tintedTitle = [UILabel new];
-                tintedTitle.backgroundColor = UIColor.clearColor;
-                tintedTitle.userInteractionEnabled = NO;
-                objc_setAssociatedObject(button, &kAccentNameKey, tintedTitle, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (nativeTitle) {
+            UILabel *coloredTitle = objc_getAssociatedObject(button, &kAccentNameKey);
+            if (!coloredTitle) {
+                coloredTitle = [UILabel new];
+                coloredTitle.userInteractionEnabled = NO;
+                coloredTitle.backgroundColor = UIColor.clearColor;
+                objc_setAssociatedObject(button, &kAccentNameKey, coloredTitle, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             }
-            if (tintedTitle.superview != copy) [copy addSubview:tintedTitle];
-            tintedTitle.text = whiteTitle.text;
-            tintedTitle.font = whiteTitle.font;
-            tintedTitle.textColor = accent;
-            tintedTitle.textAlignment = whiteTitle.textAlignment;
-            tintedTitle.numberOfLines = whiteTitle.numberOfLines;
-            tintedTitle.adjustsFontSizeToFitWidth = whiteTitle.adjustsFontSizeToFitWidth;
-            tintedTitle.minimumScaleFactor = whiteTitle.minimumScaleFactor;
-            tintedTitle.bounds = whiteTitle.bounds;
-            tintedTitle.center = [whiteTitle.superview convertPoint:whiteTitle.center toView:copy];
-            tintedTitle.transform = whiteTitle.transform;
-            tintedTitle.alpha = whiteTitle.alpha * button.alpha;
-            tintedTitle.hidden = NO;
-            [used addObject:tintedTitle];
+            if (coloredTitle.superview != selected) [selected addSubview:coloredTitle];
+            coloredTitle.text = nativeTitle.text;
+            coloredTitle.font = nativeTitle.font;
+            coloredTitle.textColor = accent;
+            coloredTitle.textAlignment = nativeTitle.textAlignment;
+            coloredTitle.numberOfLines = nativeTitle.numberOfLines;
+            coloredTitle.bounds = nativeTitle.bounds;
+            coloredTitle.center = [nativeTitle.superview convertPoint:nativeTitle.center toView:selected];
+            coloredTitle.alpha = nativeTitle.alpha * button.alpha;
+            coloredTitle.hidden = NO;
+            [used addObject:coloredTitle];
         }
     }
-    for (UIView *view in [copy.subviews copy]) if (![used containsObject:view]) [view removeFromSuperview];
-    lens.tintOverlay = copy;
+    for (UIView *view in [selected.subviews copy]) if (![used containsObject:view]) [view removeFromSuperview];
+    lens.tintOverlay = selected;
 }
 
 // Spotify's own Create item turns its plus onto a white disc while the menu is open (turnCreate). That runs on the
@@ -704,16 +691,8 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
         disc.layer.cornerRadius = discSize / 2;
     }
     disc.center = overlay.center;
-    BOOL animating = disc.layer.animationKeys.count || overlay.layer.animationKeys.count;
-    if ((disc.alpha > 0.5) == open && (open || CGAffineTransformIsIdentity(overlay.transform)) && !animating) return;
-    if (animating) {
-        [disc.layer removeAllAnimations];
-        [overlay.layer removeAllAnimations];
-        [UIView performWithoutAnimation:^{
-            applyCreatePose(disc, overlay, !open);
-        }];
-    }
-    if (open) disc.transform = CGAffineTransformMakeScale(0.4, 0.4);
+    // Repeated layout passes may call this during the rotation. The requested
+    // state is checked in turnCreate; never restart a half-finished animation.
     turnCreate(disc, overlay, open);
 }
 
@@ -742,21 +721,51 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
     [host.layer addAnimation:anim forKey:@"vitrine.legacyTabPress"];
 }
 
+// Measured iOS 26: four 100.333pt visual slots, overlapping by 16.444pt,
+// with centers 83.889pt apart. This is visual layout only; the existing
+// nearest-center drag recognizer remains authoritative for hit testing.
+static const CGFloat kNativeSlotWidth = 100.3333333333;
+static const CGFloat kNativeIconY = 8, kNativeTitleY = 35;
+static BOOL nativeTabLayout(UITabBar *bar) {
+    return bar.items.count == 4 && bar.bounds.size.width >= 340 && !SGHidden(SGRKeyNavbarHideLabels);
+}
+
+static void alignTabContent(UITabBar *bar) {
+    NSArray<UIView *> *buttons = tabButtons(bar);
+    if (buttons.count != bar.items.count) return;
+    BOOL native = nativeTabLayout(bar);
+    CGFloat spacing = native ? (bar.bounds.size.width - 8 - kNativeSlotWidth) / 3 : 0;
+    for (NSUInteger i = 0; i < buttons.count; i++) {
+        UIView *button = buttons[i];
+        CGRect frame = button.frame;
+        if (native) frame = CGRectMake(4 + spacing * i, 4, kNativeSlotWidth, kNavButtonHeight);
+        else frame.size.height = MIN(frame.size.height, kNavButtonHeight);
+        if (!CGRectEqualToRect(button.frame, frame)) {
+            button.frame = frame;
+            [button layoutIfNeeded];
+        }
+        if (!native) continue;
+        UIImageView *icon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
+        if (icon && !icon.hidden) {
+            icon.bounds = CGRectMake(0, 0, 24, 24);
+            icon.center = CGPointMake(kNativeSlotWidth / 2, kNativeIconY + 12);
+        }
+        for (UIView *sub in button.subviews) {
+            if (![sub isKindOfClass:UILabel.class]) continue;
+            UILabel *title = (UILabel *)sub;
+            if (title.bounds.size.height < 1) continue;
+            title.center = CGPointMake(kNativeSlotWidth / 2, kNativeTitleY + title.bounds.size.height / 2);
+        }
+    }
+}
+
 @implementation SGRLegacyTabBar
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    // Spotify's connection banner can stretch UITabBarButton to 63pt. Keep the normal
-    // 56pt row in the 60pt capsule so captions stay inside the 54pt selection lens.
-    for (UIView *button in tabButtons(self)) {
-        CGRect frame = button.frame;
-        if (frame.size.height <= kNavButtonHeight + 0.5) continue;
-        frame.size.height = kNavButtonHeight;
-        button.frame = frame;
-        [button layoutIfNeeded]; // let UIKit reposition its own icon and title
-    }
     pruneStrayButtons(self);
     paintGlyphs(self);
+    alignTabContent(self);
     // UIKit may move buttons and their images in a later layout pass after syncBar.
     // Rebuild the *entire* accent copy from the actual white glyphs (not only the
     // selected tab) so Home, Search, Library and Create are treated equally.
@@ -810,6 +819,7 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
         // The pill sits on Create while the menu is up and goes back to lastRealItem once it is gone.
         UIView *stockBar = self.stockBar;
         [self rememberOpenTab];
+        self.createEpoch++;
         forwardTap(source);
         // The apart tab stays the open one while Create's menu is up over it.
         BOOL apartSelected = self.apartSelected;
@@ -823,10 +833,11 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
         // UIKit can still snap selectedItem back on the next runloop turn, so assert it once more.
         __weak typeof(self) weakSelf = self;
         __weak UIView *weakStock = stockBar;
+        NSUInteger requestEpoch = self.createEpoch;
         dispatch_async(dispatch_get_main_queue(), ^{
             typeof(self) strongSelf = weakSelf;
             UIView *stock = weakStock;
-            if (!strongSelf || !stock) return;
+            if (!strongSelf || !stock || !strongSelf.awaitingCreateClose || strongSelf.createEpoch != requestEpoch) return;
             if (strongSelf.selectedItem != item) {
                 strongSelf.selectedItem = item;
                 syncBar(stock);
@@ -852,6 +863,7 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
     if (!source) return;
     if (isCreateSource(source)) {
         [self rememberOpenTab];
+        self.createEpoch++;
         forwardTap(source);
         setCreateOpen(self, YES);
         if (stockBar) followCreateClose(stockBar);
@@ -1081,31 +1093,36 @@ static void settleAfterCreate(UIView *stockBar) {
 
 // Polled every 0.08 s. `seen`: the menu has been up at least once; before that it is given 10 looks to appear, and
 // once seen it is watched for 560 (~45 s) at most.
-static void pollCreateClose(UIView *stockBar, NSUInteger attempt, BOOL seen) {
+static void pollCreateClose(UIView *stockBar, NSUInteger attempt, BOOL seen, NSUInteger epoch) {
     __weak UIView *weakStock = stockBar;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         UIView *stock = weakStock;
         SGRLegacyTabBar *bar = stock ? objc_getAssociatedObject(stock, &kBarKey) : nil;
-        if (!bar || !bar.awaitingCreateClose) return;
+        if (!bar || !bar.awaitingCreateClose || bar.createEpoch != epoch) return;
         BOOL up = createMenuIsUp(stock);
         if (up ? attempt < 560 : (!seen && attempt < 10)) {
-            pollCreateClose(stock, attempt + 1, seen || up);
+            pollCreateClose(stock, attempt + 1, seen || up, epoch);
             return;
         }
         bar.awaitingCreateClose = NO;
+        NSUInteger closeEpoch = bar.createEpoch;
         settleAfterCreate(stock);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIView *again = weakStock;
-            if (again) settleAfterCreate(again);
+            SGRLegacyTabBar *current = again ? objc_getAssociatedObject(again, &kBarKey) : nil;
+            if (current && current.createEpoch == closeEpoch && !current.awaitingCreateClose && !createMenuIsUp(again))
+                settleAfterCreate(again);
         });
     });
 }
 
 static void followCreateClose(UIView *stockBar) {
     SGRLegacyTabBar *bar = objc_getAssociatedObject(stockBar, &kBarKey);
-    if (!bar || bar.awaitingCreateClose) return;
+    if (!bar) return;
+    // A new Create request supersedes any earlier menu poll, even when an
+    // earlier close is still settling or the menu has not appeared yet.
     bar.awaitingCreateClose = YES;
-    pollCreateClose(stockBar, 0, NO);
+    pollCreateClose(stockBar, 0, NO, bar.createEpoch);
 }
 
 #pragma mark - compact
@@ -1633,7 +1650,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
         UIEdgeInsets wantInsets = hideLabels ? UIEdgeInsetsMake(kNavIconOnlyImageShift, 0, -kNavIconOnlyImageShift, 0) : UIEdgeInsetsZero;
         if (!UIEdgeInsetsEqualToEdgeInsets(item.imageInsets, wantInsets)) item.imageInsets = wantInsets;
         // Nudge the caption towards its icon, not the capsule's bottom edge.
-        UIOffset titleOffset = hideLabels ? UIOffsetZero : UIOffsetMake(0, -2);
+        UIOffset titleOffset = UIOffsetZero; // aligned with the 35pt native caption origin below
         if (item.titlePositionAdjustment.horizontal != titleOffset.horizontal ||
             item.titlePositionAdjustment.vertical != titleOffset.vertical) item.titlePositionAdjustment = titleOffset;
         if (!selected && isActive(sources[i]) && !isCreateSource(sources[i])) selected = item;
@@ -1654,6 +1671,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     if (bar.apartSelected && !bar.awaitingCreateClose && bar.selectedItem) bar.selectedItem = nil;
     // Glyphs of the selected and the other items are painted by paintGlyphs, from the bar's own layout.
     paintGlyphs(bar);
+    alignTabContent(bar);
     // An icon view Spotify has not built yet is retried (40 times at most), counted per stock bar.
     NSNumber *retriesBox = objc_getAssociatedObject(stockBar, &kRetriesKey);
     NSUInteger retries = retriesBox.unsignedIntegerValue;
@@ -1723,7 +1741,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     // The pill follows bar.selectedItem, not Spotify's labels, which repaint late. syncBar is its only writer.
     NSUInteger selIndex = [bar.items indexOfObject:bar.selectedItem];
     if (selIndex != NSNotFound && selIndex < sources.count) {
-        CGFloat pillWidth = itemWidth - kSelPillXInset * 2;
+        CGFloat pillWidth = nativeTabLayout(bar) ? kNativeSlotWidth : itemWidth - kSelPillXInset * 2;
         CGFloat centerX = [bar renderedCenterXForItem:bar.selectedItem];
         CGFloat slotX = isnan(centerX)
             ? bar.frame.origin.x + selIndex * (itemWidth + kNavItemSpacing) + kSelPillXInset

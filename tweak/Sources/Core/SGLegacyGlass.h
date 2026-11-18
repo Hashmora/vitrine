@@ -53,6 +53,10 @@ BOOL SGLegacyGlassAvailable(void);
 // No light along the rim: for a pane whose owner draws its own (a held switch's lens, lit on two arcs only). NO by default.
 @property (nonatomic) BOOL rimless;
 
+// Lateral refractive crescents for the Legacy tab lens only. The upper and
+// lower edge and the central channel stay unwarped; other panes are unchanged.
+@property (nonatomic) BOOL lateralRefraction;
+
 @end
 
 // The light the system's glass draws along its rim: a thin white line whose brightness follows which way the rim faces,

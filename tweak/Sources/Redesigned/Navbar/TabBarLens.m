@@ -8,21 +8,21 @@ static char kLensPaneKey, kLensFilmKey, kLensFilmMaskKey;
 // The raised lens differs from the capsule: almost no blur or colour lift in
 // the middle, slightly reduced backdrop scale, and most of the refraction in
 // the specular rim. The icons stay legible in the centre like on iOS 26.
-static const CGFloat kLensMagnification = 0.985;
+static const CGFloat kLensMagnification = 1.0;
 static const CGFloat kLensHeldBlur = 0.08, kLensRestBlur = 2;
 static const CGFloat kLensHeldBend = 0.90;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
-static const CGFloat kLensGrow = 26, kLensOverscroll = 14;
+static const CGFloat kLensGrow = 16, kLensOverscroll = 8;
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
 // The softer magnification and the closer item centers keep glyphs visible through it.
 // Signed deformation: rightward motion spreads the bubble and lowers its height;
 // leftward motion narrows it and raises its height. When the finger stops, a slow
 // spring briefly reverses that shape before relaxing. A signed velocity (rather
 // than its absolute value) is essential for the two directions to feel distinct.
-static const CGFloat kLensStretchSpeed = 1080, kLensDirectionalStretch = 0.15;
-static const CGFloat kLensMaxDeform = 0.17, kLensVolume = 0.70, kLensMaxLag = 0.11;
+static const CGFloat kLensStretchSpeed = 1100, kLensDirectionalStretch = 0.055;
+static const CGFloat kLensMaxDeform = 0.08, kLensVolume = 0.70, kLensMaxLag = 0.04;
 // The surface tension: once the edges are near their targets, they pull each other back to the bubble's width, with
 // a damper of their own, so a stretched bubble draws in and gives a small bounce rather than ringing. It is off
 // while the bubble is chasing a finger (the stretch is what shows the chase), and fades in over the last
@@ -113,6 +113,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     CGFloat _minCenter, _maxCenter;
     CALayer *_tintMask;
     BOOL _glassOn;
+    NSUInteger _pulseGeneration;
     // A bubble nobody holds is not run frame by frame on the main thread, which a tab loading under it would stall
     // (the glass froze for as long as the page took). Its whole run is worked out at once and handed to Core
     // Animation as keyframes: the same springs, played where the main thread cannot hold them up.
@@ -124,7 +125,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     if (!(self = [super initWithFrame:frame])) return nil;
     self.userInteractionEnabled = NO;
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    _heldOutset = 7;
+    _heldOutset = 8;
     _rest = [UIView new];
     _rest.backgroundColor = [UIColor colorWithWhite:0 alpha:0.42];
     _rest.layer.cornerCurve = kCACornerCurveContinuous;
@@ -155,7 +156,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     SGRGlassFilm(self, &kLensFilmKey, _pane, radius);
     SGSetSideRimMask(_film, _film.bounds);
     // The lens rim reads on the sides, not as a bright ring above and below.
-    _film.alpha = 0;
+    _film.alpha = _glassOn ? 0.10 : 0;
 }
 
 - (void)didMoveToWindow {
@@ -169,6 +170,8 @@ static const CGFloat kPlayStep = 1.0 / 120;
         [self snapToRest];
     }
 }
+
+static BOOL bubbles(void);
 
 #pragma mark - what the bar tells it
 
@@ -192,6 +195,21 @@ static const CGFloat kPlayStep = 1.0 / 120;
     [self takeOverPlayback];
     _tL = left;
     _tR = right;
+    // A tap on another tab also raises the native lens briefly. The gesture
+    // path owns the lens during a real drag and never uses this pulse.
+    if (bubbles() && fabs((left + right - _L - _R) / 2) > 8 && !_touching) {
+        NSUInteger pulse = ++_pulseGeneration;
+        _lift = MAX(_lift, 1);
+        _vLift = 0;
+        _liftTarget = 0;
+        [self showGlass:YES animated:NO];
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.26 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            typeof(self) strongSelf = weakSelf;
+            if (strongSelf && strongSelf->_pulseGeneration == pulse && !strongSelf->_touching)
+                [strongSelf showGlass:NO animated:YES];
+        });
+    }
     [self playToTargets];
 }
 
@@ -220,6 +238,7 @@ static BOOL bubbles(void) {
 - (void)beginTouchAtX:(CGFloat)x minCenter:(CGFloat)minCenter maxCenter:(CGFloat)maxCenter {
     // Reduce Motion: the pill stays a pill and moves with the selection, as it did.
     if (CGRectIsEmpty(_restFrame) || self.hidden || SGRReduceMotion()) return;
+    ++_pulseGeneration;
     [self takeOverPlayback];
     _touching = YES;
     _minCenter = minCenter;
@@ -278,11 +297,12 @@ static BOOL bubbles(void) {
         glass.lensScale = on ? kLensHeldBend : 1;
         glass.sharp = on;
         glass.rimless = on;
+        glass.lateralRefraction = on;
     }
     void (^change)(void) = ^{
         SGRShowGlass(self->_pane, on);
         self->_film.alpha = on ? 0.10 : 0;
-        self->_rest.alpha = on ? 0.24 : 1;
+        self->_rest.alpha = on ? 0.12 : 1;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
@@ -299,6 +319,7 @@ static BOOL bubbles(void) {
         if (at == NSNotFound || at + 1 >= host.subviews.count) return;
         _restAbove = host.subviews[at + 1];
         [host bringSubviewToFront:self];
+        if (_tintOverlay.superview == host) [host bringSubviewToFront:_tintOverlay];
         return;
     }
     UIView *above = _restAbove;
