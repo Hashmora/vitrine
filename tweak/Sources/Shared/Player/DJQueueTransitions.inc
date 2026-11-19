@@ -81,7 +81,7 @@ static NSTimer *sNextSegmentTimer;
 static NSString *sNextSegmentContext, *sNextSegmentPage;
 static NSSet<NSString *> *sNextSegmentOldUIDs;
 static SPTPlayerTrack *sNextSegmentAnchor;
-static BOOL sNextSegmentWasPaused, sNextSegmentAnchorSent, sNextSegmentJumpSent;
+static BOOL sNextSegmentWasPaused, sNextSegmentAnchorSent, sNextSegmentJumpSent, sNextSegmentRemote;
 static NSUInteger sNextSegmentPhysicalAdvances;
 static NSString *sNextSegmentObservedKey;
 static NSTimeInterval sNextSegmentLastProgress;
@@ -114,6 +114,8 @@ static void endNextSegmentSkip(BOOL changed, NSString *problem, BOOL contextChan
     sNextSegmentPage = nil;
     sNextSegmentOldUIDs = nil;
     sNextSegmentAnchor = nil;
+    BOOL remote = sNextSegmentRemote;
+    sNextSegmentRemote = NO;
     sNextSegmentAnchorSent = NO;
     sNextSegmentJumpSent = NO;
     sNextSegmentPhysicalAdvances = 0;
@@ -123,11 +125,17 @@ static void endNextSegmentSkip(BOOL changed, NSString *problem, BOOL contextChan
     sHandOverAnchorUID = nil;
     sHandOverDisplayState = nil;
     sHandOverDisplayTrack = nil;
-    SGPlayerSetDJTransitionMuted(NO);
+    if (!remote) SGPlayerSetDJTransitionMuted(NO);
     SGDJQueueFinishPick(changed);
     if (!contextChanged) {
         id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
-        if (sNextSegmentWasPaused || sUserPauseRevision != sLandingPauseRevision) {
+        BOOL preservePause = sNextSegmentWasPaused || sUserPauseRevision != sLandingPauseRevision;
+        if (remote) {
+            // Spotify Connect has no locally rendered audio to mute. Never
+            // pause/resume the remote device just to perform a silent landing;
+            // only restore Pause if the user actually requested it.
+            if (preservePause && !SGPlayerState().isPaused) pauseForDJTransition(player);
+        } else if (preservePause) {
             pauseForDJTransition(player);
         } else [player resume:nil];
     }
@@ -154,12 +162,13 @@ static void pollNextSegmentSkip(NSTimer *timer) {
     if (!sNextSegmentAnchorSent) {
         // The pause acknowledgement must arrive before a targeted skip: skip
         // commands can resume audio before a second pause has been accepted.
-        if (!state.isPaused) {
+        if (!sNextSegmentRemote && !state.isPaused) {
             if (elapsed > 2.5) endNextSegmentSkip(NO, @"DJ didn't pause before changing sets.", NO);
             return;
         }
         sNextSegmentAnchorSent = YES;
-        SGDJ_TRACE(@"segment.skip.pauseAck", (@{@"elapsedMs": @((NSInteger)(elapsed * 1000))}));
+        SGDJ_TRACE(sNextSegmentRemote ? @"segment.skip.remoteAdvance" : @"segment.skip.pauseAck",
+                   (@{@"elapsedMs": @((NSInteger)(elapsed * 1000))}));
         SPTPlayerTrack *anchor = sNextSegmentAnchor;
         if (anchor && !sameGroup(state.track, anchor)) {
             SGLog(@"queue: skipping silently to the segment's last song %@ [%@]", SGURIString(anchor.URI), anchor.UID);
@@ -219,13 +228,17 @@ static void skipToNextDJSegment(void) {
     if (sNextSegmentTimer || sPickingSegment || sHandingOver) return;
     SPTPlayerState *state = SGPlayerState();
     if (!sDJActive || !isDJSession(state)) return;
-    if (!canMuteDJLocally()) {
-        // Diagnostic-only: distinguish Connect/no local output from a genuinely unavailable DJ segment.
-        SGDJ_TRACE(@"segment.skip.blocked", (@{@"localAudioReady": @(SGPlayerMusicOutput() != NULL),
+    // The local player uses its audio render mute and a Pause acknowledgement
+    // for silent jumps. On Spotify Connect the renderer belongs to another
+    // device: use the same bounded, targeted segment navigation without a
+    // synthetic remote Pause/Resume or a local mute that cannot affect it.
+    BOOL remote = SGPlayerMusicOutput() == NULL;
+    if (!remote && !canMuteDJLocally()) {
+        SGDJ_TRACE(@"segment.skip.blocked", (@{@"localAudioReady": @YES,
                                                @"speedAllowed": @(SGPlayerSpeedAllowed())}));
         [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Next DJ Set unavailable"
-                            detail:@"Switch playback to this iPhone before skipping a DJ set."
-                            symbol:@"airplayaudio"];
+                            detail:@"Local playback isn't ready for the transition yet."
+                            symbol:@"exclamationmark.circle"];
         return;
     }
 
@@ -258,6 +271,7 @@ static void skipToNextDJSegment(void) {
     sNextSegmentAnchor = anchor;
     sNextSegmentWasPaused = state.isPaused;
     sLandingPauseRevision = sUserPauseRevision;
+    sNextSegmentRemote = remote;
     sNextSegmentAnchorSent = NO;
     sNextSegmentJumpSent = NO;
     sNextSegmentPhysicalAdvances = 0;
@@ -270,16 +284,18 @@ static void skipToNextDJSegment(void) {
     sHandOverAnchorUID = anchor ? historyUID(anchor) : historyUID(state.track);
     sHandingOver = YES; // disable the automatic end-of-segment bridge
     SGDJ_TRACE(@"segment.skip.begin", (@{@"paused": @(state.isPaused),
-                                        @"oldCount": @(old.count), @"hasAnchor": @(anchor != nil)}));
-    SGPlayerSetDJTransitionMuted(YES);
-    SGLog(@"queue: Next DJ Set in skip mode: moving across the segment without sending a request");
-    if (!state.isPaused) pauseForDJTransition((id<SPTPlayer>)queuePlayer());
+                                        @"oldCount": @(old.count), @"hasAnchor": @(anchor != nil),
+                                        @"remote": @(remote)}));
+    if (!remote) SGPlayerSetDJTransitionMuted(YES);
+    SGLog(@"queue: Next DJ Set in %@ skip mode: moving across the segment without sending a request",
+          remote ? @"Connect" : @"local");
+    if (!remote && !state.isPaused) pauseForDJTransition((id<SPTPlayer>)queuePlayer());
     sNextSegmentTimer = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
         pollNextSegmentSkip(timer);
     }];
     [NSRunLoop.mainRunLoop addTimer:sNextSegmentTimer forMode:NSRunLoopCommonModes];
-    // Avoid waiting for the timer's first tick if pause was already confirmed.
-    if (state.isPaused) pollNextSegmentSkip(sNextSegmentTimer);
+    // Remote playback has no local Pause acknowledgement to wait for.
+    if (remote || state.isPaused) pollNextSegmentSkip(sNextSegmentTimer);
 }
 
 // On the segment's last track, hidden: once the next segment's first item is in the future (the core asks for it as it
