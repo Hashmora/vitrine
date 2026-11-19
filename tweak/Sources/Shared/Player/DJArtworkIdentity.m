@@ -65,6 +65,40 @@ static BOOL viewHasEditorialDJIdentity(UIView *view, NSUInteger depth) {
     for (UIView *child in view.subviews) if (viewHasEditorialDJIdentity(child, depth + 1)) return YES;
     return NO;
 }
+@interface SGDJArtworkCardCache : NSObject
+@property (nonatomic, weak) UIView *parent;
+@property (nonatomic, weak) UIView *card;
+@property (nonatomic, weak) UIWindow *window;
+@property (nonatomic) CFAbsoluteTime checkedAt;
+@end
+@implementation SGDJArtworkCardCache
+@end
+static char kArtworkCardCacheKey;
+UIView *SGDJArtworkEnclosingCard(UIView *holder) {
+    if (!holder) return nil;
+    SGDJArtworkCardCache *cache = objc_getAssociatedObject(holder, &kArtworkCardCacheKey);
+    UIView *parent = holder.superview;
+    UIWindow *window = holder.window;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    // If no card was found, allow the wrapper to finish mounting lazily.
+    // Weak references prevent retaining recycled Spotify cells.
+    if (cache && cache.parent == parent && cache.window == window &&
+        (cache.card || now - cache.checkedAt < 0.25)) return cache.card;
+    UIView *card = parent;
+    while (card && ![card.accessibilityIdentifier isEqualToString:@"Components.UI.HomeCard"] &&
+           ![card.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"] &&
+           ![card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"]) card = card.superview;
+    if (!cache) {
+        cache = [SGDJArtworkCardCache new];
+        objc_setAssociatedObject(holder, &kArtworkCardCacheKey, cache, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    cache.parent = parent;
+    cache.window = window;
+    cache.card = card;
+    cache.checkedAt = now;
+    return card;
+}
+
 static char kMissingArtCardKey, kMissingArtSinceKey;
 #if SG_DRIVER
 static char kArtworkProbeSignature, kMissingArtProbeKey;

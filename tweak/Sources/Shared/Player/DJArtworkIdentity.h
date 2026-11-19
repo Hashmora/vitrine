@@ -7,3 +7,7 @@ BOOL SGDJArtworkIsConfirmedCard(UIView *card);
 // Returns YES only after the same card has kept its placeholder for 0.8 s.
 // *retry requests one delayed redraw while a placeholder is first observed.
 BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry);
+
+// Cache the nearest Home/Recents card for an Encore image holder. This avoids
+// climbing through Spotify's entire view hierarchy on each layoutSubviews.
+UIView *SGDJArtworkEnclosingCard(UIView *holder);
