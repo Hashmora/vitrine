@@ -33,10 +33,7 @@ static void SGDJLoad(void) {
     }] resume];
 }
 static void SGDJDraw(UIView *holder) {
-    UIView *row = holder.superview;
-    while (row && ![row.accessibilityIdentifier isEqualToString:@"Components.UI.HomeCard"] &&
-           ![row.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"] &&
-           ![row.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"]) row = row.superview;
+    UIView *row = SGDJArtworkEnclosingCard(holder);
     UIImageView *overlay = (UIImageView *)[holder viewWithTag:SGDJCoverTag];
     BOOL confirmed = row && SGDJArtworkIsConfirmedCard(row);
     BOOL retry = NO;

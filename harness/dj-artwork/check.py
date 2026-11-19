@@ -13,6 +13,7 @@ for look in ('Native', 'Redesigned'):
     text = (root/f'tweak/Sources/{look}/Home/DJArtwork.x').read_text()
     assert 'SGDJArtworkIsConfirmedCard(row)' in text
     assert 'SGDJArtworkNeedsPlaceholder(row, holder, &retry)' in text
+    assert 'SGDJArtworkEnclosingCard(holder)' in text
     assert 'if (retry)' in text and 'dispatch_after(' in text
     assert 'SGDJLabel(' not in text and 'SGRDJLabel(' not in text
 print('DJ artwork identity gates: PASS')
@@ -22,3 +23,8 @@ assert 'foundBitmapSlot && !nativeArtwork && placeholder' in identity_missing
 assert 'now - firstSeen.doubleValue >= 0.8' in identity_missing
 assert 'SGDJ_TRACE(@"artwork.placeholder"' in identity_missing
 print('DJ blank-placeholder fallback: PASS (requires device verification)')
+
+assert 'SGDJArtworkCardCache' in identity
+assert 'cache.parent == parent && cache.window == window' in identity
+assert 'cache.card || now - cache.checkedAt < 0.25' in identity
+print('Artwork enclosing-card cache: PASS')
