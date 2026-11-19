@@ -72,11 +72,13 @@ def scrub_dj(reply, salt):
     return out
 
 
-def scrub_find(reply):
-    views = reply.get("views", [])
-    return {"total": int(reply.get("count", 0)),
-            "shown": sum(1 for v in views if v.get("shown")),
-            "enabled": sum(1 for v in views if v.get("shown") and v.get("enabled", True))}
+def scrub_controls(reply):
+    allowed = ("edit", "nextSet", "nativeArt", "redesignedArt")
+    out = {}
+    for name in allowed:
+        fields = reply.get("controls", {}).get(name, {})
+        out[name] = {k: max(0, int(fields.get(k, 0))) for k in ("total", "shown", "enabled")}
+    return out
 
 
 def scrub_ui(reply):
@@ -261,15 +263,11 @@ def capture(args):
                     record[key] = {"error": type(exc).__name__}
             if time.monotonic() - last_ui_at >= args.ui_every:
                 last_ui_at = time.monotonic()
-                controls = {}
-                for name, identifier in (("edit", "queue-edit-button"),
-                                         ("nextSet", "vitrine-dj-new-segment"),
-                                         ("nativeArt", "SG.DJArtwork"),
-                                         ("redesignedArt", "SGR.DJArtwork")):
-                    try:
-                        controls[name] = scrub_find(driver.call("find", id=identifier))
-                    except (OSError, TimeoutError, ValueError, RuntimeError) as exc:
-                        errors.append({"t": time_now, "command": f"find.{name}", "error": type(exc).__name__})
+                try:
+                    controls = scrub_controls(driver.call("dj.ui"))
+                except (OSError, TimeoutError, ValueError, RuntimeError) as exc:
+                    controls = {}
+                    errors.append({"t": time_now, "command": "dj.ui", "error": type(exc).__name__})
             if controls:
                 record["controls"] = controls
             samples.append(record)

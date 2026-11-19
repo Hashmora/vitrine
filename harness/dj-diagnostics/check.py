@@ -23,6 +23,7 @@ queue = (root / 'tweak/Sources/Shared/Player/DJQueue.x').read_text()
 for symbol in ('SGDJProbeRecord', 'SGDJProbeRead', 'SGDJProbeTag', 'SGDJProbeArtworkDecision'):
     assert symbol in core and symbol in header, f'missing exported {symbol}'
 assert '@"dj.trace"' in driver and 'SGDJProbeRead(since, limit)' in driver
+assert '@"dj.ui"' in driver and 'SGForEachView(window' in driver
 assert 'SGDJ_TRACE(@"button.tap"' in queue
 assert 'SGDJ_TRACE(@"queue.set"' in queue
 assert 'SGDJ_TRACE(@"previous.target"' in queue
@@ -51,8 +52,9 @@ class FakeHandler(BaseHTTPRequestHandler):
         elif command == 'state':
             response = {'ok': True, 'player': True, 'nowPlaying': {'title': 'PRIVATE SONG',
                         'uri': 'spotify:track:SECRET123', 'paused': False, 'playing': True}}
-        elif command == 'find':
-            response = {'ok': True, 'views': [{'shown': True, 'enabled': True, 'text': 'PRIVATE SONG'}], 'count': 1}
+        elif command == 'dj.ui':
+            response = {'ok': True, 'controls': {'edit': {'total': 1, 'shown': 1, 'enabled': 1},
+                                                 'nextSet': {'total': 1, 'shown': 1, 'enabled': 1}}}
         else:
             response = {'ok': False, 'error': 'unknown'}
         data = json.dumps(response).encode()
