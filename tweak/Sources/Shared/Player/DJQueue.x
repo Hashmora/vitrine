@@ -1139,6 +1139,20 @@ static BOOL segmentSpent(SPTPlayerState *state);
 static BOOL isUnspent(SPTPlayerTrack *t);
 // Set while the DJ hand-over hides/mutes internal anchor positions until the real destination is confirmed.
 static BOOL sHandingOver;
+// A Pause from Spotify's UI during a crossing supersedes its original resume
+// intent, even if an internal targeted skip starts playback again.
+static NSUInteger sUserPauseRevision, sLandingPauseRevision;
+static BOOL sInternalDJPause;
+static void pauseForDJTransition(id<SPTPlayer> player) {
+    sInternalDJPause = YES;
+    [player pause:nil];
+    sInternalDJPause = NO;
+}
+// Local render muting cannot protect a Spotify Connect speaker. If we cannot
+// verify a running local audio path, leave DJ transition timing to Spotify.
+static BOOL canMuteDJLocally(void) {
+    return SGPlayerMusicOutput() != NULL && SGPlayerSpeedAllowed();
+}
 static NSString *sHandOverAnchorUID;
 static SPTPlayerTrack *sHandOverDisplayTrack;
 static SPTPlayerState *sHandOverDisplayState;
@@ -2533,8 +2547,9 @@ static void endNextSegmentSkip(BOOL changed, NSString *problem, BOOL contextChan
     SGDJQueueFinishPick(changed);
     if (!contextChanged) {
         id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
-        if (sNextSegmentWasPaused) [player pause:nil];
-        else [player resume:nil];
+        if (sNextSegmentWasPaused || sUserPauseRevision != sLandingPauseRevision) {
+            pauseForDJTransition(player);
+        } else [player resume:nil];
     }
     if (problem.length && !contextChanged) {
         [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Couldn't change DJ set"
@@ -2619,6 +2634,12 @@ static void skipToNextDJSegment(void) {
     if (sNextSegmentTimer || sPickingSegment || sHandingOver) return;
     SPTPlayerState *state = SGPlayerState();
     if (!sDJActive || !isDJSession(state)) return;
+    if (!canMuteDJLocally()) {
+        [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Next DJ Set unavailable"
+                            detail:@"Switch playback to this iPhone before skipping a DJ set."
+                            symbol:@"airplayaudio"];
+        return;
+    }
 
     // Collect only the old segment, before the delimiter. Both the voice and
     // its song use the same UID; page_instance_id identifies the new page when
@@ -2648,6 +2669,7 @@ static void skipToNextDJSegment(void) {
     sNextSegmentOldUIDs = [old copy];
     sNextSegmentAnchor = anchor;
     sNextSegmentWasPaused = state.isPaused;
+    sLandingPauseRevision = sUserPauseRevision;
     sNextSegmentAnchorSent = NO;
     sNextSegmentJumpSent = NO;
     sNextSegmentPhysicalAdvances = 0;
@@ -2661,7 +2683,7 @@ static void skipToNextDJSegment(void) {
     sHandingOver = YES; // disable the automatic end-of-segment bridge
     SGPlayerSetDJTransitionMuted(YES);
     SGLog(@"queue: Next DJ Set in skip mode: moving across the segment without sending a request");
-    if (!state.isPaused) [(id<SPTPlayer>)queuePlayer() pause:nil];
+    if (!state.isPaused) pauseForDJTransition((id<SPTPlayer>)queuePlayer());
     sNextSegmentTimer = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
         pollNextSegmentSkip(timer);
     }];
@@ -2812,10 +2834,16 @@ static void finishDJLanding(id<SPTPlayer> player, SPTPlayerTrack *target, NSStri
         sSignature = nil;
         refreshReaders();
         if (landed) {
-            SGLog(@"queue: the next destination is confirmed, %@", resume ? (now.isPaused ? @"resuming" : @"already playing") : @"kept paused");
-            // Core skips often resume on their own. Do not send a redundant
-            // Resume that can animate Spotify's native playback controls.
-            if (resume && now.isPaused) [player resume:nil];
+            BOOL userPaused = sUserPauseRevision != sLandingPauseRevision;
+            SGLog(@"queue: the next destination is confirmed, %@", userPaused ? @"user's Pause preserved" :
+                  resume ? (now.isPaused ? @"resuming" : @"already playing") : @"kept paused");
+            if (userPaused) {
+                if (!now.isPaused) pauseForDJTransition(player);
+            } else if (resume && now.isPaused) {
+                // Core skips often resume on their own. Only resume when the
+                // user has not issued Pause since the crossing began.
+                [player resume:nil];
+            }
         } else {
             SGLog(@"queue: the destination was not confirmed; releasing the mute to avoid a stuck player");
         }
@@ -2824,12 +2852,14 @@ static void finishDJLanding(id<SPTPlayer> player, SPTPlayerTrack *target, NSStri
 }
 
 static id landAtSegmentEnd(SPTPlayerTrack *play) {
+    if (!canMuteDJLocally()) return nil;
     SPTPlayerState *state = SGPlayerState();
     SPTPlayerTrack *last = lastOfSegment(state);
     if (sHandingOver || !last || (sameGroup(last, state.track) && !isCoreQueued(state.track))) return nil;
     sHandOverDisplayState = SGPlayerState();
     sHandOverDisplayTrack = asDJTrack(sHandOverDisplayState.track) ?: sHandOverDisplayState.track;
     sHandingOver = YES;
+    sLandingPauseRevision = sUserPauseRevision;
     sHandOverAnchorUID = historyUID(last);
     SGPlayerSetDJTransitionMuted(YES);
     if (play) {
@@ -2841,9 +2871,9 @@ static id landAtSegmentEnd(SPTPlayerTrack *play) {
         refreshReaders();
     }
     id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
-    BOOL resume = YES; // As before, Spotify's skip commands can resume a paused player.
+    BOOL resume = !state.isPaused; // preserve a pause already present at entry
     SGLog(@"queue: nothing of the segment is left; crossing muted to its last %@ without pausing", SGURIString(last.URI));
-    NSString *from = trackKey(state.track), *uri = SGURIString(play.URI);
+    NSString *from = trackKey(state.track);
     __block int tries = 0;
     __block BOOL sent = NO;
     __block void (^poll)(void);
@@ -2863,16 +2893,23 @@ static id landAtSegmentEnd(SPTPlayerTrack *play) {
         }
         BOOL moved = ![trackKey(now.track) isEqualToString:from];
         SPTPlayerTrack *to = moved ? coreNextUnplayed(now) : nil;
-        SPTPlayerTrack *copy = nil;
-        if (play) for (SPTPlayerTrack *t in now.future) {
-            if (isCoreQueued(t) && [SGURIString(t.URI) isEqualToString:uri]) { copy = t; break; }
-        }
+        // Only the copy created by our queue command may become the landing
+        // destination. A manually queued copy has the same URI but a distinct UID.
+        SPTPlayerTrack *copy = play ? queuedCopyOf(play, now, NULL) : nil;
         if ((!to || (play && !copy)) && ++tries < (int)(kSegmentWait / 0.1)) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), poll);
             return;
         }
         poll = nil;
-        if (copy) noteCopy(copy, play);
+        if (play && !copy) {
+            SGLog(@"queue: owned landing copy not confirmed; retaining Spotify's playback");
+            [sHidden removeObject:baseUID(play.UID)];
+            sHandingOver = NO; sHandOverAnchorUID = nil;
+            sHandOverDisplayTrack = nil; sHandOverDisplayState = nil;
+            SGPlayerSetDJTransitionMuted(NO);
+            sSignature = nil; refreshReaders();
+            return;
+        }
         SPTPlayerTrack *destination = play ? copy : to;
         SGLog(@"queue: the next segment %@; finishing muted hand-over", to ? @"came" : @"has not arrived yet");
         NSString *anchor = trackKey(now.track);
@@ -2903,18 +2940,20 @@ static BOOL atSegmentEnd(SPTPlayerState *state) {
 }
 
 static void holdAtEnd(void) {
+    if (!canMuteDJLocally()) return; // never pause a remote Connect device
     SPTPlayerState *state = SGPlayerState();
     if (sHandingOver || !atSegmentEnd(state)) return;
     sHandOverDisplayState = SGPlayerState();
     sHandOverDisplayTrack = asDJTrack(sHandOverDisplayState.track) ?: sHandOverDisplayState.track;
     sHandingOver = YES;
+    sLandingPauseRevision = sUserPauseRevision;
     sHandOverAnchorUID = historyUID(state.track);
     SGPlayerSetDJTransitionMuted(YES);
     id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
     NSString *from = trackKey(state.track);
     SGLog(@"queue: the player is at the end of the segment's last item %@ and the next segment has not come: paused until it does",
           state.track.trackTitle ?: SGURIString(state.track.URI));
-    [player pause:nil];
+    pauseForDJTransition(player);
     __block int tries = 0;
     __block void (^poll)(void);
     void (^check)(void) = ^{
@@ -2931,12 +2970,15 @@ static void holdAtEnd(void) {
                                   : @"no next segment came, the player goes on and resumes");
             skipForward(to);
         }
+        BOOL userPaused = sUserPauseRevision != sLandingPauseRevision;
         if (moved) {
             sHandingOver = NO;
             SGPlayerSetDJTransitionMuted(NO);
-            [player resume:nil];
+            if (userPaused) {
+                if (!now.isPaused) pauseForDJTransition(player);
+            } else [player resume:nil];
         } else {
-            finishDJLanding(player, to, from, YES, NO);
+            finishDJLanding(player, to, from, !userPaused, NO);
         }
     };
     poll = check;
@@ -3008,10 +3050,11 @@ static SPTPlayerTrack *repeatedCurrentOutro(SPTPlayerState *state) {
 }
 
 static void skipRepeatedCurrentIntoOutro(SPTPlayerTrack *voice) {
-    if (sHandingOver) return;
+    if (sHandingOver || !canMuteDJLocally()) return;
     sHandOverDisplayState = SGPlayerState();
     sHandOverDisplayTrack = asDJTrack(sHandOverDisplayState.track) ?: sHandOverDisplayState.track;
     sHandingOver = YES;
+    sLandingPauseRevision = sUserPauseRevision;
     sHandOverAnchorUID = historyUID(voice);
     SGPlayerSetDJTransitionMuted(YES);
     id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
@@ -3021,7 +3064,7 @@ static void skipRepeatedCurrentIntoOutro(SPTPlayerTrack *voice) {
     // asking for an explicit pause here causes the visible Pause/Play hiccup.
     SGLog(@"queue: spent context originals precede the closing DJ voice; crossing them muted without pausing");
     skipForward(voice);
-    finishDJLanding(player, voice, from, YES, YES);
+    finishDJLanding(player, voice, from, !SGPlayerState().isPaused, YES);
 }
 
 static BOOL needsHandOver(SPTPlayerState *state) {
@@ -3329,6 +3372,13 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
 }
 
 %hook SPTEsperantoPlayer
+- (id)pause:(id)options {
+    if (!sInternalDJPause && sDJActive && (sHandingOver || sNextSegmentTimer)) {
+        sUserPauseRevision++;
+        SGLog(@"queue: explicit Pause during a DJ transition will be preserved");
+    }
+    return %orig;
+}
 // Every step back of Spotify's ends here, `track` nil for the plain one. With nothing behind the current track in
 // the state, the core has run out of the ten it keeps, and the one the DJ played before is asked for by its uid.
 - (id)skipToPreviousTrackWithOptions:(id)options track:(SPTPlayerTrack *)track loggingParams:(id)params {
