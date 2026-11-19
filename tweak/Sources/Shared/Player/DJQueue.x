@@ -940,7 +940,10 @@ NSDictionary *SGDJQueueDiagnostics(void) {
     NSMutableArray *future = [NSMutableArray array];
     for (SPTPlayerTrack *t in state.future) [future addObject:item(t)];
     return @{@"context": SGURIString(state.contextURI) ?: @"", @"active": @(sDJActive), @"current": item(state.track), @"shown": item(shownDJTrack(state.track) ?: state.track), @"displayPosition": @(shownDJStateBase(state).position), @"future": future, @"position": @(state.position), @"duration": @(state.duration),
-             @"ordered": @(sOrdered), @"handover": @(sHandingOver), @"muted": @(SGPlayerDJTransitionMuted()), @"mutedBuffers": @(SGPlayerDJTransitionMutedBuffers()), @"paused": @(state.isPaused), @"duplicateBeforeOutro": @(repeatedCurrentOutro(state) != nil),
+             @"ordered": @(sOrdered), @"handover": @(sHandingOver),
+             @"localAudioReady": @(SGPlayerMusicOutput() != NULL),
+             @"speedAllowed": @(SGPlayerSpeedAllowed()),
+             @"muted": @(SGPlayerDJTransitionMuted()), @"mutedBuffers": @(SGPlayerDJTransitionMutedBuffers()), @"paused": @(state.isPaused), @"duplicateBeforeOutro": @(repeatedCurrentOutro(state) != nil),
              @"nonDJCapSamples": @(sCapNonDJSamples), @"nonDJExtraNextTotal": @(sCapNonDJExtraNext),
              @"nonDJExtraPrevTotal": @(sCapNonDJExtraPrev), @"nonDJExtraNextPeak": @(sCapNonDJPeakNext),
              @"nonDJExtraPrevPeak": @(sCapNonDJPeakPrev),
