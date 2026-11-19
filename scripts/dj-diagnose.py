@@ -95,7 +95,7 @@ def scrub_trace(reply):
     # The native event stream contains only known, fixed-size flags and counters;
     # never allow new arbitrary text fields to enter the report by accident.
     allowed_events = {
-        "queue.enter", "queue.leave", "queue.rows", "queue.set", "queue.swipe",
+        "artwork.classifier", "queue.enter", "queue.leave", "queue.rows", "queue.set", "queue.swipe",
         "button.tap", "button.render", "pick.begin", "pick.finish", "player.state",
         "previous.refused", "previous.target", "previous.fallback",
         "skip.internal", "segment.skip.begin", "segment.skip.end", "segment.hold.begin",

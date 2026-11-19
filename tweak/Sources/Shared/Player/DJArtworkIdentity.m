@@ -1,4 +1,5 @@
 #import "DJArtworkIdentity.h"
+#import <objc/runtime.h>
 #import "Core/SGDJProbe.h"
 
 static NSString *const kSpotifyDJURI = @"spotify:playlist:37i9dQZF1EYkqdzj48dyYq";
@@ -64,6 +65,9 @@ static BOOL viewHasEditorialDJIdentity(UIView *view, NSUInteger depth) {
     for (UIView *child in view.subviews) if (viewHasEditorialDJIdentity(child, depth + 1)) return YES;
     return NO;
 }
+#if SG_DRIVER
+static char kArtworkProbeSignature;
+#endif
 BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     if (!card || !djTitle(card.accessibilityLabel)) return NO;
     BOOL explicitIdentity = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);
@@ -74,5 +78,22 @@ BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     BOOL genericPlaylist = playlistLabel(card.accessibilityLabel) && !confirmed;
     SGDJProbeArtworkDecision(confirmed, genericPlaylist);
 
+#if SG_DRIVER
+    // Emit only boolean classifier reasons and hashed label change detection.
+    // Never record title, account names, playlist URI or accessibility text.
+    NSString *signature = [NSString stringWithFormat:@"%d/%d/%d/%d/%d/%lu", explicitIdentity,
+                           dedicated, editorial, genericPlaylist, confirmed,
+                           (unsigned long)card.accessibilityLabel.hash];
+    if (![objc_getAssociatedObject(card, &kArtworkProbeSignature) isEqualToString:signature]) {
+        objc_setAssociatedObject(card, &kArtworkProbeSignature, signature, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        SGDJ_TRACE(@"artwork.classifier", (@{
+            @"explicit": @(explicitIdentity), @"dedicated": @(dedicated),
+            @"editorial": @(editorial), @"genericPlaylist": @(genericPlaylist),
+            @"confirmed": @(confirmed),
+            @"history": @([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"]),
+            @"shortcut": @([card.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"])
+        }));
+    }
+#endif
     return confirmed;
 }
