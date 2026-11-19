@@ -2,7 +2,11 @@
 """Compile the production DJ history and end-of-track decisions against small Foundation fakes."""
 from pathlib import Path
 import subprocess, tempfile
-source = (Path(__file__).resolve().parents[2] / 'tweak/Sources/Shared/Player/DJQueue.x').read_text()
+queue_path = Path(__file__).resolve().parents[2] / 'tweak/Sources/Shared/Player/DJQueue.x'
+import re
+source = re.sub(r'^#include "(DJQueue[^"]+\.inc)"$',
+                lambda m: (queue_path.parent / m.group(1)).read_text(),
+                queue_path.read_text(), flags=re.M)
 def function(name):
     import re
     match = re.search(r'^[A-Za-z_][^\n]*\b' + name + r'\([^\n]*\) \{', source, re.M)

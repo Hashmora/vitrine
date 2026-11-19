@@ -25,7 +25,8 @@ static BOOL viewIdentifiesDJ(UIView *view, NSUInteger depth) {
     if (!view || depth > 8) return NO;
     // Accessibility fields are supplied by Spotify, not inferred from art or a
     // user-editable title. Never crawl outside the current card or its children.
-    if (containsDJIdentity(view.accessibilityIdentifier) || containsDJIdentity(view.accessibilityValue) ||
+    if (containsDJIdentity(view.accessibilityIdentifier) || containsDJIdentity(view.accessibilityLabel) ||
+        containsDJIdentity(view.accessibilityValue) ||
         containsDJIdentity(view.accessibilityHint)) return YES;
     for (UIView *child in view.subviews) if (viewIdentifiesDJ(child, depth + 1)) return YES;
     return NO;

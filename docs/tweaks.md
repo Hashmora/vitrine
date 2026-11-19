@@ -780,6 +780,14 @@ Documents/Lossless folder (Files app › Spotify › Lossless) plays in place of
 
 ## DJ queue
 
+The queue implementation is organized as internal model/order (`DJQueueState.inc`),
+core commands (`DJQueuePlayback.inc`), transition handling (`DJQueueTransitions.inc`),
+history/lens (`DJQueueHistory.inc`) and the Spotify Logos page hooks (`DJQueue.x`).
+The `.inc` files are compiled into the DJQueue translation unit: this preserves the
+existing session-scoped statics and cross-hook ordering rather than introducing a
+second mutable copy of DJ queue state. Native and Redesigned implement their own
+`DJQueueButton.m` files; Shared only supplies action/state callbacks.
+
 On until switched off (`spotifyglass.djqueue`, Player › DJ, read at launch; `Shared/Player/DJQueue.x`). In the AI DJ's
 session (its playlist, `spotify:playlist:37i9dQZF1EYkqdzj48dyYq`) Spotify's queue page shows the DJ's tracks to come,
 each "Up next" card as a row of its own before the track it introduces. In any other context every hook passes
@@ -792,7 +800,7 @@ Spotify's own through.
   (doing so loses the next DJ tracks on a later DJ launch). With the diagnostic driver enabled, `dj.state` reports
   `nonDJCapSamples`, `nonDJExtraNextTotal`, `nonDJExtraPrevTotal`, and both peak values; they measure extra
   retained *track references* against Spotify's original 2+2 cap. Actual bytes, CPU and network latency still require
-  on-device profiling (with two behind, a step back from a new segment found only the tracks the hand-over went past). With a
+  on-device profiling. (With two previous tracks, stepping back across segments previously found only spent ones.) With a
   cap of 80 the core still gave one segment (9.1.90): the next is made when the core comes to the last track of this
   one. The core asks for it itself, with no context page from the app (no `play`, `updateContext` or
   `updateContextPage`), so it cannot be asked for earlier. With nothing of a segment left but removed or played
