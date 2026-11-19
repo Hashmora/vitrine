@@ -113,6 +113,10 @@ static const CGFloat kPlayStep = 1.0 / 120;
     CGFloat _minCenter, _maxCenter;
     CALayer *_tintMask;
     CAShapeLayer *_normalCutout;
+    // Only the outward crescent is attenuated at Home/Create: otherwise the
+    // lens samples and bends the *capsule's* outside border. No change to the
+    // center of the lens or to the inward refracting edge.
+    CAGradientLayer *_outerEdgeGuard;
     BOOL _glassOn;
     NSUInteger _pulseGeneration;
     // A bubble nobody holds is not run frame by frame on the main thread, which a tab loading under it would stall
@@ -232,13 +236,14 @@ static BOOL bubbles(void) {
     if (_normalContent == normalContent) return;
     if (_normalContent.layer.mask == _normalCutout) _normalContent.layer.mask = nil;
     _normalContent = normalContent;
-    if (!normalContent) { _normalCutout = nil; return; }
+    if (!normalContent) { _normalCutout = nil; [self updateOuterEdgeGuard]; return; }
     if (!_normalCutout) {
         _normalCutout = [CAShapeLayer layer];
         _normalCutout.fillColor = UIColor.whiteColor.CGColor;
         _normalCutout.fillRule = kCAFillRuleEvenOdd;
     }
     [self updateNormalCutout];
+    [self updateOuterEdgeGuard];
 }
 
 - (CGPathRef)newNormalCutoutPathAt:(CGPoint)center sx:(CGFloat)sx sy:(CGFloat)sy {
@@ -252,6 +257,48 @@ static BOOL bubbles(void) {
     CGPathAddRect(path, NULL, bar.bounds);
     CGPathAddRoundedRect(path, NULL, hole, height / 2, height / 2);
     return path;
+}
+
+// Keep the outer edge of the floating capsule undistorted. At the first
+// and last tabs the 116pt lifted lens slightly crosses the platter's edge;
+// its outermost refraction would otherwise bend the capsule boundary.
+// Suppress only the outward ~18% of the optical pane, progressively over
+// the final 24pt of travel. The inner crescent remains fully refractive.
+- (void)updateOuterEdgeGuard {
+    UIView *bar = _normalContent;
+    if (!_glassOn || !bar || !self.superview || CGRectIsEmpty(_restFrame)) {
+        if (_pane.layer.mask == _outerEdgeGuard) _pane.layer.mask = nil;
+        return;
+    }
+    CGPoint center; CGFloat sx, sy;
+    [self getPose:[self state] center:&center sx:&sx sy:&sy];
+    CGRect barInHost = [bar convertRect:bar.bounds toView:self.superview];
+    CGFloat halfWidth = self.bounds.size.width * sx / 2;
+    // The first and last centers have about -4pt of external overlap on the
+    // measured Apple layout. Leave a small border-safe band beyond that.
+    CGFloat leftClearance = center.x - halfWidth - CGRectGetMinX(barInHost);
+    CGFloat rightClearance = CGRectGetMaxX(barInHost) - center.x - halfWidth;
+    CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance - 4) / 20));
+    CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance - 4) / 20));
+    if (leftAlpha >= 0.999 && rightAlpha >= 0.999) {
+        if (_pane.layer.mask == _outerEdgeGuard) _pane.layer.mask = nil;
+        return;
+    }
+    if (!_outerEdgeGuard) {
+        _outerEdgeGuard = [CAGradientLayer layer];
+        _outerEdgeGuard.startPoint = CGPointMake(0, 0.5);
+        _outerEdgeGuard.endPoint = CGPointMake(1, 0.5);
+        _outerEdgeGuard.locations = @[@0, @0.18, @0.82, @1];
+    }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _outerEdgeGuard.frame = _pane.bounds;
+    _outerEdgeGuard.colors = @[(id)[UIColor colorWithWhite:1 alpha:leftAlpha].CGColor,
+                               (id)UIColor.whiteColor.CGColor,
+                               (id)UIColor.whiteColor.CGColor,
+                               (id)[UIColor colorWithWhite:1 alpha:rightAlpha].CGColor];
+    if (_pane.layer.mask != _outerEdgeGuard) _pane.layer.mask = _outerEdgeGuard;
+    [CATransaction commit];
 }
 
 - (void)updateNormalCutout {
@@ -345,6 +392,7 @@ static BOOL bubbles(void) {
     // under the white icons and titles.
     [self standOverTabs:on];
     [self updateNormalCutout];
+    [self updateOuterEdgeGuard];
     if ([_pane isKindOfClass:SGLegacyGlassView.class]) {
         SGLegacyGlassView *glass = (SGLegacyGlassView *)_pane;
         // The capsule has a coloured/darkened glass surface. The lens does not:
@@ -440,6 +488,7 @@ static BOOL bubbles(void) {
         [CATransaction commit];
     }
     [self updateNormalCutout];
+    [self updateOuterEdgeGuard];
 }
 
 - (void)snapToRest {
