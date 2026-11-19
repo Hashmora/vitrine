@@ -1,5 +1,10 @@
 // Internal implementation of DJ Queue, compiled through DJQueue.x.
 // Kept in one translation unit while the Spotify Logos hooks share session state.
+// Any observed track arrival invalidates an in-flight Previous fallback.
+// A later Next can bring the player back to the same UID without making the
+// original Previous request a failure.
+static NSUInteger sDJTrackArrivalSerial;
+
 @interface SGDJHistory : NSObject <SGPlayerStateObserver>
 @end
 
@@ -30,6 +35,7 @@
     lastPaused = state.isPaused;
     hadPause = YES;
 #endif
+    if (arrived) ++sDJTrackArrivalSerial;
     NSString *leftUID = arrived ? lastUID : nil;
     lastUID = track.UID;
     // A walk over the history: the next button's replay, or the track that played right after the one that was playing.

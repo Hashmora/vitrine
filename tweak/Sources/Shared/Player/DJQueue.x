@@ -717,9 +717,17 @@ static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
     SGDJ_TRACE(@"previous.target", (@{@"current": SGDJProbeTag(state.track.UID),
                                      @"target": SGDJProbeTag(target.UID), @"position": @(state.position)}));
     NSString *was = state.track.UID;
+    NSUInteger arrivalSerial = sDJTrackArrivalSerial;
     SGLog(@"queue: previous in the DJ history: %@ [%@]", target.trackTitle, target.UID);
     id result = %orig(options, target, params);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kJumpSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // The targeted Previous may have succeeded and the user may have
+        // pressed Next before this timer fired. Comparing only the current UID
+        // falsely interprets that round trip as a refused Previous.
+        if (sDJTrackArrivalSerial != arrivalSerial) {
+            SGDJ_TRACE(@"previous.fallback.cancelled", (@{@"reason": @"track-arrived"}));
+            return;
+        }
         if (![SGPlayerState().track.UID isEqualToString:was]) {
             SGLog(@"queue: the core went back to %@", SGPlayerState().track.trackTitle);
             return;
