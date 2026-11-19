@@ -7,7 +7,11 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 source = (root / 'tweak/Sources/Shared/Player/DJPick.x').read_text()
-queue = (root / 'tweak/Sources/Shared/Player/DJQueue.x').read_text()
+queue_path = root / 'tweak/Sources/Shared/Player/DJQueue.x'
+import re
+queue = re.sub(r'^#include "(DJQueue[^"]+\.inc)"$',
+               lambda m: (queue_path.parent / m.group(1)).read_text(),
+               queue_path.read_text(), flags=re.M)
 settings = (root / 'tweak/Sources/Shared/Player/PlayerSettings.m').read_text()
 header = (root / 'tweak/Sources/Shared/Player/DJPick.h').read_text()
 assert '%hook' not in source and '%ctor' not in source, 'native DJ hook was retained'

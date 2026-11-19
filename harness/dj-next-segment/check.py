@@ -7,7 +7,11 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[2]
-queue = (root / 'tweak/Sources/Shared/Player/DJQueue.x').read_text()
+queue_path = root / 'tweak/Sources/Shared/Player/DJQueue.x'
+import re
+queue = re.sub(r'^#include "(DJQueue[^"]+\.inc)"$',
+               lambda m: (queue_path.parent / m.group(1)).read_text(),
+               queue_path.read_text(), flags=re.M)
 settings = (root / 'tweak/Sources/Shared/Player/PlayerSettings.m').read_text()
 pick = (root / 'tweak/Sources/Shared/Player/DJPick.x').read_text()
 
