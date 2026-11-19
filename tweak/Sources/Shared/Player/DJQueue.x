@@ -694,6 +694,8 @@ static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
 #include "DJQueueHistory.inc"
 %hook SPTEsperantoPlayer
 - (id)pause:(id)options {
+    SGDJ_TRACE(@"player.pause.command", (@{@"internal": @(sInternalDJPause),
+                                           @"transition": @(sHandingOver || sNextSegmentTimer != nil)}));
     if (!sInternalDJPause && sDJActive && (sHandingOver || sNextSegmentTimer)) {
         sUserPauseRevision++;
         SGLog(@"queue: explicit Pause during a DJ transition will be preserved");

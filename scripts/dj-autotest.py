@@ -214,15 +214,33 @@ class AutoTest:
             self.screenshot("queue")
             self.record("queue.nextSet.present", "PASS" if controls.get("nextSet", {}).get("shown") else "FAIL")
             if controls.get("edit", {}).get("shown"):
-                if self.call("queue.edit.enter", "tap", id="queue-edit-button"):
-                    time.sleep(self.settle)
-                    hidden = self.controls().get("nextSet", {}).get("shown", 0) == 0
-                    self.screenshot("edit")
-                    self.record("queue.nextSet.hiddenWhileEditing", "PASS" if hidden else "FAIL")
-                    self.call("queue.edit.exit", "tap", id="queue-close-edit-button")
-                    time.sleep(self.settle)
+                if self.call("queue.edit.tap", "tap", id="queue-edit-button"):
+                    # A successful synthetic tap is NOT proof that SwiftUI
+                    # entered Edit: check the queue controller's actual state.
+                    entered = self.observe(2, lambda: bool(self.state().get("editMode")), step=0.2)
+                    self.record("queue.edit.enter", "PASS" if entered is not None else "CHECK",
+                                entered or 2, "state-confirmed" if entered is not None else
+                                "tap was delivered, but Edit mode was never confirmed")
+                    if entered is not None:
+                        self.screenshot("edit")
+                        hidden = self.controls().get("nextSet", {}).get("shown", 0) == 0
+                        self.record("queue.nextSet.hiddenWhileEditing", "PASS" if hidden else "FAIL")
+                        if self.call("queue.edit.exit.tap", "tap", id="queue-close-edit-button"):
+                            exited = self.observe(2, lambda: not bool(self.state().get("editMode")), step=0.2)
+                            self.record("queue.edit.exit", "PASS" if exited is not None else "CHECK",
+                                        exited or 2, "state-confirmed" if exited is not None else
+                                        "no exit confirmation")
+                    else:
+                        self.screenshot("edit-unconfirmed")
+                        self.record("queue.nextSet.hiddenWhileEditing", "SKIP",
+                                    detail="cannot check visibility without entering Edit")
             else:
                 self.record("queue.edit", "SKIP", detail="Edit control absent")
+            # A failed Edit exit must not turn a test of Next DJ Set into an
+            # accidental tap during selection mode.
+            if self.state().get("editMode"):
+                self.record("nextSet.tap", "SKIP", detail="queue still in Edit mode")
+                return
             # This clicks the actual custom queue button, not a direct core method.
             if self.controls().get("nextSet", {}).get("shown"):
                 begin = time.monotonic()
@@ -302,11 +320,19 @@ class AutoTest:
                 self.record("play.ack", "PASS" if took is not None else "FAIL", took or 5)
             if paused_initially and not self.state().get("paused"):
                 self.call("restore.initialPause", "pause")
-            self.call("player.close", "player.close")
-            self.tap_any("home.open", [("label", "Home")])  # never select a track on Home
-            time.sleep(1.5)
-            self.screenshot("home")
-            self.record("home.artwork.observations", "PASS", detail="Home visited; compare overlay and classifier counters")
+            self.call("player.close.tap", "player.close")
+            closed = self.observe(2, lambda: not bool(self.driver.call("state").get("playerOpen")), step=0.2)
+            self.record("player.close.confirm", "PASS" if closed is not None else "CHECK",
+                        closed or 2, "state-confirmed" if closed is not None else "player remained open")
+            if closed is None:
+                self.record("home.artwork.observations", "SKIP", detail="Home not reached: player still open")
+            else:
+                # The Home tab can already be selected after closing the player.
+                self.tap_any("home.open", [("label", "Home")])  # never select a track on Home
+                time.sleep(1.5)
+                self.screenshot("home")
+                self.record("home.artwork.observations", "CHECK",
+                            detail="Home screenshot captured; artwork identity needs visual verification")
         finally:
             # Do not leave the player paused when it was initially playing.
             if not paused_initially and self.state().get("paused") and not self.state().get("handover"):

@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 PATH = Path(__file__).resolve().parents[1] / 'dj-autotest.py'
 spec = importlib.util.spec_from_file_location('dj_autotest', PATH)
@@ -79,6 +80,26 @@ class AutoTestTests(unittest.TestCase):
                     for i in range(9)]
         runner = auto.AutoTest(StubDriver(), StubRecorder(arrivals), settle=0)
         self.assertTrue(runner.unstable_playback())
+
+    def test_edit_tap_without_state_transition_does_not_blame_button(self):
+        driver = StubDriver()
+        recorder = StubRecorder()
+        runner = auto.AutoTest(driver, recorder, settle=0)
+        runner.observe = lambda _seconds, condition, step=0.35: 0 if condition() else None
+        runner.change_via_ui = lambda *_args: 'missing'
+        with patch.object(auto.time, 'sleep', return_value=None):
+            runner.run(5)
+        results = {row['stage']: row['result'] for row in runner.actions}
+        self.assertEqual(results.get('queue.edit.enter'), 'CHECK')
+        self.assertEqual(results.get('queue.nextSet.hiddenWhileEditing'), 'SKIP')
+        self.assertNotIn('queue.edit.exit', results)
+
+    def test_connect_navigation_does_not_require_remote_pause(self):
+        source = (PATH.parent.parent / 'tweak/Sources/Shared/Player/DJQueueTransitions.inc').read_text()
+        self.assertIn('BOOL remote = SGPlayerMusicOutput() == NULL;', source)
+        self.assertIn('if (!remote && !state.isPaused) pauseForDJTransition', source)
+        self.assertIn('if (!remote) SGPlayerSetDJTransitionMuted(YES);', source)
+        self.assertIn('if (remote || state.isPaused) pollNextSegmentSkip', source)
 
     def test_no_delete_or_reorder_actions(self):
         # Autonomous runner must never mutate the DJ queue directly.
