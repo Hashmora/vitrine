@@ -413,6 +413,38 @@ static char kPreviewMainGlassKey, kPreviewApartGlassKey, kPreviewMainDimKey, kPr
     return self;
 }
 
+// Pre-iOS 26 UITabBar uses 86 x 61pt buttons and pushes captions down to
+// y=47.33. The running Legacy bar corrects those to Apple's measured 100.33
+// x 54pt buttons, icon y=8 and title y=35. Keep this *preview* on the same
+// visual metrics; don't let the stock UITabBar layout undo the comparison.
+static void alignLegacyPreviewContents(UITabBar *bar) {
+    NSUInteger count = bar.items.count;
+    if (!count || count > 4) return;
+    NSMutableArray<UIView *> *buttons = [NSMutableArray array];
+    for (UIView *view in bar.subviews) {
+        if ([NSStringFromClass(view.class) isEqualToString:@"UITabBarButton"]) [buttons addObject:view];
+    }
+    if (buttons.count != count) return;
+    [buttons sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+        CGFloat dx = CGRectGetMinX(a.frame) - CGRectGetMinX(b.frame);
+        return dx < 0 ? NSOrderedAscending : dx > 0 ? NSOrderedDescending : NSOrderedSame;
+    }];
+    CGFloat step = 83.8888888889;
+    for (NSUInteger i = 0; i < count; i++) {
+        UIView *button = buttons[i];
+        CGRect frame = CGRectMake(4 + step * i, 4, 100.3333333333, 54);
+        if (!CGRectEqualToRect(button.frame, frame)) button.frame = frame;
+        [button layoutIfNeeded];
+        for (UIView *sub in button.subviews) {
+            if ([sub isKindOfClass:UIImageView.class] && sub.bounds.size.width <= 36 && sub.bounds.size.height <= 36) {
+                sub.center = CGPointMake(100.3333333333 / 2, 20);
+            } else if ([sub isKindOfClass:UILabel.class] && sub.bounds.size.height > 0) {
+                sub.center = CGPointMake(100.3333333333 / 2, 35 + sub.bounds.size.height / 2);
+            }
+        }
+    }
+}
+
 static NSArray<UITabBarItem *> *itemsFor(NSArray<NSDictionary *> *entries, BOOL names) {
     NSMutableArray<UITabBarItem *> *items = [NSMutableArray array];
     for (NSDictionary *entry in entries) {
@@ -503,6 +535,7 @@ static NSArray<UITabBarItem *> *itemsFor(NSArray<NSDictionary *> *entries, BOOL 
     for (UITabBar *bar in @[_main, _apart]) {
         [bar layoutIfNeeded];
         SGRShrinkTabTitles(bar);
+        if (SGRLegacyTabBarOn() && bar == _main) alignLegacyPreviewContents(bar);
     }
 }
 

@@ -12,7 +12,7 @@ static char kLensPaneKey, kLensFilmKey;
 // mesh permits 0.92 for a measurable, local backdrop reduction.
 static const CGFloat kLensMagnification = 0.92;
 static const CGFloat kLensHeldBlur = 0.08, kLensRestBlur = 2;
-static const CGFloat kLensHeldBend = 0.90;
+static const CGFloat kLensHeldBend = 1.03;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
@@ -25,8 +25,8 @@ static const CGFloat kLensGrow = 16, kLensOverscroll = 8;
 // leftward motion narrows it and raises its height. When the finger stops, a slow
 // spring briefly reverses that shape before relaxing. A signed velocity (rather
 // than its absolute value) is essential for the two directions to feel distinct.
-static const CGFloat kLensStretchSpeed = 1100, kLensDirectionalStretch = 0.055;
-static const CGFloat kLensMaxDeform = 0.08, kLensVolume = 0.70, kLensMaxLag = 0.04;
+static const CGFloat kLensStretchSpeed = 1050, kLensDirectionalStretch = 0.077;
+static const CGFloat kLensMaxDeform = 0.115, kLensVolume = 0.70, kLensMaxLag = 0.075;
 // The surface tension: once the edges are near their targets, they pull each other back to the bubble's width, with
 // a damper of their own, so a stretched bubble draws in and gives a small bounce rather than ringing. It is off
 // while the bubble is chasing a finger (the stretch is what shows the chase), and fades in over the last
@@ -121,7 +121,8 @@ static const CGFloat kPlayStep = 1.0 / 120;
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     _heldOutset = 8;
     _rest = [UIView new];
-    _rest.backgroundColor = [UIColor colorWithWhite:0 alpha:0.36];
+    // Apple's resting selection is lighter than its surrounding dark platter.
+    _rest.backgroundColor = [UIColor colorWithWhite:1 alpha:0.17];
     _rest.layer.cornerCurve = kCACornerCurveCircular;
     [self addSubview:_rest];
     _pane = SGGlassFor(self, &kLensPaneKey);
@@ -137,15 +138,15 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _glare.startPoint = CGPointMake(0, 0);
     _glare.endPoint = CGPointMake(1, 1);
     // Match the thumb's directional highlight, not a static opaque border.
-    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.68].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.02].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.02].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.40].CGColor];
+    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.87].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.03].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.03].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.61].CGColor];
     _glare.locations = @[@0, @0.32, @0.68, @1];
     _glareMask = [CAShapeLayer layer];
     _glareMask.fillColor = nil;
     _glareMask.strokeColor = UIColor.whiteColor.CGColor;
-    _glareMask.lineWidth = 0.95;
+    _glareMask.lineWidth = 1.10;
     _glare.mask = _glareMask;
     _glare.opacity = 0;
     [self.layer addSublayer:_glare];
@@ -432,7 +433,7 @@ static BOOL bubbles(void) {
         self->_film.alpha = 0;
         // Dark, nearly clear center against the darker tab platter; unlike
         // a white film, the side shading never washes out the green glyphs.
-        self->_rest.alpha = on ? 0.38 : 1;
+        self->_rest.alpha = on ? 0.12 : 1;
         self->_glare.opacity = on ? 1 : 0;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
@@ -449,11 +450,14 @@ static BOOL bubbles(void) {
         NSUInteger at = [host.subviews indexOfObject:self];
         if (at == NSNotFound) return;
         _restAbove = at + 1 < host.subviews.count ? host.subviews[at + 1] : nil;
-        // Optical order while held: ordinary bar (white, with an inverse
-        // selection cutout) -> selected green group -> refractive glass.
-        // Thus the lens bends green artwork, not the white copy underneath.
+        // The pane must sample the *platter*, not the tab glyphs. The
+        // original bar and its selected-colour mirror stay ABOVE the optical
+        // glass, so magnification and tint can only alter the capsule behind
+        // the symbols. The inverse mask already hides white artwork inside
+        // the selected region while the tinted group supplies sharp glyphs.
         [host bringSubviewToFront:self];
-        if (_tintOverlay.superview == host) [host insertSubview:_tintOverlay belowSubview:self];
+        if (_normalContent.superview == host) [host bringSubviewToFront:_normalContent];
+        if (_tintOverlay.superview == host) [host bringSubviewToFront:_tintOverlay];
     } else {
         UIView *above = _restAbove;
         _restAbove = nil;
@@ -565,7 +569,9 @@ static BOOL bubbles(void) {
 - (void)advance:(CGFloat)h {
     CGFloat dir = (_tL + _tR) / 2 - (_L + _R) / 2;
     BOOL moving = fabs(dir) > 0.75;
-    SGRSpring front = spring(660, 0.84), back = spring(215, 0.72), even = spring(320, 0.80);
+    // Slightly lazier travel for short and long taps; directional drag still
+    // gets the tighter leading / softer trailing edge.
+    SGRSpring front = spring(540, 0.83), back = spring(175, 0.72), even = spring(245, 0.78);
     SGRSpring forL = !moving ? even : (dir < 0 ? front : back);
     SGRSpring forR = !moving ? even : (dir > 0 ? front : back);
     SGSpring lift = _liftTarget > 0.5 ? SGGlassLiftOn : SGGlassLiftOff;   // the press's own
