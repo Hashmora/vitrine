@@ -31,7 +31,7 @@ static const CGFloat kTailWidth = 18, kTailHeight = 8, kTailOverlap = 1;
 // The tooltips on screen, for the tab bar's minimize to move.
 static NSHashTable<UIView *> *sg_tooltips;
 
-static char kGlassKey, kFilmKey, kTailKey, kTailGlassKey, kTailFilmKey, kTailMaskKey, kTailBelowKey;
+static char kGlassKey, kFilmKey, kDimKey, kTailKey, kTailGlassKey, kTailFilmKey, kTailDimKey, kTailMaskKey, kTailBelowKey;
 
 // The card is the container's biggest subview and the arrow its small one; what the mod adds (the tail) is neither.
 static void partsOf(UIView *container, UIView **card, UIView **arrow) {
@@ -73,7 +73,9 @@ static void dressTail(UIView *container, UIView *card, UIView *arrow, CGFloat ra
     if (glass.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     if (!CGRectEqualToRect(glass.frame, tail.bounds)) glass.frame = tail.bounds;
     SGShapeGlass(glass, 0, NO);
-    SGRGlassFilm(tail, &kTailFilmKey, glass, 0);
+    SGRDarkenGlass(glass, &kTailDimKey, 0, 0.62);
+    UIView *tailFilm = SGRGlassFilm(tail, &kTailFilmKey, glass, 0);
+    if (tailFilm) tailFilm.backgroundColor = [UIColor colorWithWhite:1 alpha:0.045];
 
     // The triangle's base is on the card's side, its tip away from it. Kept as the mask's own layer, so a pass sets the path
     // again only when the tail's size or side has changed.
@@ -132,6 +134,8 @@ static void dressTooltip(UIView *container) {
 
     UIView *glass = SGRGlassFloatingCard(card, &kGlassKey, &kFilmKey, kMaxRadius);
     UIView *film = objc_getAssociatedObject(card, &kFilmKey);
+    SGRDarkenGlass(glass, &kDimKey, MIN(card.bounds.size.height / 2, kMaxRadius), 0.62);
+    if (film) film.backgroundColor = [UIColor colorWithWhite:1 alpha:0.045];
 
     // What SwiftUI put in the card: its white goes, its text turns white. The glass and the film are the mod's.
     for (UIView *sub in card.subviews) {
