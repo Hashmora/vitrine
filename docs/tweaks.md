@@ -815,8 +815,9 @@ Spotify's own through.
   how it shows the reorder handles. Spotify keeps the ticks itself (the table has one row selected at a time),
   so they are followed tap by tap. Remove and Move up act on the ticked rows when the button is pressed: Spotify's
   Remove sends the core only its own queue, and nothing when that is empty. Move up puts the ticked rows first in the
-  user's order, below the "Up next" card on top. The toast's Undo puts back what Edit removed. The X button clears the
-  ticks.
+  user's order, below the "Up next" card on top. Spotify 9.1.90 does not show an Undo toast for
+  Vitrine's synthetic DJ rows removed in Edit; the tweak deliberately does not intercept other snackbar buttons
+  (their Undo continues to belong to Spotify). The X button clears the ticks.
 - **Back:** follows the session's logical track history, including the rows passed by tapping a later song.
   For example, tapping through 1, 3 and 5 preserves 5–4–3–2–1 on Previous. A track played from a queue copy
   has its original DJ identity in that history, and the core's retained instance is used when available.
