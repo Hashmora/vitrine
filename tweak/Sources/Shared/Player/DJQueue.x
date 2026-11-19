@@ -581,8 +581,17 @@ static NSDictionary *movedBySource(SPTPlayerTrack *track) {
 // defaults so a launch that goes on in the same session goes on with it. The core keeps the uids of the session's
 // tracks over a launch; uids it no longer has match nothing and are let go.
 static const NSUInteger kSavedMax = 300;
+// The DJ's context URI is constant across sessions. Only restore a recent snapshot
+// at the exact physical playback item where it was written.
+static const NSTimeInterval kSessionRestoreWindow = 6 * 60 * 60;
 static id sPlayedContext;
 static NSString *sSavedLine;
+
+static void clearSavedSession(void) {
+    sSavedLine = nil;
+    SGPrefsWriteUnmemoized(^{ [NSUserDefaults.standardUserDefaults removeObjectForKey:SGKeyDJQueueSession]; });
+}
+
 
 static NSArray<NSString *> *lastOf(id<NSFastEnumeration> uids) {
     NSMutableArray<NSString *> *all = [NSMutableArray array];
@@ -602,11 +611,15 @@ static SPTPlayerTrack *sAheadQueued;
 static NSString *sAheadBeforeLaunch;
 
 static void saveSession(void) {
-    if (!sDJActive || !sAheadContext) return;
+    SPTPlayerState *state = SGPlayerState();
+    if (!sDJActive || !sAheadContext || !isDJSession(state) || !state.track.UID.length) return;
     NSMutableArray<NSString *> *played = [NSMutableArray arrayWithArray:sPlayedBefore.allObjects];
     for (SPTPlayerTrack *t in sPlayed) if (t.UID.length) [played addObject:baseUID(t.UID)];
     NSDictionary *session = @{
         @"context": SGURIString(sAheadContext) ?: @"",
+        @"savedAt": @([NSDate date].timeIntervalSince1970),
+        @"currentUID": state.track.UID,
+        @"currentURI": SGURIString(state.track.URI) ?: @"",
         @"ordered": @(sOrdered),
         @"order": lastOf(sOrder ?: @[]),
         @"hidden": lastOf(sHidden ?: [NSSet set]),
@@ -615,20 +628,32 @@ static void saveSession(void) {
         @"copies": sCopyOf ?: @{},
         @"ahead": sAheadQueued ? SGURIString(sAheadQueued.URI) ?: @"" : @"",
     };
-    NSString *line = [NSString stringWithFormat:@"%@", session];
+    NSMutableDictionary *signature = [session mutableCopy];
+    [signature removeObjectForKey:@"savedAt"];
+    NSString *line = [NSString stringWithFormat:@"%@", signature];
     if ([line isEqualToString:sSavedLine]) return;
     sSavedLine = line;
     SGPrefsWriteUnmemoized(^{ [NSUserDefaults.standardUserDefaults setObject:session forKey:SGKeyDJQueueSession]; });
 }
 
-// Once a launch, at the first state of the DJ's session: what was kept of it, if it is the same session.
+// Once per launch, restore only when the first usable DJ playback item is the
+// same as the item saved at shutdown. Identical playlist URIs are NOT session IDs.
 static void restoreSession(SPTPlayerState *state) {
     static BOOL done;
-    if (done) return;
+    if (done || !isDJSession(state) || !state.track.UID.length) return;
     done = YES;
     NSDictionary *saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:SGKeyDJQueueSession];
+    if (!saved) return;
     NSString *context = SGURIString(state.contextURI);
-    if (!saved || !context.length || ![saved[@"context"] isEqual:context]) return;
+    NSTimeInterval savedAt = [saved[@"savedAt"] respondsToSelector:@selector(doubleValue)] ? [saved[@"savedAt"] doubleValue] : 0;
+    NSTimeInterval age = [NSDate date].timeIntervalSince1970 - savedAt;
+    if (!context.length || ![saved[@"context"] isEqual:context] || age < 0 || age > kSessionRestoreWindow ||
+        ![saved[@"currentUID"] isEqual:state.track.UID] ||
+        ![saved[@"currentURI"] isEqual:SGURIString(state.track.URI)]) {
+        SGLog(@"queue: saved DJ session discarded: old context, expired or different playback item");
+        clearSavedSession();
+        return;
+    }
     NSSet *(^set)(NSString *) = ^NSSet *(NSString *key) { return [NSSet setWithArray:lastOf([saved[key] isKindOfClass:NSArray.class] ? saved[key] : @[])]; };
     sAheadContext = state.contextURI;
     sPlayedContext = state.contextURI;
@@ -1421,6 +1446,7 @@ static void leaveDJ(void) {
     if (sAheadQueued) dropQueued(SGURIString(sAheadQueued.URI), @"the DJ's session ended");
     sAheadQueued = nil;
     sDJActive = NO;
+    clearSavedSession();
     SGPlayerSetDJTransitionMuted(NO);
     sInjected = @[];
     sQueue = @[];
@@ -1434,6 +1460,19 @@ static void leaveDJ(void) {
     sCardAvatar = nil;
     sCardAvatarURL = nil;
     sCardTitle = nil;
+    // These are session-scoped, not playlist-scoped. A later DJ run may reuse
+    // the same context URI and songs but must not inherit their old identities.
+    [sHidden removeAllObjects];
+    [sSkipped removeAllObjects];
+    [sPlayed removeAllObjects];
+    [sPlayedBefore removeAllObjects];
+    [sPassed removeAllObjects];
+    [sVoiced removeAllObjects];
+    [sCopyOf removeAllObjects];
+    [sCarded removeAllObjects];
+    [sCardTracks removeAllObjects];
+    sAheadBeforeLaunch = nil;
+    sPlayedContext = nil;
     for (UIView *view in sAvatarViews.allObjects) [view removeFromSuperview];
     [sAvatarViews removeAllObjects];
     forgetOrder();
