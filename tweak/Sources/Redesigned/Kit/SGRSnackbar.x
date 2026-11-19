@@ -283,8 +283,11 @@ static void dressSnackbar(UIView *snackbar) {
         [CATransaction setDisableActions:YES];
     }
     UIView *glass = SGRGlassFloatingCard(card, &kGlassKey, &kFilmKey, kMaxRadius);
-    // Dimmed as the tab bar's glass is, so its text stands out over a bright page.
-    SGRDarkenGlass(glass, &kDimKey, MIN(kMaxRadius, bounds.size.height / 2), SGRBarDim);
+    // Retain Spotify's existing toast hooks, matching the newer dark tab
+    // material instead of laying a pale film over its backdrop.
+    SGRDarkenGlass(glass, &kDimKey, MIN(kMaxRadius, bounds.size.height / 2), 0.62);
+    UIView *film = objc_getAssociatedObject(card, &kFilmKey);
+    if (film) film.backgroundColor = [UIColor colorWithWhite:1 alpha:0.045];
 
     // What the card holds follows it, and the label and the button are placed for its width.
     for (UIView *sub in card.subviews) {

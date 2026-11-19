@@ -26,7 +26,7 @@ static const CGFloat kLensGrow = 16, kLensOverscroll = 8;
 // spring briefly reverses that shape before relaxing. A signed velocity (rather
 // than its absolute value) is essential for the two directions to feel distinct.
 static const CGFloat kLensStretchSpeed = 800, kLensDirectionalStretch = 0.115;
-static const CGFloat kLensMaxDeform = 0.15, kLensVolume = 0.76, kLensMaxLag = 0.09;
+static const CGFloat kLensMaxDeform = 0.17, kLensVolume = 0.90, kLensMaxLag = 0.09;
 // The surface tension: once the edges are near their targets, they pull each other back to the bubble's width, with
 // a damper of their own, so a stretched bubble draws in and gives a small bounce rather than ringing. It is off
 // while the bubble is chasing a finger (the stretch is what shows the chase), and fades in over the last
@@ -35,7 +35,7 @@ static const CGFloat kLensTension = 150, kLensTensionRatio = 0.53, kLensTensionR
 // Slower body response than the moving edges: deceleration in either direction
 // kicks the squash *opposite* to its moving shape, with a small damped rebound.
 // Acceleration gives a much gentler kick so the lens does not jitter while dragged.
-static const CGFloat kLensSquashOmega = 6.1, kLensSquashRatio = 0.54, kLensSquashKick = 0.0047;
+static const CGFloat kLensSquashOmega = 7.1, kLensSquashRatio = 0.54, kLensSquashKick = 0.0055;
 static const CGFloat kLensPoke = 0.8;
 
 typedef struct { CGFloat k, c; } SGRSpring;   // unit mass
@@ -144,15 +144,15 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _glare.startPoint = CGPointMake(0, 0);
     _glare.endPoint = CGPointMake(1, 1);
     // Match the thumb's directional highlight, not a static opaque border.
-    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.95].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.035].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.035].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.72].CGColor];
+    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:1.00].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.075].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.075].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.88].CGColor];
     _glare.locations = @[@0, @0.32, @0.68, @1];
     _glareMask = [CAShapeLayer layer];
     _glareMask.fillColor = nil;
     _glareMask.strokeColor = UIColor.whiteColor.CGColor;
-    _glareMask.lineWidth = 1.25;
+    _glareMask.lineWidth = 1.65;
     _glare.mask = _glareMask;
     _glare.opacity = 0;
     [self.layer addSublayer:_glare];
@@ -303,7 +303,7 @@ static BOOL bubbles(void);
         _liftTarget = 0;
         [self showGlass:YES animated:NO];
         __weak typeof(self) weakSelf = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.26 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.22 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             typeof(self) strongSelf = weakSelf;
             if (strongSelf && strongSelf->_pulseGeneration == pulse && !strongSelf->_touching)
                 [strongSelf showGlass:NO animated:YES];
@@ -346,7 +346,9 @@ static BOOL bubbles(void) {
 - (CGFloat)tintScaleXForState:(SGLensSample)st opticalScaleX:(CGFloat)sx {
     // Same silhouette as the optical glass; its width already covers both
     // neighbouring 24pt glyphs at the midpoint of 83.9pt-spaced tabs.
-    return sx;
+    // A subpixel overlap on the tinted layer fills the black seam between
+    // the independent sharp-glyph and inverse-white masks during movement.
+    return sx * (1 + 0.013 * MAX(0, MIN(1, st.lift)));
 }
 
 - (CGPathRef)newNormalCutoutPathAt:(CGPoint)center sx:(CGFloat)sx sy:(CGFloat)sy {
@@ -359,12 +361,13 @@ static BOOL bubbles(void) {
     CGMutablePathRef path = CGPathCreateMutable();
     CGPathAddRect(path, NULL, bar.bounds);
     CGPathAddRoundedRect(path, NULL, hole, height / 2, height / 2);
-    // A third even-odd contour makes only Create's animated plus visible
-    // inside the inverse cutout. Other white tabs still disappear under the
-    // held lens even while Create remains the selected action.
+    // Restore only the animated Create glyph, not its entire tab button.
+    // Restoring the 100pt button exposed white title/icon artwork when the
+    // held lens crossed from Create to Search or Library.
     if (_protectedContent.superview) {
         CGRect create = [_protectedContent convertRect:_protectedContent.bounds toView:bar];
-        CGRect restore = CGRectIntersection(create, hole);
+        CGRect plus = CGRectMake(CGRectGetMidX(create) - 16, CGRectGetMinY(create) + 3, 32, 32);
+        CGRect restore = CGRectIntersection(plus, hole);
         if (!CGRectIsNull(restore) && !CGRectIsEmpty(restore))
             CGPathAddRect(path, NULL, restore);
     }
@@ -391,8 +394,11 @@ static BOOL bubbles(void) {
     // measured Apple layout. Leave a small border-safe band beyond that.
     CGFloat leftClearance = center.x - halfWidth - CGRectGetMinX(barInHost);
     CGFloat rightClearance = CGRectGetMaxX(barInHost) - center.x - halfWidth;
-    CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance - 6) / 24));
-    CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance - 6) / 24));
+    // Preserve almost all of the outward optical band at both endpoints.
+    // Stage 26 reduced these alphas to zero, so the scaled platter edge
+    // appeared completely unbent at Home and Create.
+    CGFloat leftAlpha = MAX(0.82, MIN(1, (leftClearance - 6) / 24));
+    CGFloat rightAlpha = MAX(0.82, MIN(1, (rightClearance - 6) / 24));
     // Both the 0.92x platter lens and the 1x icon-edge lens obey the same
     // outer-edge guard at Home / Create.
     [self updateGlyphEdgeMaskLeft:leftAlpha right:rightAlpha];
@@ -430,8 +436,7 @@ static BOOL bubbles(void) {
     CGFloat sx, sy;
     SGLensSample st = [self state];
     [self getPose:st center:&center sx:&sx sy:&sy];
-    CGPathRef path = [self newNormalCutoutPathAt:center
-                                               sx:[self tintScaleXForState:st opticalScaleX:sx] sy:sy];
+    CGPathRef path = [self newNormalCutoutPathAt:center sx:sx sy:sy];
     if (!path) return;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -691,7 +696,7 @@ static BOOL bubbles(void) {
     BOOL moving = fabs(dir) > 0.75;
     // Slightly lazier travel for short and long taps; directional drag still
     // gets the tighter leading / softer trailing edge.
-    SGRSpring front = spring(540, 0.83), back = spring(175, 0.72), even = spring(245, 0.78);
+    SGRSpring front = spring(625, 0.83), back = spring(205, 0.72), even = spring(295, 0.78);
     SGRSpring forL = !moving ? even : (dir < 0 ? front : back);
     SGRSpring forR = !moving ? even : (dir > 0 ? front : back);
     SGSpring lift = _liftTarget > 0.5 ? SGGlassLiftOn : SGGlassLiftOff;   // the press's own
@@ -828,7 +833,9 @@ static BOOL bubbles(void) {
     add(@"lens.x", @"position.x", xs);
     add(@"lens.sx", @"transform.scale.x", sxs);
     add(@"lens.sy", @"transform.scale.y", sys);
-    if (_glyphEdgePane && _glyphEdgePane.superview == self.superview) {
+    // Stage 26 moved this pane INSIDE SelectedContentView. The old
+    // equality check silently skipped its render-server release animation.
+    if (_glyphEdgePane && _glyphEdgePane.superview && self.superview) {
         void (^edgeRun)(NSString *, NSString *, NSArray *) = ^(NSString *key, NSString *path, NSArray *values) {
             CAKeyframeAnimation *a = [CAKeyframeAnimation animationWithKeyPath:path];
             a.values = values;
@@ -869,8 +876,7 @@ static BOOL bubbles(void) {
         for (NSUInteger i = 0; i < count; i++) {
             CGPoint center; CGFloat sx, sy;
             [self getPose:all[i] center:&center sx:&sx sy:&sy];
-            CGPathRef path = [self newNormalCutoutPathAt:center
-                                                     sx:[self tintScaleXForState:all[i] opticalScaleX:sx] sy:sy];
+            CGPathRef path = [self newNormalCutoutPathAt:center sx:sx sy:sy];
             if (path) [paths addObject:CFBridgingRelease(path)];
         }
         if (paths.count == count) {

@@ -83,11 +83,12 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
         glass.clear = YES;
         // A real blur/displacement band, not merely a refractive mesh hidden
         // under the synthetic track. The center is masked out below.
-        glass.blurRadius = 1.45;
-        glass.lensScale = kHeldLensScale;
-        // The held switch thumb has side crescents too: an SDF-like
-        // horizontal displacement fading toward its top and bottom.
-        glass.lateralRefraction = YES;
+        glass.blurRadius = 2.0;
+        glass.lensScale = kHeldLensScale * 1.27;
+        // Switch thumbs refract the *entire rounded perimeter*, including
+        // the top and bottom of the mini-track. The lateral-only profile
+        // used for tab icons hid exactly these curved parts of the thumb.
+        glass.lateralRefraction = NO;
         // At the screen's scale: a 1x backdrop under a lens this small showed the track soft, and the thumb is small enough
         // for the cost.
         glass.sharp = YES;
@@ -127,17 +128,17 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     // crescents, leaving the middle of the track completely legible.
     [self insertSubview:_pane aboveSubview:_inner];
     _sideRefractionMask = [CAGradientLayer layer];
-    _sideRefractionMask.startPoint = CGPointMake(0, 0.5);
-    _sideRefractionMask.endPoint = CGPointMake(1, 0.5);
-    _sideRefractionMask.locations = @[@0, @0.10, @0.23, @0.36, @0.64, @0.77, @0.90, @1];
-    _sideRefractionMask.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.94].CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.90].CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.16].CGColor,
+    // Radial alpha preserves a sharp central mini-track while exposing a
+    // true backdrop blur around all curved sides of the expanded thumb.
+    _sideRefractionMask.type = kCAGradientLayerRadial;
+    _sideRefractionMask.startPoint = CGPointMake(0.5, 0.5);
+    _sideRefractionMask.endPoint = CGPointMake(1.0, 1.0);
+    _sideRefractionMask.locations = @[@0, @0.50, @0.65, @0.82, @1];
+    _sideRefractionMask.colors = @[(id)UIColor.clearColor.CGColor,
                                    (id)UIColor.clearColor.CGColor,
-                                   (id)UIColor.clearColor.CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.16].CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.90].CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.94].CGColor];
+                                   (id)[UIColor colorWithWhite:1 alpha:0.22].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.88].CGColor,
+                                   (id)UIColor.whiteColor.CGColor];
     _pane.layer.mask = _sideRefractionMask;
     _ring = [CAShapeLayer layer];
     _ring.fillColor = [UIColor colorWithRed:0.9 green:0.95 blue:1 alpha:0.06].CGColor;

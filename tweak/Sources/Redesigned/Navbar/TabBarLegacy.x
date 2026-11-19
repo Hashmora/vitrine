@@ -271,12 +271,18 @@ static char kNavDimKey, kCircleDimKey;
 - (void)holdGlyphOnly:(CGFloat)alpha;
 // Create's menu open: the plus turns 45 degrees onto a white disc, as on the capsule's own Create button.
 - (void)setCreateOpen:(BOOL)open;
+- (void)setHeld:(BOOL)held animated:(BOOL)animated;
 @end
 
 @implementation SGRLegacyCircle {
     UIView *_pane;
     UIView *_film;
     UIView *_disc;
+    SGLegacyGlassView *_heldEdge;
+    CAGradientLayer *_heldEdgeMask;
+    CAGradientLayer *_heldGlare;
+    CAShapeLayer *_heldGlarePath;
+    BOOL _held;
     BOOL _shown, _configured, _open;
 }
 
@@ -292,6 +298,48 @@ static char kNavDimKey, kCircleDimKey;
     _glyph.contentMode = UIViewContentModeCenter;
     _glyph.tintColor = UIColor.whiteColor;
     [self addSubview:_glyph];
+    // The two isolated compact edge buttons have their own press lens; the
+    // ordinary glass-touch highlight alone never made an iOS 26-style bubble.
+    if (SGUseLegacyGlass()) {
+        _heldEdge = [SGLegacyGlassView new];
+        _heldEdge.userInteractionEnabled = NO;
+        _heldEdge.accessibilityElementsHidden = YES;
+        _heldEdge.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        _heldEdge.capsule = YES;
+        _heldEdge.clear = YES;
+        _heldEdge.blurRadius = 0.70;
+        _heldEdge.magnification = 1.0;
+        _heldEdge.lensScale = 1.12;
+        _heldEdge.sharp = YES;
+        _heldEdge.rimless = YES;
+        _heldEdge.alpha = 0;
+        _heldEdgeMask = [CAGradientLayer layer];
+        _heldEdgeMask.type = kCAGradientLayerRadial;
+        _heldEdgeMask.startPoint = CGPointMake(0.5, 0.5);
+        _heldEdgeMask.endPoint = CGPointMake(1, 1);
+        _heldEdgeMask.locations = @[@0, @0.53, @0.73, @0.93, @1];
+        _heldEdgeMask.colors = @[(id)UIColor.clearColor.CGColor,
+                                 (id)UIColor.clearColor.CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.23].CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.90].CGColor,
+                                 (id)UIColor.whiteColor.CGColor];
+        _heldEdge.layer.mask = _heldEdgeMask;
+        [self addSubview:_heldEdge];
+        _heldGlare = [CAGradientLayer layer];
+        _heldGlare.startPoint = CGPointMake(0, 0);
+        _heldGlare.endPoint = CGPointMake(1, 1);
+        _heldGlare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.98].CGColor,
+                              (id)[UIColor colorWithWhite:1 alpha:0.03].CGColor,
+                              (id)[UIColor colorWithWhite:1 alpha:0.82].CGColor];
+        _heldGlare.locations = @[@0, @0.58, @1];
+        _heldGlarePath = [CAShapeLayer layer];
+        _heldGlarePath.fillColor = nil;
+        _heldGlarePath.strokeColor = UIColor.whiteColor.CGColor;
+        _heldGlarePath.lineWidth = 1.45;
+        _heldGlare.mask = _heldGlarePath;
+        _heldGlare.opacity = 0;
+        [self.layer addSublayer:_heldGlare];
+    }
     self.isAccessibilityElement = YES;
     self.accessibilityTraits = UIAccessibilityTraitButton;
     [self addTarget:self action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
@@ -307,8 +355,22 @@ static char kNavDimKey, kCircleDimKey;
     if (!CGRectEqualToRect(_pane.frame, bounds)) _pane.frame = bounds;
     SGShapeGlass(_pane, radius, YES);
     _pane.layer.cornerCurve = kCACornerCurveCircular;
-    SGRDarkenGlass(_pane, &kCircleDimKey, radius, SGRBarDim);
-    SGRGlassFilm(self, &kCircleFilmKey, _pane, radius).layer.cornerCurve = kCACornerCurveCircular;
+    SGRDarkenGlass(_pane, &kCircleDimKey, radius, 0.62);
+    UIView *film = SGRGlassFilm(self, &kCircleFilmKey, _pane, radius);
+    film.layer.cornerCurve = kCACornerCurveCircular;
+    film.backgroundColor = [UIColor colorWithWhite:1 alpha:0.045];
+    if (_heldEdge) {
+        CGRect expanded = CGRectInset(bounds, -7, -7);
+        _heldEdge.bounds = (CGRect){CGPointZero, expanded.size};
+        _heldEdge.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+        _heldEdge.layer.cornerRadius = expanded.size.height / 2;
+        _heldEdgeMask.frame = _heldEdge.bounds;
+        _heldGlare.frame = expanded;
+        _heldGlarePath.frame = _heldGlare.bounds;
+        CGRect stroke = CGRectInset(_heldGlare.bounds, 0.85, 0.85);
+        _heldGlarePath.path = [UIBezierPath bezierPathWithRoundedRect:stroke
+                                              cornerRadius:stroke.size.height / 2].CGPath;
+    }
     // bounds and center, not frame: the glyph is turned while Create's menu is up.
     _glyph.bounds = (CGRect){CGPointZero, bounds.size};
     _glyph.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
@@ -329,7 +391,7 @@ static char kNavDimKey, kCircleDimKey;
     _glyph.alpha = shown ? 1 : 0;
     self.transform = shown ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.6, 0.6);
     self.userInteractionEnabled = shown;
-    if (!shown) [self setCreateOpen:NO];
+    if (!shown) { [self setHeld:NO animated:NO]; [self setCreateOpen:NO]; }
 }
 
 - (void)holdGlyphOnly:(CGFloat)alpha {
@@ -340,6 +402,37 @@ static char kNavDimKey, kCircleDimKey;
     _glyph.alpha = alpha;
     self.transform = CGAffineTransformIdentity;
     self.userInteractionEnabled = NO;
+    [self setHeld:NO animated:NO];
+}
+
+- (void)setHeld:(BOOL)held animated:(BOOL)animated {
+    if (_held == held || !_heldEdge) return;
+    _held = held;
+    void (^update)(void) = ^{
+        self->_heldEdge.alpha = held ? 1 : 0;
+        self->_heldGlare.opacity = held ? 1 : 0;
+    };
+    if (animated && !SGRReduceMotion())
+        [UIView animateWithDuration:held ? 0.14 : 0.17 delay:0
+                            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                         animations:update completion:nil];
+    else [UIView performWithoutAnimation:update];
+}
+
+- (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    BOOL accepted = [super beginTrackingWithTouch:touch withEvent:event];
+    if (accepted && _shown) [self setHeld:YES animated:YES];
+    return accepted;
+}
+
+- (void)endTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    [self setHeld:NO animated:YES];
+    [super endTrackingWithTouch:touch withEvent:event];
+}
+
+- (void)cancelTrackingWithEvent:(UIEvent *)event {
+    [self setHeld:NO animated:YES];
+    [super cancelTrackingWithEvent:event];
 }
 
 - (void)setCreateOpen:(BOOL)open {
