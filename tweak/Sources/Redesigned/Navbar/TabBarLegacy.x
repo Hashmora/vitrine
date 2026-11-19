@@ -565,6 +565,7 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
     UIView *selected = objc_getAssociatedObject(host, &kAccentCopyKey);
     if (!tintedTabs() || sg_minimized || !lens || lens.hidden) {
         lens.tintOverlay = nil;
+        lens.normalContent = nil;
         selected.hidden = YES;
         return;
     }
@@ -579,12 +580,13 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
     if (selected.superview != host) [host addSubview:selected];
     // Selected content sits above the clear lens; ordinary content below it is
     // the separate backdrop/warp source, as on the native tab platter.
-    if ([host.subviews indexOfObject:selected] < [host.subviews indexOfObject:lens])
+    if (lens.refracting) [host insertSubview:selected belowSubview:lens];
+    else if ([host.subviews indexOfObject:selected] < [host.subviews indexOfObject:lens])
         [host bringSubviewToFront:selected];
     if (!CGRectEqualToRect(selected.frame, host.bounds)) selected.frame = host.bounds;
     selected.hidden = NO;
     NSArray<UIView *> *buttons = tabButtons(bar);
-    if (buttons.count != bar.items.count) { lens.tintOverlay = nil; selected.hidden = YES; return; }
+    if (buttons.count != bar.items.count) { lens.tintOverlay = nil; lens.normalContent = nil; selected.hidden = YES; return; }
     NSMutableSet<UIView *> *used = [NSMutableSet setWithCapacity:buttons.count * 2];
     UIColor *accent = SGRAccent();
     for (NSUInteger i = 0; i < buttons.count; i++) {
@@ -650,6 +652,12 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
         }
     }
     for (UIView *view in [selected.subviews copy]) if (![used containsObject:view]) [view removeFromSuperview];
+    // Create rotates its *real* plus/disc. Keep that source unmasked while
+    // its modal is up, so the colour copy cannot freeze its animation.
+    NSUInteger current = [bar.items indexOfObject:bar.selectedItem];
+    BOOL createOpen = bar.awaitingCreateClose ||
+        (current < bar.sources.count && isCreateSource(bar.sources[current]));
+    lens.normalContent = createOpen ? nil : bar;
     lens.tintOverlay = selected;
 }
 
@@ -1726,9 +1734,12 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     if (!CGSizeEqualToSize(navGlass.bounds.size, glassFrame.size)) navGlass.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navGlass.center, glassCenter)) navGlass.center = glassCenter;
     SGShapeGlass(navGlass, glassFrame.size.height / 2, NO);
-    SGRDarkenGlass(navGlass, &kNavDimKey, glassFrame.size.height / 2, SGRBarDim);
+    // iOS 26's platter is distinctly darker than its clear moving lens.
+    // Scope this tint to the Legacy Tab Bar, not the player's glass.
+    SGRDarkenGlass(navGlass, &kNavDimKey, glassFrame.size.height / 2, 0.57);
 
     UIView *navTint = SGRGlassFilm(host, &kNavTintKey, navGlass, glassFrame.size.height / 2);
+    navTint.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
     // SGRGlassFilm sets the film's frame from the pane's; the film is given the pane's bounds and center as well.
     if (!CGSizeEqualToSize(navTint.bounds.size, glassFrame.size)) navTint.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navTint.center, glassCenter)) navTint.center = glassCenter;
@@ -1787,6 +1798,27 @@ static void itemDidLayOut(UIView *item) {
 }
 
 %group LegacyTabBar
+
+// UIKit recalculates the two selected/unselected caption baselines after its
+// parent UITabBar layout. The traces show 35 -> 40.33pt for Search/Library,
+// while the cloned green labels stay at 35pt. Keep the source and its mirror
+// on the *same* measured iOS 26 baseline, including late UIKit passes.
+%hook UITabBarButtonLabel
+- (void)setFrame:(CGRect)frame {
+    UIView *button = self.superview;
+    if ([NSStringFromClass(button.class) isEqualToString:@"UITabBarButton"] &&
+        [button.superview isKindOfClass:SGRLegacyTabBar.class] && nativeTabLayout((UITabBar *)button.superview))
+        frame.origin.y = kNativeTitleY;
+    %orig(frame);
+}
+- (void)setCenter:(CGPoint)center {
+    UIView *button = self.superview;
+    if ([NSStringFromClass(button.class) isEqualToString:@"UITabBarButton"] &&
+        [button.superview isKindOfClass:SGRLegacyTabBar.class] && nativeTabLayout((UITabBar *)button.superview))
+        center.y = kNativeTitleY + self.bounds.size.height / 2;
+    %orig(center);
+}
+%end
 
 %hook _TtC23NavigationUI_TabBarImpl10TabBarView
 - (void)layoutSubviews {

@@ -13,6 +13,8 @@
 // Where the pill rests, in the superview's coordinates. Not `frame`: the bubble is stretched with a transform.
 @property (nonatomic, readonly) CGRect restFrame;
 @property (nonatomic, readonly) BOOL touching;
+// True while its optical pane is raised, including short tap pulses.
+@property (nonatomic, readonly) BOOL refracting;
 // How far the held bubble reaches past the pill above and below (the bar sets it so the bubble stands a little
 // out of the capsule's rim, as the system's does).
 @property (nonatomic) CGFloat heldOutset;
@@ -24,6 +26,11 @@
 // A tint-only copy of the tab glyphs and names, drawn white underneath. The lens
 // masks this copy to its exact shape so a glyph may be only partly accented.
 @property (nonatomic, weak) UIView *tintOverlay;
+
+// The underlying (white) UITabBar. During a held lens its artwork must be
+// punched out of the backdrop sample, leaving only the accent group for the
+// lateral mesh to refract. No mask is retained when the lens is resting.
+@property (nonatomic, weak) UIView *normalContent;
 
 // A finger down on the bar at `x`, free to run between the centers `minCenter` and `maxCenter` (a little past them).
 - (void)beginTouchAtX:(CGFloat)x minCenter:(CGFloat)minCenter maxCenter:(CGFloat)maxCenter;
