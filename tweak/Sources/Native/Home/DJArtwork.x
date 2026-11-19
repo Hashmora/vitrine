@@ -3,6 +3,7 @@
 // RecentsListRow > Encore.ImageView > UIImageView + PlaceholderView.
 #import "Core/SGCore.h"
 #import "Shared/Player/DJQueue.h"
+#import "Shared/Player/DJArtworkIdentity.h"
 
 static UIImage *SGDJCover;
 static NSHashTable<UIView *> *SGDJHolders;
@@ -10,9 +11,6 @@ static NSInteger const SGDJCoverTag = 0x444a43;
 static NSString *SGDJCoverPath(void) {
     return [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject
         stringByAppendingPathComponent:@"SG-DJ-cover-v2.png"];
-}
-static BOOL SGDJLabel(NSString *label) {
-    return [label isEqualToString:@"DJ"] || [label hasPrefix:@"DJ,"] || [label hasPrefix:@"DJ."];
 }
 static void SGDJDraw(UIView *holder);
 static NSDate *SGDJAsked;
@@ -40,7 +38,7 @@ static void SGDJDraw(UIView *holder) {
            ![row.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"] &&
            ![row.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"]) row = row.superview;
     UIImageView *overlay = (UIImageView *)[holder viewWithTag:SGDJCoverTag];
-    if (!row || !SGDJLabel(row.accessibilityLabel)) { [overlay removeFromSuperview]; return; }
+    if (!row || !SGDJArtworkIsConfirmedCard(row)) { [overlay removeFromSuperview]; return; }
     if (!SGDJHolders) SGDJHolders = [NSHashTable weakObjectsHashTable];
     [SGDJHolders addObject:holder];
     if (!SGDJCover) SGDJCover = [UIImage imageWithContentsOfFile:SGDJCoverPath()];
