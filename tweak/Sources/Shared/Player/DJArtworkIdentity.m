@@ -22,25 +22,57 @@ static BOOL containsDJIdentity(NSString *value) {
     return [text containsString:@"your ai dj"] || [text containsString:@"spotify ai dj"] ||
            [text containsString:@"your personal dj"];
 }
+static BOOL editorialDJIdentity(NSString *value) {
+    if (!value.length) return NO;
+    NSString *text = value.lowercaseString;
+    // Official DJ entries are sometimes published as *playlists* in Recents,
+    // while the model URI never reaches UIKit accessibility fields. Do not
+    // mistake the word "playlist" for proof that the card is user-created.
+    // These are additional publisher/curation hints, not the DJ title alone.
+    return [text containsString:@"made for you"] ||
+           [text containsString:@"your own personal dj"] ||
+           [text containsString:@"your own dj"] ||
+           [text containsString:@"by spotify"] ||
+           [text containsString:@"spotify's dj"];
+}
+static BOOL isDedicatedDJComponent(UIView *card) {
+    // Unlike a title, Spotify's dedicated DJ Home component is not an
+    // arbitrary playlist and cannot be impersonated by naming a playlist DJ.
+    for (UIView *v = card, *stop = card.superview.superview.superview.superview; v && v != stop; v = v.superview) {
+        NSString *name = NSStringFromClass(v.class);
+        if ([name containsString:@"DJMDCView"] ||
+            [name containsString:@"DJMDCElement"] ||
+            [name containsString:@"Discovery_DJElementKit"]) return YES;
+        // These hooks are used from an image under a known card: do not walk
+        // outside the card into neighbouring, unrelated Home elements.
+        if ([v isKindOfClass:UIWindow.class]) break;
+    }
+    return NO;
+}
 static BOOL viewIdentifiesDJ(UIView *view, NSUInteger depth) {
     if (!view || depth > 8) return NO;
-    // Accessibility fields are supplied by Spotify, not inferred from art or a
-    // user-editable title. Never crawl outside the current card or its children.
     if (containsDJIdentity(view.accessibilityIdentifier) || containsDJIdentity(view.accessibilityLabel) ||
         containsDJIdentity(view.accessibilityValue) ||
         containsDJIdentity(view.accessibilityHint)) return YES;
     for (UIView *child in view.subviews) if (viewIdentifiesDJ(child, depth + 1)) return YES;
     return NO;
 }
+static BOOL viewHasEditorialDJIdentity(UIView *view, NSUInteger depth) {
+    if (!view || depth > 6) return NO;
+    if (editorialDJIdentity(view.accessibilityLabel) || editorialDJIdentity(view.accessibilityValue) ||
+        editorialDJIdentity(view.accessibilityHint)) return YES;
+    for (UIView *child in view.subviews) if (viewHasEditorialDJIdentity(child, depth + 1)) return YES;
+    return NO;
+}
 BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     if (!card || !djTitle(card.accessibilityLabel)) return NO;
-    // Spotify labels its *own* DJ entry as a playlist in some Home/Recents
-    // presentations. A generic playlist label must not veto an explicit
-    // Spotify DJ URI or an unambiguous assistant identity in this card.
-    BOOL confirmed = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);
+    BOOL explicitIdentity = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);
+    BOOL dedicated = !explicitIdentity && isDedicatedDJComponent(card);
+    BOOL editorial = !explicitIdentity && !dedicated &&
+        (editorialDJIdentity(card.accessibilityLabel) || viewHasEditorialDJIdentity(card, 0));
+    BOOL confirmed = explicitIdentity || dedicated || editorial;
     BOOL genericPlaylist = playlistLabel(card.accessibilityLabel) && !confirmed;
-    // Still fail closed when neither the card nor a descendant identifies the
-    // assistant. A user playlist named "DJ" must keep its original artwork.
     SGDJProbeArtworkDecision(confirmed, genericPlaylist);
+
     return confirmed;
 }
