@@ -8,7 +8,7 @@ static char kLensPaneKey, kLensFilmKey, kLensFilmMaskKey;
 // The raised lens differs from the capsule: almost no blur or colour lift in
 // the middle, slightly reduced backdrop scale, and most of the refraction in
 // the specular rim. The icons stay legible in the centre like on iOS 26.
-static const CGFloat kLensMagnification = 1.0;
+static const CGFloat kLensMagnification = 0.975;
 static const CGFloat kLensHeldBlur = 0.08, kLensRestBlur = 2;
 static const CGFloat kLensHeldBend = 0.90;
 
@@ -112,6 +112,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     CGFloat _sq, _vSq, _prevSpeed;
     CGFloat _minCenter, _maxCenter;
     CALayer *_tintMask;
+    CAShapeLayer *_normalCutout;
     BOOL _glassOn;
     NSUInteger _pulseGeneration;
     // A bubble nobody holds is not run frame by frame on the main thread, which a tab loading under it would stall
@@ -124,10 +125,11 @@ static const CGFloat kPlayStep = 1.0 / 120;
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.userInteractionEnabled = NO;
+    self.opaque = NO;
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     _heldOutset = 8;
     _rest = [UIView new];
-    _rest.backgroundColor = [UIColor colorWithWhite:0 alpha:0.42];
+    _rest.backgroundColor = [UIColor colorWithWhite:0 alpha:0.36];
     _rest.layer.cornerCurve = kCACornerCurveContinuous;
     [self addSubview:_rest];
     _pane = SGGlassFor(self, &kLensPaneKey);
@@ -140,6 +142,8 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _film.userInteractionEnabled = NO;
     return self;
 }
+
+- (BOOL)refracting { return _glassOn; }
 
 - (void)dealloc {
     [_link invalidate];
@@ -156,7 +160,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     SGRGlassFilm(self, &kLensFilmKey, _pane, radius);
     SGSetSideRimMask(_film, _film.bounds);
     // The lens rim reads on the sides, not as a bright ring above and below.
-    _film.alpha = _glassOn ? 0.10 : 0;
+    _film.alpha = _glassOn ? 0.17 : 0;
 }
 
 - (void)didMoveToWindow {
@@ -220,13 +224,66 @@ static BOOL bubbles(void) {
     return SGUseLegacyGlass();
 }
 
+// An inverted copy of the coloured lens mask clips *only* the white UITabBar
+// while it is being refracted. Without it, the clear backdrop samples white
+// glyphs underneath green glyphs and produces a white halo at the side rims.
+// The tab's original contents return unmasked as soon as the lens drops.
+- (void)setNormalContent:(UIView *)normalContent {
+    if (_normalContent == normalContent) return;
+    if (_normalContent.layer.mask == _normalCutout) _normalContent.layer.mask = nil;
+    _normalContent = normalContent;
+    if (!normalContent) { _normalCutout = nil; return; }
+    if (!_normalCutout) {
+        _normalCutout = [CAShapeLayer layer];
+        _normalCutout.fillColor = UIColor.whiteColor.CGColor;
+        _normalCutout.fillRule = kCAFillRuleEvenOdd;
+    }
+    [self updateNormalCutout];
+}
+
+- (CGPathRef)newNormalCutoutPathAt:(CGPoint)center sx:(CGFloat)sx sy:(CGFloat)sy {
+    UIView *bar = _normalContent;
+    if (!bar || !self.superview) return nil;
+    CGPoint inside = [self.superview convertPoint:center toView:bar];
+    CGFloat width = self.bounds.size.width * sx;
+    CGFloat height = self.bounds.size.height * sy;
+    CGRect hole = CGRectMake(inside.x - width / 2, inside.y - height / 2, width, height);
+    CGMutablePathRef path = CGPathCreateMutable();
+    CGPathAddRect(path, NULL, bar.bounds);
+    CGPathAddRoundedRect(path, NULL, hole, height / 2, height / 2);
+    return path;
+}
+
+- (void)updateNormalCutout {
+    UIView *bar = _normalContent;
+    if (!bar) return;
+    if (!_glassOn || !self.superview || !self.tintOverlay || self.hidden) {
+        if (bar.layer.mask == _normalCutout) bar.layer.mask = nil;
+        return;
+    }
+    // Do not disturb UIKit-owned transition masks (such as compacting).
+    if (bar.layer.mask && bar.layer.mask != _normalCutout) return;
+    CGPoint center;
+    CGFloat sx, sy;
+    [self getPose:[self state] center:&center sx:&sx sy:&sy];
+    CGPathRef path = [self newNormalCutoutPathAt:center sx:sx sy:sy];
+    if (!path) return;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _normalCutout.frame = bar.bounds;
+    _normalCutout.path = path;
+    bar.layer.mask = _normalCutout;
+    [CATransaction commit];
+    CGPathRelease(path);
+}
+
 // The mask is in the same host coordinates as the lens. Its *shape* follows both
 // the moving spring and the layer keyframe playback after the finger is released.
 - (void)setTintOverlay:(UIView *)tintOverlay {
-    if (_tintOverlay == tintOverlay) { if (tintOverlay) [self applyPose]; return; }
+    if (_tintOverlay == tintOverlay) { [self updateNormalCutout]; if (tintOverlay) [self applyPose]; return; }
     _tintOverlay.layer.mask = nil;
     _tintOverlay = tintOverlay;
-    if (!tintOverlay) { _tintMask = nil; return; }
+    if (!tintOverlay) { _tintMask = nil; [self updateNormalCutout]; return; }
     _tintMask = [CALayer layer];
     _tintMask.backgroundColor = UIColor.whiteColor.CGColor;
     _tintMask.cornerCurve = kCACornerCurveContinuous;
@@ -287,6 +344,7 @@ static BOOL bubbles(void) {
     // CABackdropLayer only refracts layers *behind* it. At rest it goes back
     // under the white icons and titles.
     [self standOverTabs:on];
+    [self updateNormalCutout];
     if ([_pane isKindOfClass:SGLegacyGlassView.class]) {
         SGLegacyGlassView *glass = (SGLegacyGlassView *)_pane;
         // The capsule has a coloured/darkened glass surface. The lens does not:
@@ -301,8 +359,8 @@ static BOOL bubbles(void) {
     }
     void (^change)(void) = ^{
         SGRShowGlass(self->_pane, on);
-        self->_film.alpha = on ? 0.10 : 0;
-        self->_rest.alpha = on ? 0.12 : 1;
+        self->_film.alpha = on ? 0.17 : 0;
+        self->_rest.alpha = on ? 0.15 : 1;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
@@ -316,15 +374,20 @@ static BOOL bubbles(void) {
     if (!host) return;
     if (over) {
         NSUInteger at = [host.subviews indexOfObject:self];
-        if (at == NSNotFound || at + 1 >= host.subviews.count) return;
-        _restAbove = host.subviews[at + 1];
+        if (at == NSNotFound) return;
+        _restAbove = at + 1 < host.subviews.count ? host.subviews[at + 1] : nil;
+        // Optical order while held: ordinary bar (white, with an inverse
+        // selection cutout) -> selected green group -> refractive glass.
+        // Thus the lens bends green artwork, not the white copy underneath.
         [host bringSubviewToFront:self];
+        if (_tintOverlay.superview == host) [host insertSubview:_tintOverlay belowSubview:self];
+    } else {
+        UIView *above = _restAbove;
+        _restAbove = nil;
+        if (above.superview == host) [host insertSubview:self belowSubview:above];
+        // The resting glass is a dark underlay; selected artwork remains sharp.
         if (_tintOverlay.superview == host) [host bringSubviewToFront:_tintOverlay];
-        return;
     }
-    UIView *above = _restAbove;
-    _restAbove = nil;
-    if (above.superview == host) [host insertSubview:self belowSubview:above];
 }
 
 // Where the bubble is for the state it is in: the middle, and how wide and how tall it looks. Its size is fixed (the
@@ -376,6 +439,7 @@ static BOOL bubbles(void) {
         _tintMask.transform = CATransform3DMakeScale(sx, sy, 1);
         [CATransaction commit];
     }
+    [self updateNormalCutout];
 }
 
 - (void)snapToRest {
@@ -480,6 +544,7 @@ static BOOL bubbles(void) {
     [_tintMask removeAnimationForKey:@"lens.x"];
     [_tintMask removeAnimationForKey:@"lens.sx"];
     [_tintMask removeAnimationForKey:@"lens.sy"];
+    [_normalCutout removeAnimationForKey:@"lens.cutout"];
 }
 
 // A finger down, or a new place to go, while a run is playing: the springs carry on from where the run is now.
@@ -562,6 +627,24 @@ static BOOL bubbles(void) {
         maskRun(@"lens.x", @"position.x", maskXs);
         maskRun(@"lens.sx", @"transform.scale.x", sxs);
         maskRun(@"lens.sy", @"transform.scale.y", sys);
+    }
+    // Keep the white cutout on the same render-server path as the green
+    // selected group; otherwise a loading tab freezes the hole in the backdrop.
+    if (_glassOn && _normalContent && _normalContent.layer.mask == _normalCutout) {
+        NSMutableArray *paths = [NSMutableArray arrayWithCapacity:count];
+        for (NSUInteger i = 0; i < count; i++) {
+            CGPoint center; CGFloat sx, sy;
+            [self getPose:all[i] center:&center sx:&sx sy:&sy];
+            CGPathRef path = [self newNormalCutoutPathAt:center sx:sx sy:sy];
+            if (path) [paths addObject:CFBridgingRelease(path)];
+        }
+        if (paths.count == count) {
+            CAKeyframeAnimation *animation = [CAKeyframeAnimation animationWithKeyPath:@"path"];
+            animation.values = paths;
+            animation.duration = duration;
+            animation.calculationMode = kCAAnimationLinear;
+            [_normalCutout addAnimation:animation forKey:@"lens.cutout"];
+        }
     }
     _playback = samples;
     _playStart = CACurrentMediaTime();
