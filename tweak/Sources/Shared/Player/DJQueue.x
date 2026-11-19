@@ -57,6 +57,7 @@
 #import <objc/message.h>
 #import "Core/SGCore.h"
 #import "Core/SGDJDiagnostics.h"
+#import "Core/SGDJProbe.h"
 #import "Core/SGLog.h"
 #import "PlayerState.h"
 #import "DJQueue.h"
@@ -143,8 +144,11 @@ static void drawNewSegmentButtonSoon(UIView *page) {
 // Behaviour and current DJ state belong to Shared. Each look independently
 // renders this action beside Spotify's Edit pill, through DJQueueHeader.h.
 void SGDJQueueNextSetTapped(void) {
-    if (!SGEnabled(SGKeyDJQueuePickButton) || !sDJActive || sPickingSegment || sHandingOver ||
-        !isDJSession(SGPlayerState())) return;
+    BOOL allowed = SGEnabled(SGKeyDJQueuePickButton) && sDJActive && !sPickingSegment && !sHandingOver &&
+        isDJSession(SGPlayerState());
+    SGDJ_TRACE(@"button.tap", (@{@"accepted": @(allowed), @"active": @(sDJActive),
+                                @"picking": @(sPickingSegment), @"handover": @(sHandingOver)}));
+    if (!allowed) return;
     if (SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip) != SGDJQueueSetModeRequest) {
         skipToNextDJSegment();
         return;
@@ -161,6 +165,15 @@ static void renderNextDJSet(UIView *page, UIView *edit, BOOL visible) {
     BOOL enabled = !sPickingSegment && !sHandingOver && (!requestMode ||
         [queuePlayer() respondsToSelector:NSSelectorFromString(@"signal:parameters:options:loggingParams:")]);
     NSString *title = sPickingSegment ? @"Changing…" : @"Next DJ Set";
+#if SG_DRIVER
+    static NSString *lastButtonSignature;
+    NSString *buttonSignature = [NSString stringWithFormat:@"%d-%d-%d-%d", visible, enabled, requestMode, SGRedesignedUI()];
+    if (![lastButtonSignature isEqualToString:buttonSignature]) {
+        lastButtonSignature = buttonSignature;
+        SGDJ_TRACE(@"button.render", (@{@"visible": @(visible), @"enabled": @(enabled),
+                                       @"request": @(requestMode), @"redesigned": @(SGRedesignedUI())}));
+    }
+#endif
     if (SGRedesignedUI()) SGRDJQueueDrawNextSet(page, edit, visible, enabled, requestMode, title);
     else SGDJNativeDrawNextSet(page, edit, visible, enabled, requestMode, title);
 }
@@ -182,6 +195,7 @@ static void drawNewSegmentButton(UIView *page) {
 }
 
 void SGDJQueueBeginPick(void) {
+    SGDJ_TRACE(@"pick.begin", (@{@"active": @(sDJActive)}));
     if (!sDJActive) return;
     sPickingSegment = YES;
     // A prompt replaces the context, but the core preserves its hand queue.
@@ -192,6 +206,7 @@ void SGDJQueueBeginPick(void) {
     drawNewSegmentButton(sQueuePageView);
 }
 void SGDJQueueFinishPick(BOOL changed) {
+    SGDJ_TRACE(@"pick.finish", (@{@"changed": @(changed), @"active": @(sDJActive)}));
     sPickingSegment = NO;
     if (changed && sDJActive) {
         if (sAheadQueued) dropQueued(sAheadQueued, @"new DJ set landed");
@@ -549,6 +564,8 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
         [djs addObject:track];
         [sent addObject:uid];
     }
+    SGDJ_TRACE(@"queue.set", (@{@"sent": @(tracks.count), @"djRows": @(djs.count),
+                               @"injected": @(sInjected.count)}));
     SGLog(@"queue command: setQueue %lu next tracks, %lu of the DJ's rows, %lu rows shown", (unsigned long)tracks.count,
           (unsigned long)djs.count, (unsigned long)sInjected.count);
     if (djs.count) {
@@ -579,6 +596,8 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
 // the page did not act on is done here (the page's swipe does nothing for those rows).
 
 static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
+    SGDJ_TRACE(@"queue.swipe", (@{@"direction": x > 0 ? @"add" : @"remove",
+                                 @"track": SGDJProbeTag(row.UID)}));
     NSDate *at = [NSDate date];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         // Native setQueue may acknowledge the swipe without including any DJ rows;
@@ -688,10 +707,15 @@ static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
     SPTPlayerState *state = SGPlayerState();
     // A refused targeted back-step must fall back only once, even if the fallback
     // re-enters this exact hook. A new track arrival clears the refusal.
-    if (sJumpRefused) return %orig;
+    if (sJumpRefused) {
+        SGDJ_TRACE(@"previous.refused", (@{@"position": @(state.position)}));
+        return %orig;
+    }
     // Keep Spotify's restart-current-track behavior after its first three seconds.
     SPTPlayerTrack *target = !track && isDJSession(state) && state.position < 3 ? playedBefore(state) : nil;
     if (!target) return %orig;
+    SGDJ_TRACE(@"previous.target", (@{@"current": SGDJProbeTag(state.track.UID),
+                                     @"target": SGDJProbeTag(target.UID), @"position": @(state.position)}));
     NSString *was = state.track.UID;
     SGLog(@"queue: previous in the DJ history: %@ [%@]", target.trackTitle, target.UID);
     id result = %orig(options, target, params);
@@ -701,6 +725,7 @@ static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
             return;
         }
         sJumpRefused = YES;
+        SGDJ_TRACE(@"previous.fallback", (@{@"target": SGDJProbeTag(target.UID)}));
         SGLog(@"queue: the core did not go back to %@, the plain step back instead", target.trackTitle);
         [(id<SPTPlayer>)queuePlayer() skipToPreviousTrackWithOptions:options];
     });
@@ -908,6 +933,7 @@ NSDictionary *SGDJQueueDiagnostics(void) {
     NSDictionary *(^item)(SPTPlayerTrack *) = ^NSDictionary *(SPTPlayerTrack *t) {
         if (!t) return @{};
         return @{@"uri": SGURIString(t.URI) ?: @"", @"uid": t.UID ?: @"", @"logicalUID": historyUID(t) ?: @"",
+                 @"probeId": SGDJProbeTag(t.UID), @"logicalProbeId": SGDJProbeTag(historyUID(t)),
                  @"title": t.trackTitle ?: @"", @"queued": @(isCoreQueued(t)), @"played": @(wasPlayed(historyUID(t))),
                  @"hidden": @(isHidden(t))};
     };
@@ -917,7 +943,15 @@ NSDictionary *SGDJQueueDiagnostics(void) {
              @"ordered": @(sOrdered), @"handover": @(sHandingOver), @"muted": @(SGPlayerDJTransitionMuted()), @"mutedBuffers": @(SGPlayerDJTransitionMutedBuffers()), @"paused": @(state.isPaused), @"duplicateBeforeOutro": @(repeatedCurrentOutro(state) != nil),
              @"nonDJCapSamples": @(sCapNonDJSamples), @"nonDJExtraNextTotal": @(sCapNonDJExtraNext),
              @"nonDJExtraPrevTotal": @(sCapNonDJExtraPrev), @"nonDJExtraNextPeak": @(sCapNonDJPeakNext),
-             @"nonDJExtraPrevPeak": @(sCapNonDJPeakPrev)};
+             @"nonDJExtraPrevPeak": @(sCapNonDJPeakPrev),
+             @"sessionDetected": @(isDJSession(state)), @"queueRows": @(sQueue.count),
+             @"injectedRows": @(sInjected.count), @"aheadRows": @(sAhead.count),
+             @"hiddenCount": @(sHidden.count), @"playedCount": @(sPlayed.count),
+             @"orderCount": @(sOrder.count), @"copyCount": @(sCopyOf.count),
+             @"waiting": @(sQueueWaiting), @"picking": @(sPickingSegment),
+             @"pageVisible": @(sQueuePageView.window != nil),
+             @"editMode": @(sQueuePageView ? queueInEdit(sQueuePageView) : NO),
+             @"sessionGeneration": @(sQueueSessionGeneration)};
 }
 #endif
 

@@ -1,4 +1,5 @@
 #import "DJArtworkIdentity.h"
+#import "Core/SGDJProbe.h"
 
 static NSString *const kSpotifyDJURI = @"spotify:playlist:37i9dQZF1EYkqdzj48dyYq";
 
@@ -33,8 +34,13 @@ static BOOL viewIdentifiesDJ(UIView *view, NSUInteger depth) {
 }
 BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     if (!card || !djTitle(card.accessibilityLabel)) return NO;
-    if (playlistLabel(card.accessibilityLabel)) return NO;
+    if (playlistLabel(card.accessibilityLabel)) {
+        SGDJProbeArtworkDecision(NO, YES);
+        return NO;
+    }
     // Fail closed when the model identity is unavailable. An unconfirmed card
     // keeps Spotify's original artwork, instead of painting over a playlist.
-    return containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);
+    BOOL confirmed = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);
+    SGDJProbeArtworkDecision(confirmed, NO);
+    return confirmed;
 }

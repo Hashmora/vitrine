@@ -20,6 +20,16 @@
     static NSString *lastKey, *lastUID;
     // The first state of a launch is the session going on where it was, not the player coming to the track.
     BOOL arrived = lastKey && ![trackKey(track) isEqualToString:lastKey];
+#if SG_DRIVER
+    static BOOL hadPause, lastPaused;
+    if (arrived || !hadPause || state.isPaused != lastPaused) {
+        SGDJ_TRACE(@"player.state", (@{@"track": SGDJProbeTag(track.UID),
+                                      @"arrived": @(arrived), @"paused": @(state.isPaused),
+                                      @"handover": @(sHandingOver), @"position": @(state.position)}));
+    }
+    lastPaused = state.isPaused;
+    hadPause = YES;
+#endif
     NSString *leftUID = arrived ? lastUID : nil;
     lastUID = track.UID;
     // A walk over the history: the next button's replay, or the track that played right after the one that was playing.
