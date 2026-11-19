@@ -390,7 +390,7 @@ static char kPreviewMainGlassKey, kPreviewApartGlassKey, kPreviewMainDimKey, kPr
 
 @implementation SGRTabBarPreview {
     UITabBar *_main, *_apart;
-    UIView *_mainPlate, *_apartPlate, *_selectedPlate;
+    UIView *_mainPlate, *_apartPlate;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -400,11 +400,8 @@ static char kPreviewMainGlassKey, kPreviewApartGlassKey, kPreviewMainDimKey, kPr
     if (SGRLegacyTabBarOn()) {
         _mainPlate = SGGlassFor(self, &kPreviewMainGlassKey);
         _apartPlate = SGGlassFor(self, &kPreviewApartGlassKey);
-        _selectedPlate = [UIView new];
-        _selectedPlate.userInteractionEnabled = NO;
-        _selectedPlate.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
-        _selectedPlate.layer.cornerCurve = kCACornerCurveCircular;
-        [self addSubview:_selectedPlate];
+        // The preview deliberately has no resting selection pill; the
+        // selected glyph and caption show the accent by themselves.
     }
     [self addSubview:_main];
     [self addSubview:_apart];
@@ -439,7 +436,7 @@ static void alignLegacyPreviewContents(UITabBar *bar) {
             if ([sub isKindOfClass:UIImageView.class] && sub.bounds.size.width <= 36 && sub.bounds.size.height <= 36) {
                 sub.center = CGPointMake(100.3333333333 / 2, 20);
             } else if ([sub isKindOfClass:UILabel.class] && sub.bounds.size.height > 0) {
-                sub.center = CGPointMake(100.3333333333 / 2, 35 + sub.bounds.size.height / 2);
+                sub.center = CGPointMake(100.3333333333 / 2, 32.5 + sub.bounds.size.height / 2);
             }
         }
     }
@@ -515,9 +512,6 @@ static NSArray<UITabBarItem *> *itemsFor(NSArray<NSDictionary *> *entries, BOOL 
         if (!_apart.hidden) apart = CGRectMake(CGRectGetMaxX(main) + kPlatterGap, 0, circle, circle);
         _mainPlate.frame = main;
         SGShapeGlass(_mainPlate, circle / 2, YES);
-        CGFloat pillWidth = count > 0 && count <= 4 ? 100.3333333333 : MAX(1, mainWidth / MAX(1, count) - 8);
-        _selectedPlate.frame = CGRectMake(CGRectGetMinX(main) + 4, 4, MIN(pillWidth, MAX(1, mainWidth - 8)), 54);
-        _selectedPlate.layer.cornerRadius = 27;
         SGRDarkenGlass(_mainPlate, &kPreviewMainDimKey, circle / 2, 0.63);
         _apartPlate.hidden = _apart.hidden;
         if (!_apart.hidden) {

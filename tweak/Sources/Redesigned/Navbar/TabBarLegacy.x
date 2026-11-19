@@ -30,7 +30,8 @@
 static char kBarKey, kHostKey, kNavGlassKey, kNavTintKey, kSelPillKey, kRetriesKey, kGlyphOverlayKey, kOutlineLiveKey, kFilledLiveKey, kCreateDiscKey, kGlyphsTakenKey;
 static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, kTemplateKey;
 static char kCreateTargetKey, kCreateGenerationKey;
-static char kAccentCopyKey, kAccentIconKey, kAccentNameKey;
+static char kAccentCopyKey, kAccentIconKey, kAccentNameKey, kBottomFadeKey;
+static char kBumpGenerationKey, kBumpOriginalOpacityKey;
 // The bar is a floating capsule, not a full-width slab.
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
@@ -52,6 +53,46 @@ static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
 static BOOL sg_minimized;
 static CGRect sg_leadFrame, sg_trailFrame;
+
+// A deliberately faint page-bottom shadow behind the floating glass bar.
+// Spotify's original full-width gradient is disabled in this fallback, and
+// this one stays behind the *whole* bar, never over its icons or player.
+@interface SGRLegacyBottomFade : UIView
+@end
+@implementation SGRLegacyBottomFade
++ (Class)layerClass { return CAGradientLayer.class; }
+@end
+
+static void updateBottomFade(UIView *stockBar) {
+    UIView *parent = stockBar.superview;
+    SGRLegacyBottomFade *fade = objc_getAssociatedObject(stockBar, &kBottomFadeKey);
+    if (!parent || !stockBar.window) {
+        fade.hidden = YES;
+        return;
+    }
+    if (!fade) {
+        fade = [SGRLegacyBottomFade new];
+        fade.userInteractionEnabled = NO;
+        fade.accessibilityElementsHidden = YES;
+        fade.accessibilityIdentifier = @"Vitrine.LegacyTabBarBottomFade";
+        CAGradientLayer *gradient = (CAGradientLayer *)fade.layer;
+        gradient.startPoint = CGPointMake(0.5, 0);
+        gradient.endPoint = CGPointMake(0.5, 1);
+        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.025].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.12].CGColor];
+        gradient.locations = @[@0, @0.50, @1];
+        objc_setAssociatedObject(stockBar, &kBottomFadeKey, fade, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CGFloat top = MAX(0, CGRectGetMinY(stockBar.frame) - 72);
+    CGFloat bottom = CGRectGetHeight(parent.bounds);
+    CGRect frame = CGRectMake(0, top, CGRectGetWidth(parent.bounds), MAX(0, bottom - top));
+    if (!CGRectEqualToRect(fade.frame, frame)) fade.frame = frame;
+    fade.hidden = stockBar.hidden || stockBar.alpha < 0.01 || CGRectIsEmpty(frame);
+    if (fade.superview != parent) [parent insertSubview:fade belowSubview:stockBar];
+    else if ([parent.subviews indexOfObject:fade] > [parent.subviews indexOfObject:stockBar])
+        [parent insertSubview:fade belowSubview:stockBar];
+}
 
 // Telegram's TabSelectionRecognizer: Began the instant a finger lands (no distance or duration threshold), Changed on
 // every move after, so the bubble follows the finger from the first frame.
@@ -404,24 +445,63 @@ static void learnGlyphs(UIView *source, UITabBarItem *item) {
 #pragma mark - taps
 
 // A tap that ends on the tab already open moves no pill, so the icon pulses instead.
+// The default glyph and its accent mirror are *separate* views. Growing only
+// the white glyph exposes a white halo around the stationary green glyph.
+static NSArray<UIView *> *tabButtons(UITabBar *bar);
 static void bumpIcon(UITabBar *bar, UITabBarItem *item) {
     if (!item) return;
-    __block UIView *iconView = nil;
-    SGForEachView(bar, ^(UIView *v) {
-        if (iconView || v.hidden || ![v isKindOfClass:UIImageView.class]) return;
-        UIImage *image = ((UIImageView *)v).image;
-        if (image && (image == item.image || image == item.selectedImage)) iconView = v;
-    });
-    if (!iconView) return;
-    // One keyframe timeline: two chained animations differ in velocity where they hand off and read as a jerk.
-    [UIView animateKeyframesWithDuration:0.26 delay:0 options:UIViewKeyframeAnimationOptionCalculationModeCubic animations:^{
-        [UIView addKeyframeWithRelativeStartTime:0 relativeDuration:0.4 animations:^{
-            iconView.transform = CGAffineTransformMakeScale(1.12, 1.12);
+    NSUInteger index = [bar.items indexOfObject:item];
+    NSArray<UIView *> *buttons = tabButtons(bar);
+    UIView *button = index < buttons.count ? buttons[index] : nil;
+    UIImageView *white = objc_getAssociatedObject(button, &kGlyphOverlayKey);
+    UIImageView *accent = objc_getAssociatedObject(button, &kAccentIconKey);
+    BOOL useAccent = tintedTabs() && accent.superview && !accent.hidden && !sg_minimized;
+    __block UIView *animatedGlyph = useAccent ? accent : white;
+    if (!animatedGlyph || animatedGlyph.hidden) {
+        // Fallback when UIKit has not yet laid out the overlay (first tap).
+        SGForEachView(bar, ^(UIView *v) {
+            if (animatedGlyph || v.hidden || ![v isKindOfClass:UIImageView.class]) return;
+            UIImage *image = ((UIImageView *)v).image;
+            if (image && (image == item.image || image == item.selectedImage)) animatedGlyph = v;
+        });
+    }
+    if (!animatedGlyph) return;
+    // Temporarily remove the white *source* from the composite while the
+    // selected-colour copy pulses. Use layer.opacity rather than view.alpha:
+    // syncLensAccent reads view.alpha when Spotify relayouts the buttons.
+    CALayer *whiteLayer = useAccent ? white.layer : nil;
+    NSNumber *previousOpacity = whiteLayer ? objc_getAssociatedObject(whiteLayer, &kBumpOriginalOpacityKey) : nil;
+    CGFloat whiteOpacity = previousOpacity ? previousOpacity.doubleValue : (whiteLayer ? whiteLayer.opacity : 1);
+    NSUInteger generation = whiteLayer ? [objc_getAssociatedObject(whiteLayer, &kBumpGenerationKey) unsignedIntegerValue] + 1 : 0;
+    if (whiteLayer) {
+        objc_setAssociatedObject(whiteLayer, &kBumpOriginalOpacityKey, @(whiteOpacity), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(whiteLayer, &kBumpGenerationKey, @(generation), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        whiteLayer.opacity = 0;
+        [CATransaction commit];
+    }
+    CGAffineTransform base = animatedGlyph.transform;
+    [UIView animateKeyframesWithDuration:0.26 delay:0
+        options:UIViewKeyframeAnimationOptionBeginFromCurrentState | UIViewKeyframeAnimationOptionCalculationModeCubic
+        animations:^{
+            [UIView addKeyframeWithRelativeStartTime:0 relativeDuration:0.4 animations:^{
+                animatedGlyph.transform = CGAffineTransformScale(base, 1.12, 1.12);
+            }];
+            [UIView addKeyframeWithRelativeStartTime:0.4 relativeDuration:0.6 animations:^{
+                animatedGlyph.transform = base;
+            }];
+        } completion:^(__unused BOOL finished) {
+            animatedGlyph.transform = base;
+            if (whiteLayer && [objc_getAssociatedObject(whiteLayer, &kBumpGenerationKey) unsignedIntegerValue] == generation) {
+                [CATransaction begin];
+                [CATransaction setDisableActions:YES];
+                whiteLayer.opacity = whiteOpacity;
+                [CATransaction commit];
+                objc_setAssociatedObject(whiteLayer, &kBumpGenerationKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                objc_setAssociatedObject(whiteLayer, &kBumpOriginalOpacityKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
         }];
-        [UIView addKeyframeWithRelativeStartTime:0.4 relativeDuration:0.6 animations:^{
-            iconView.transform = CGAffineTransformIdentity;
-        }];
-    } completion:nil];
 }
 
 // The bar's UITabBarButtons, left to right, which is the order of its items.
@@ -1807,6 +1887,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
 
     if (host.superview != stockBar) [stockBar addSubview:host];
     else if (stockBar.subviews.lastObject != host) [stockBar bringSubviewToFront:host];
+    updateBottomFade(stockBar);
     makeRoom(containerOf(stockBar));
 }
 
