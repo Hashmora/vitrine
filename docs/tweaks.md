@@ -864,6 +864,14 @@ Spotify's own through.
   `harness/dj-pick/` and `harness/dj-next-segment/` (live playback must be verified).
 - **Artwork:** Home and Recents use the DJ's public cover (the DJ card's recorded `image_url`), cached locally.
   Each look owns its drawing hooks. Reused Library cells are never a source of another item's artwork.
+  Spotify 9.1.90 can expose its official DJ as an ordinary `DJ, Playlist` card without a model URI in the
+  accessible hierarchy. A title alone is **not** enough to override an image: a playlist owned by the
+  user can have the same name. As a compatibility fallback, the mod fills a known Home/Recents card only
+  when its Encore bitmap is still absent, its PlaceholderView remains visible after 0.8 s, and no native
+  artwork has appeared. Any original loaded bitmap wins. This fallback still needs device validation and
+  can match an unrelated playlist named DJ if its artwork is also permanently missing; reliable identity
+  needs the card model URI from Spotify, not merely accessibility text. `artwork.placeholder` traces record
+  which case occurred without recording names or URIs.
 - **Reordering:** the core takes no other order for the DJ's tracks (a `setQueue` with them rearranged leaves its
   future as it was), so the order is kept here and the player is held to it. A track the core would come to first is
   skipped to. Any other is queued (the core's own copy) and played from the queue, so the core keeps its place before

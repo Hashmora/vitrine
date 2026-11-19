@@ -23,3 +23,11 @@ assert 'state.future.count > 2' in code and 'state.reverse.count > 2' in code
 assert '@"nonDJExtraNextPeak"' in code
 assert 'playerStateDidReport:' in code
 print('DJ Queue split, cap accounting and hook ownership: PASS')
+
+# The Undo handler must bind a newly shown *queue removal* toast, not just any
+# SPTSnackbarTextButton that appears within ten seconds of pressing Remove.
+assert 'static BOOL isDJRemoveUndo(UIControl *button)' in main
+assert '[message containsString:@"queue"] && [message containsString:@"remov"]' in main
+assert 'snackbarRootForButton(self) == sEditUndoSnackbar && isDJRemoveUndo(self)' in main
+assert 'BOOL invokingDJUndo = ' in main
+print('DJ Undo toast identity and reused-button guard: PASS')
