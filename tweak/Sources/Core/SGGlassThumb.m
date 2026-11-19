@@ -59,6 +59,7 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     CAGradientLayer *_glare;
     CAShapeLayer *_glareRing;
     CAGradientLayer *_sideRefractionMask;
+    CAGradientLayer *_miniEdgeFade;
     CGRect _track;
     BOOL _hasTrack;
     BOOL _lifted;
@@ -83,8 +84,10 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
         glass.clear = YES;
         // A real blur/displacement band, not merely a refractive mesh hidden
         // under the synthetic track. The center is masked out below.
-        glass.blurRadius = 2.0;
-        glass.lensScale = kHeldLensScale * 1.27;
+        // The rim must visually absorb the inset track, not leave its ends
+        // as sharp inner edges under an otherwise transparent bubble.
+        glass.blurRadius = 2.55;
+        glass.lensScale = kHeldLensScale * 1.65;
         // Switch thumbs refract the *entire rounded perimeter*, including
         // the top and bottom of the mini-track. The lateral-only profile
         // used for tab icons hid exactly these curved parts of the thumb.
@@ -118,26 +121,42 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     _mini.userInteractionEnabled = NO;
     _mini.layer.cornerCurve = kCACornerCurveContinuous;
     [_miniClip addSubview:_mini];
+    // The manufactured 0.70x track is only the *central* backdrop sample.
+    // Fade its two abrupt endpoints into the real backdrop/refraction band.
+    _miniEdgeFade = [CAGradientLayer layer];
+    _miniEdgeFade.startPoint = CGPointMake(0, 0.5);
+    _miniEdgeFade.endPoint = CGPointMake(1, 0.5);
+    _miniEdgeFade.locations = @[@0, @0.10, @0.27, @0.73, @0.90, @1];
+    _miniEdgeFade.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.04].CGColor,
+                             (id)[UIColor colorWithWhite:1 alpha:0.35].CGColor,
+                             (id)UIColor.whiteColor.CGColor,
+                             (id)UIColor.whiteColor.CGColor,
+                             (id)[UIColor colorWithWhite:1 alpha:0.35].CGColor,
+                             (id)[UIColor colorWithWhite:1 alpha:0.04].CGColor];
+    _miniClip.layer.mask = _miniEdgeFade;
     _flareLeft = [CAShapeLayer layer];
     _flareRight = [CAShapeLayer layer];
     [_miniClip.layer addSublayer:_flareLeft];
     [_miniClip.layer addSublayer:_flareRight];
     [self addSubview:_inner];
-    // The synthetic mini-track used to cover the backdrop almost entirely.
-    // Put the optical pane above it, but reveal only the two refractive
-    // crescents, leaving the middle of the track completely legible.
+    // SGGlassFor assigns zPosition=-1 to ordinary panes globally. That is
+    // correct for sheets but overrides insertSubview:aboveSubview: here: the
+    // held thumb requires the *backdrop* ABOVE its synthetic reduced track.
+    _inner.layer.zPosition = 0;
+    _pane.layer.zPosition = 1;
     [self insertSubview:_pane aboveSubview:_inner];
     _sideRefractionMask = [CAGradientLayer layer];
-    // Radial alpha preserves a sharp central mini-track while exposing a
-    // true backdrop blur around all curved sides of the expanded thumb.
+    // A wide radial profile refracts the sides, top and bottom of the
+    // *whole* raised thumb. Its inner portion fades over the same area as
+    // the reduced mini-track, so no internal hard capsule edge survives.
     _sideRefractionMask.type = kCAGradientLayerRadial;
     _sideRefractionMask.startPoint = CGPointMake(0.5, 0.5);
     _sideRefractionMask.endPoint = CGPointMake(1.0, 1.0);
-    _sideRefractionMask.locations = @[@0, @0.50, @0.65, @0.82, @1];
+    _sideRefractionMask.locations = @[@0, @0.22, @0.42, @0.64, @1];
     _sideRefractionMask.colors = @[(id)UIColor.clearColor.CGColor,
-                                   (id)UIColor.clearColor.CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.22].CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.88].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.07].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.42].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.94].CGColor,
                                    (id)UIColor.whiteColor.CGColor];
     _pane.layer.mask = _sideRefractionMask;
     _ring = [CAShapeLayer layer];
@@ -159,6 +178,7 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     _glareRing.lineWidth = kGlareWidth;
     _glare.mask = _glareRing;
     [_rim.layer addSublayer:_glare];
+    _rim.layer.zPosition = 2;
     [self addSubview:_rim];
     _pill = [UIView new];
     _pill.backgroundColor = UIColor.whiteColor;
@@ -168,6 +188,7 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     _pill.layer.shadowOpacity = 0.18;
     _pill.layer.shadowRadius = 3;
     _pill.layer.shadowOffset = CGSizeMake(0, 1);
+    _pill.layer.zPosition = 3;  // Resting white thumb, invisible while lifted.
     [self addSubview:_pill];
     return self;
 }
@@ -283,6 +304,10 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     CGRect clip = (CGRect){CGPointZero, inner.size};
     _miniClip.frame = clip;
     _miniClip.layer.cornerRadius = clip.size.height / 2;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _miniEdgeFade.frame = (CGRect){CGPointZero, clip.size};
+    [CATransaction commit];
     [self placeMini];
     [CATransaction begin];
     [CATransaction setDisableActions:YES];

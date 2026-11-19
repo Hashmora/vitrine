@@ -715,7 +715,6 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
     UIView *selected = objc_getAssociatedObject(host, &kAccentCopyKey);
     if (!tintedTabs() || sg_minimized || !lens || lens.hidden) {
         lens.tintOverlay = nil;
-        lens.protectedContent = nil;
         lens.normalContent = nil;
         selected.hidden = YES;
         return;
@@ -736,19 +735,19 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
     if (!CGRectEqualToRect(selected.frame, host.bounds)) selected.frame = host.bounds;
     selected.hidden = NO;
     NSArray<UIView *> *buttons = tabButtons(bar);
-    if (buttons.count != bar.items.count) { lens.tintOverlay = nil; lens.protectedContent = nil; lens.normalContent = nil; selected.hidden = YES; return; }
+    if (buttons.count != bar.items.count) { lens.tintOverlay = nil; lens.normalContent = nil; selected.hidden = YES; return; }
     NSMutableSet<UIView *> *used = [NSMutableSet setWithCapacity:buttons.count * 2];
     UIColor *accent = SGRAccent();
     for (NSUInteger i = 0; i < buttons.count; i++) {
         UIView *button = buttons[i];
-        BOOL create = i < bar.sources.count && isCreateSource(bar.sources[i]);
-        UIView *createDisc = create ? objc_getAssociatedObject(button, &kCreateDiscKey) : nil;
-        BOOL createOpen = create && (bar.awaitingCreateClose || createDisc.layer.animationKeys.count > 0 ||
-                          [objc_getAssociatedObject(createDisc, &kCreateTargetKey) boolValue]);
         UIImageView *nativeIcon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
         UITabBarItem *item = i < bar.items.count ? bar.items[i] : nil;
-        UIImage *glyph = item.selectedImage ?: item.image ?: nativeIcon.image;
-        if (glyph && !createOpen) {
+        // The WHITE overlay already uses the correct normal/selected glyph.
+        // Never mirror selectedImage for every tab: that gives a different
+        // silhouette when the bubble crosses an unselected button.
+        UIImage *glyph = nativeIcon.image ?: ((item == bar.selectedItem && item.selectedImage)
+                                                ? item.selectedImage : item.image);
+        if (glyph) {
             UIImageView *coloredIcon = objc_getAssociatedObject(button, &kAccentIconKey);
             if (!coloredIcon) {
                 coloredIcon = [UIImageView new];
@@ -808,20 +807,9 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
         if (([view isKindOfClass:UIImageView.class] || [view isKindOfClass:UILabel.class]) &&
             ![used containsObject:view]) [view removeFromSuperview];
     }
-    // Create rotates its *real* plus/disc. Keep that source unmasked while
-    // its modal is up, so the colour copy cannot freeze its animation.
-    NSUInteger current = [bar.items indexOfObject:bar.selectedItem];
-    BOOL createOpen = bar.awaitingCreateClose ||
-        (current < bar.sources.count && isCreateSource(bar.sources[current]));
-    // Keep the white-group inverse cutout active while dragging from Create:
-    // only Create's own animated plus is restored inside the cutout.
-    UIView *createButton = nil;
-    if (createOpen) {
-        for (NSUInteger i = 0; i < bar.sources.count && i < buttons.count; i++) {
-            if (isCreateSource(bar.sources[i])) { createButton = buttons[i]; break; }
-        }
-    }
-    lens.protectedContent = createButton;
+    // The normal bar remains wholly cut out within the bubble, including
+    // Create. Its live icon transform is mirrored above, not restored as a
+    // white rectangular exception that spills into the next tab.
     lens.normalContent = bar;
     lens.tintOverlay = selected;
 }

@@ -87,6 +87,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // it never draws an independent oversize white stroke.
     CAGradientLayer *_glare;
     CAShapeLayer *_glareMask;
+    CAShapeLayer *_perimeter;
     __weak UIView *_restAbove;
     CADisplayLink *_link;
     // The two edges: where they are, how fast they go and where they are going.
@@ -106,7 +107,9 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // The 0.92x platter lens remains a separate surface underneath the tabs.
     SGLegacyGlassView *_glyphEdgePane;
     CAGradientLayer *_glyphEdgeMask;
-    __weak UIView *_protectedContent; // Create's animated plus is never cut out
+    // Independent refraction of the 0.92x platter; never samples glyphs.
+    SGLegacyGlassView *_platterEdgePane;
+    CAGradientLayer *_platterEdgeMask;
     BOOL _glassOn;
     NSUInteger _pulseGeneration;
     // A bubble nobody holds is not run frame by frame on the main thread, which a tab loading under it would stall
@@ -152,9 +155,20 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _glareMask = [CAShapeLayer layer];
     _glareMask.fillColor = nil;
     _glareMask.strokeColor = UIColor.whiteColor.CGColor;
-    _glareMask.lineWidth = 1.65;
+    _glareMask.lineWidth = 1.12;
     _glare.mask = _glareMask;
     _glare.opacity = 0;
+    // Apple has a fine continuous edge PLUS a brighter directional streak.
+    // The old diagonal gradient alone left two long sides almost black.
+    _perimeter = [CAShapeLayer layer];
+    _perimeter.name = @"Vitrine.LegacyLensFullPerimeter";
+    _perimeter.fillColor = nil;
+    _perimeter.strokeColor = [UIColor colorWithWhite:1 alpha:0.36].CGColor;
+    _perimeter.lineWidth = 0.85;
+    _perimeter.opacity = 0;
+    _perimeter.zPosition = 2;
+    [self.layer addSublayer:_perimeter];
+    _glare.zPosition = 3;
     [self.layer addSublayer:_glare];
     return self;
 }
@@ -179,9 +193,9 @@ static BOOL bubbles(void);
         _glyphEdgePane.layer.cornerCurve = kCACornerCurveCircular;
         _glyphEdgePane.capsule = YES;
         _glyphEdgePane.clear = YES;
-        _glyphEdgePane.blurRadius = 0.08;
+        _glyphEdgePane.blurRadius = 0.32;
         _glyphEdgePane.magnification = 1.0;  // icon geometry is not scaled
-        _glyphEdgePane.lensScale = 0.90;
+        _glyphEdgePane.lensScale = 1.04;
         _glyphEdgePane.lateralRefraction = YES;
         _glyphEdgePane.sharp = YES;
         _glyphEdgePane.rimless = YES;
@@ -189,8 +203,32 @@ static BOOL bubbles(void);
         _glyphEdgeMask = [CAGradientLayer layer];
         _glyphEdgeMask.startPoint = CGPointMake(0, 0.5);
         _glyphEdgeMask.endPoint = CGPointMake(1, 0.5);
-        _glyphEdgeMask.locations = @[@0, @0.07, @0.19, @0.28, @0.72, @0.81, @0.93, @1];
+        _glyphEdgeMask.locations = @[@0, @0.09, @0.23, @0.35, @0.65, @0.77, @0.91, @1];
         _glyphEdgePane.layer.mask = _glyphEdgeMask;
+    }
+    if (!_platterEdgePane) {
+        // This pane is BELOW both glyph groups, but ABOVE the primary
+        // magnified glass. It bends the reduced tab-bar surface itself.
+        _platterEdgePane = [SGLegacyGlassView new];
+        _platterEdgePane.userInteractionEnabled = NO;
+        _platterEdgePane.accessibilityElementsHidden = YES;
+        _platterEdgePane.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        _platterEdgePane.capsule = YES;
+        _platterEdgePane.clear = YES;
+        _platterEdgePane.blurRadius = 0.25;
+        _platterEdgePane.magnification = 1.0;
+        _platterEdgePane.lensScale = 1.12;
+        _platterEdgePane.lateralRefraction = YES;
+        _platterEdgePane.sharp = YES;
+        _platterEdgePane.rimless = YES;
+        _platterEdgePane.alpha = 0;
+        _platterEdgePane.layer.zPosition = 0;
+        _platterEdgeMask = [CAGradientLayer layer];
+        _platterEdgeMask.startPoint = CGPointMake(0, 0.5);
+        _platterEdgeMask.endPoint = CGPointMake(1, 0.5);
+        _platterEdgeMask.locations = _glyphEdgeMask.locations;
+        _platterEdgePane.layer.mask = _platterEdgeMask;
+        [self addSubview:_platterEdgePane];
     }
     [self syncGlyphEdgeStack];
 }
@@ -211,7 +249,7 @@ static BOOL bubbles(void);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _glyphEdgeMask.frame = _glyphEdgePane.bounds;
-    _glyphEdgeMask.colors = @[
+    NSArray *colors = @[
         (id)[UIColor colorWithWhite:1 alpha:left].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:left * 0.88].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:left * 0.16].CGColor,
@@ -221,6 +259,8 @@ static BOOL bubbles(void);
         (id)[UIColor colorWithWhite:1 alpha:right * 0.88].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:right].CGColor
     ];
+    _glyphEdgeMask.colors = colors;
+    _platterEdgeMask.colors = colors;
     [CATransaction commit];
 }
 
@@ -249,8 +289,16 @@ static BOOL bubbles(void);
     _glare.frame = bounds;
     _glareMask.frame = _glare.bounds;
     CGRect pathBounds = CGRectInset(_glare.bounds, 0.5, 0.5);
-    _glareMask.path = [UIBezierPath bezierPathWithRoundedRect:pathBounds
+    CGPathRef outline = [UIBezierPath bezierPathWithRoundedRect:pathBounds
                                            cornerRadius:CGRectGetHeight(pathBounds) / 2].CGPath;
+    _glareMask.path = outline;
+    _perimeter.frame = bounds;
+    _perimeter.path = outline;
+    if (_platterEdgePane) {
+        _platterEdgePane.frame = bounds;
+        _platterEdgePane.layer.cornerRadius = radius;
+        _platterEdgeMask.frame = bounds;
+    }
     if (_glyphEdgePane) {
         if (!CGRectEqualToRect(_glyphEdgePane.bounds, bounds)) _glyphEdgePane.bounds = bounds;
         _glyphEdgePane.layer.cornerRadius = radius;
@@ -337,18 +385,11 @@ static BOOL bubbles(void) {
     [self updateOuterEdgeGuard];
 }
 
-- (void)setProtectedContent:(UIView *)protectedContent {
-    if (_protectedContent == protectedContent) return;
-    _protectedContent = protectedContent;
-    [self updateNormalCutout];
-}
-
 - (CGFloat)tintScaleXForState:(SGLensSample)st opticalScaleX:(CGFloat)sx {
-    // Same silhouette as the optical glass; its width already covers both
-    // neighbouring 24pt glyphs at the midpoint of 83.9pt-spaced tabs.
-    // A subpixel overlap on the tinted layer fills the black seam between
-    // the independent sharp-glyph and inverse-white masks during movement.
-    return sx * (1 + 0.013 * MAX(0, MIN(1, st.lift)));
+    (void)st;
+    // Both the inverse white mask and the accent must cover EXACTLY the
+    // same geometry. The former 1.3% overdraw made a dark/green seam.
+    return sx;
 }
 
 - (CGPathRef)newNormalCutoutPathAt:(CGPoint)center sx:(CGFloat)sx sy:(CGFloat)sy {
@@ -361,16 +402,8 @@ static BOOL bubbles(void) {
     CGMutablePathRef path = CGPathCreateMutable();
     CGPathAddRect(path, NULL, bar.bounds);
     CGPathAddRoundedRect(path, NULL, hole, height / 2, height / 2);
-    // Restore only the animated Create glyph, not its entire tab button.
-    // Restoring the 100pt button exposed white title/icon artwork when the
-    // held lens crossed from Create to Search or Library.
-    if (_protectedContent.superview) {
-        CGRect create = [_protectedContent convertRect:_protectedContent.bounds toView:bar];
-        CGRect plus = CGRectMake(CGRectGetMidX(create) - 16, CGRectGetMinY(create) + 3, 32, 32);
-        CGRect restore = CGRectIntersection(plus, hole);
-        if (!CGRectIsNull(restore) && !CGRectIsEmpty(restore))
-            CGPathAddRect(path, NULL, restore);
-    }
+    // Never restore a rectangular white Create region inside the lens.
+    // Its exact live glyph is instead mirrored by the selected-color view.
     return path;
 }
 
@@ -397,8 +430,8 @@ static BOOL bubbles(void) {
     // Preserve almost all of the outward optical band at both endpoints.
     // Stage 26 reduced these alphas to zero, so the scaled platter edge
     // appeared completely unbent at Home and Create.
-    CGFloat leftAlpha = MAX(0.82, MIN(1, (leftClearance - 6) / 24));
-    CGFloat rightAlpha = MAX(0.82, MIN(1, (rightClearance - 6) / 24));
+    CGFloat leftAlpha = MAX(0.94, MIN(1, (leftClearance - 6) / 24));
+    CGFloat rightAlpha = MAX(0.94, MIN(1, (rightClearance - 6) / 24));
     // Both the 0.92x platter lens and the 1x icon-edge lens obey the same
     // outer-edge guard at Home / Create.
     [self updateGlyphEdgeMaskLeft:leftAlpha right:rightAlpha];
@@ -547,7 +580,10 @@ static BOOL bubbles(void) {
         // a white film, the side shading never washes out the green glyphs.
         self->_rest.alpha = on ? 0.12 : 1;
         self->_glare.opacity = on ? 1 : 0;
-        self->_glyphEdgePane.alpha = on ? 1 : 0;
+        self->_perimeter.opacity = on ? 1 : 0;
+        // Do not refract white artwork again when Tabs in the accent is off.
+        self->_glyphEdgePane.alpha = (on && self->_tintOverlay) ? 1 : 0;
+        self->_platterEdgePane.alpha = on ? 1 : 0;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
