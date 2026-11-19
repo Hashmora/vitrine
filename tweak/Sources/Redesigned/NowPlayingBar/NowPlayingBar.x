@@ -696,10 +696,14 @@ static void styleNowPlayingBar(UIViewController *container) {
     glass.frame = frame;
     SGShapeGlass(glass, radius, NO);
     // Dimmed as the tab bar's glass is, so the card's text and buttons stand out over a bright page (below iOS 26).
-    SGRDarkenGlass(glass, &kCardDimKey, radius, SGRBarDim);
+    BOOL legacyCapsule = SGRLegacyTabBarOn() && SGUseLegacyGlass();
+    // The iOS 18 fallback's mini player and tab platter should read as the
+    // same glass family; leave native iOS 26 and plain-blur behavior alone.
+    SGRDarkenGlass(glass, &kCardDimKey, radius, legacyCapsule ? 0.63 : SGRBarDim);
     placeStripGlass(container.view, strip, frame, stripAbove);
 
-    SGRGlassFilm(container.view, &kTintKey, glass, radius);
+    UIView *film = SGRGlassFilm(container.view, &kTintKey, glass, radius);
+    if (legacyCapsule && film) film.backgroundColor = [UIColor colorWithWhite:1 alpha:0.05];
 
     static dispatch_once_t once;
     dispatch_once(&once, ^{
