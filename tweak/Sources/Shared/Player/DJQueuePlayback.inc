@@ -704,12 +704,6 @@ static void leaveDJ(void) {
     [sPassed removeAllObjects];
     [sVoiced removeAllObjects];
     [sCopyOf removeAllObjects];
-    sEditRemoved = nil;
-    sEditRemovedAt = nil;
-    sEditUndoButton = nil;
-    sEditUndoSnackbar = nil;
-    sButtonsBeforeRemove = nil;
-    sSnackbarMessagesBeforeRemove = nil;
     [sCarded removeAllObjects];
     [sCardTracks removeAllObjects];
     sAheadBeforeLaunch = nil;

@@ -248,12 +248,6 @@ static BOOL sDJActive;
 // The queue reader can activate before the page receives its final layout.
 static __weak UIView *sQueuePageView;
 static char kNewSegmentEditPending;
-static NSArray<SPTPlayerTrack *> *sEditRemoved;
-static NSDate *sEditRemovedAt;
-static __weak UIControl *sEditUndoButton;
-static __weak UIView *sEditUndoSnackbar;
-static NSHashTable<UIControl *> *sButtonsBeforeRemove;
-static NSMapTable<UIControl *, NSString *> *sSnackbarMessagesBeforeRemove;
 static void drawNewSegmentButtonSoon(UIView *page);
 static void hideNextDJSet(UIView *page);
 

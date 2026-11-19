@@ -355,72 +355,10 @@ static void drawHeaderSoon(void) {
 // ticks itself (the table has one row selected at a time), so they are followed here, tap by tap.
 static NSMutableOrderedSet<NSString *> *sPicked;
 
-// What Edit's Remove last took out, and when: the toast's Undo puts the rows back in the page and ticks them again, and
-// sends the core nothing.
-static void findSnackbarButtons(UIView *view, NSMutableArray<UIControl *> *buttons) {
-    if (!view) return;
-    if ([view isKindOfClass:UIControl.class] && [view.accessibilityIdentifier isEqualToString:@"SPTSnackbarTextButton"])
-        [buttons addObject:(UIControl *)view];
-    for (UIView *child in view.subviews) findSnackbarButtons(child, buttons);
-}
-// Bind the *actual* queue-removal toast, not any new SPTSnackbarTextButton:
-// another snackbar (followed artist, network error, etc.) can appear within the
-// previous 10-second window. Only the removal toast's own Undo is actionable.
-static UIView *snackbarRootForButton(UIControl *button) {
-    for (UIView *view = button; view; view = view.superview) {
-        if ([view.accessibilityIdentifier isEqualToString:@"SPTSnackbarView"] ||
-            [NSStringFromClass(view.class) isEqualToString:@"SPTSnackbarView"]) return view;
-        if ([view isKindOfClass:UIWindow.class]) break;
-    }
-    return nil;
-}
-static void snackbarLabels(UIView *view, UIControl *action, NSMutableArray<NSString *> *labels, NSUInteger depth) {
-    if (!view || view == action || depth > 12) return;
-    NSString *text = [view isKindOfClass:UILabel.class] ? ((UILabel *)view).text : nil;
-    if (!text.length && [NSStringFromClass(view.class) containsString:@"Label"]) text = view.accessibilityLabel;
-    if (text.length) [labels addObject:text];
-    for (UIView *child in view.subviews) snackbarLabels(child, action, labels, depth + 1);
-}
-static NSString *snackbarMessage(UIControl *button) {
-    UIView *root = snackbarRootForButton(button);
-    if (!root) return nil;
-    NSMutableArray<NSString *> *parts = [NSMutableArray array];
-    snackbarLabels(root, button, parts, 0);
-    return [[parts componentsJoinedByString:@" "] lowercaseString];
-}
-static BOOL isDJRemoveUndo(UIControl *button) {
-    if (!button || !snackbarRootForButton(button)) return NO;
-    NSString *action = button.accessibilityLabel;
-    if (!action.length && [button isKindOfClass:UIButton.class]) action = ((UIButton *)button).currentTitle;
-    if (!action.length) {
-        NSMutableArray<NSString *> *labels = [NSMutableArray array];
-        snackbarLabels(button, nil, labels, 0);
-        action = [labels componentsJoinedByString:@" "];
-    }
-    NSString *word = [action stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
-    if (![word isEqualToString:@"undo"] && ![word hasPrefix:@"undo,"] && ![word hasPrefix:@"undo "]) return NO;
-    NSString *message = snackbarMessage(button);
-    return [message containsString:@"queue"] && [message containsString:@"remov"];
-}
-static void bindEditUndoSnackbar(void) {
-    if (!sEditRemoved.count || !sEditRemovedAt || -sEditRemovedAt.timeIntervalSinceNow > 10 || !sQueuePageView.window) return;
-    NSMutableArray<UIControl *> *buttons = [NSMutableArray array];
-    findSnackbarButtons(sQueuePageView.window, buttons);
-    NSMutableArray<UIControl *> *matching = [NSMutableArray array];
-    for (UIControl *button in buttons) {
-        if (!isDJRemoveUndo(button)) continue;
-        // A recycled button is OK only when its toast's message has changed
-        // since Remove was tapped. Never match a pre-existing removal toast.
-        NSString *before = [sSnackbarMessagesBeforeRemove objectForKey:button];
-        if ([sButtonsBeforeRemove containsObject:button] &&
-            (!before || [before isEqualToString:snackbarMessage(button)])) continue;
-        [matching addObject:button];
-    }
-    if (matching.count == 1) {
-        sEditUndoButton = matching.firstObject;
-        sEditUndoSnackbar = snackbarRootForButton(matching.firstObject);
-    }
-}
+// Edit Remove hides the selected DJ rows in our model. Spotify 9.1.90
+// does not display a native Undo snackbar for those synthetic rows, so do not
+// attach a global UIControl interception to unrelated Spotify snackbars.
+// Native queue items retain Spotify's normal Undo behavior unchanged.
 
 // Whether the queue page is in its Edit: the table is always editing (that is how it shows the reorder handles), so
 // it is told by Edit's close button, which shows only then.
@@ -469,25 +407,8 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
 %hook UIControl
 - (void)sendAction:(SEL)action to:(id)target forEvent:(UIEvent *)event {
     UIView *page = sQueuePageView;
-    BOOL invokingDJUndo = sDJActive && self == sEditUndoButton &&
-        snackbarRootForButton(self) == sEditUndoSnackbar && isDJRemoveUndo(self) &&
-        sEditRemoved.count && sEditRemovedAt && -sEditRemovedAt.timeIntervalSinceNow < 10;
     BOOL enteringEdit = sDJActive && queueEditActionFrom(self, page, @"queue-edit-button");
     BOOL leavingEdit = sDJActive && queueEditActionFrom(self, page, @"queue-close-edit-button");
-    BOOL willRemove = sDJActive && [self.accessibilityIdentifier isEqualToString:@"queue-edit-toolbar-remove"] && sPicked.count;
-    if (willRemove) {
-        NSMutableArray<UIControl *> *existing = [NSMutableArray array];
-        findSnackbarButtons(page.window, existing);
-        sButtonsBeforeRemove = [NSHashTable weakObjectsHashTable];
-        sSnackbarMessagesBeforeRemove = [NSMapTable weakToStrongObjectsMapTable];
-        for (UIControl *button in existing) {
-            [sButtonsBeforeRemove addObject:button];
-            NSString *message = snackbarMessage(button);
-            if (message) [sSnackbarMessagesBeforeRemove setObject:message forKey:button];
-        }
-        sEditUndoButton = nil;
-        sEditUndoSnackbar = nil;
-    }
     if (enteringEdit) {
         // Do this before Spotify's action: no half-second header-timer lag.
         objc_setAssociatedObject(page, &kNewSegmentEditPending, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -530,39 +451,17 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
     }
     // Edit's Remove: the DJ's rows ticked go (the core is sent the rest of its own queue, or nothing when it has none).
     if ([name isEqualToString:@"queue-edit-toolbar-remove"] && sPicked.count) {
-        NSMutableArray<SPTPlayerTrack *> *removed = [NSMutableArray array];
         for (SPTPlayerTrack *row in [sInjected copy]) {
             if (![sPicked containsObject:trackKey(row)] || isHidden(row)) continue;
             hideTrack(row, @"removed in Edit");
-            [removed addObject:row];
         }
-        sEditRemoved = removed;
-        sEditRemovedAt = [NSDate date];
-        bindEditUndoSnackbar();
-        for (NSNumber *delay in @[@0.05, @0.2]) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                if (!sEditUndoButton) bindEditUndoSnackbar();
-            });
-        }
+        // There is no DJ Remove Undo toast to bind. Never hijack a later
+        // snackbar from a different action to restore these rows.
         [sPicked removeAllObjects];
         sSignature = nil;
         refreshReaders();
     }
-    if (invokingDJUndo) {
-        if (!sPicked) sPicked = [NSMutableOrderedSet orderedSet];
-        for (SPTPlayerTrack *row in sEditRemoved) {
-            [sHidden removeObject:baseUID(row.UID)];
-            [sPicked addObject:trackKey(row)];
-        }
-        SGLog(@"queue: Undo puts back %lu of the DJ's rows removed in Edit", (unsigned long)sEditRemoved.count);
-        sEditRemoved = nil;
-        sEditUndoButton = nil;
-        sEditUndoSnackbar = nil;
-        sButtonsBeforeRemove = nil;
-        sSnackbarMessagesBeforeRemove = nil;
-        sSignature = nil;
-        refreshReaders();
-    }
+
 }
 %end
 
