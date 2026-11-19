@@ -298,8 +298,8 @@ static BOOL bubbles(void) {
     // measured Apple layout. Leave a small border-safe band beyond that.
     CGFloat leftClearance = center.x - halfWidth - CGRectGetMinX(barInHost);
     CGFloat rightClearance = CGRectGetMaxX(barInHost) - center.x - halfWidth;
-    CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance - 4) / 20));
-    CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance - 4) / 20));
+    CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance - 6) / 24));
+    CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance - 6) / 24));
     if (leftAlpha >= 0.999 && rightAlpha >= 0.999) {
         if (_pane.layer.mask == _outerEdgeGuard) _pane.layer.mask = nil;
         return;
@@ -308,7 +308,7 @@ static BOOL bubbles(void) {
         _outerEdgeGuard = [CAGradientLayer layer];
         _outerEdgeGuard.startPoint = CGPointMake(0, 0.5);
         _outerEdgeGuard.endPoint = CGPointMake(1, 0.5);
-        _outerEdgeGuard.locations = @[@0, @0.18, @0.82, @1];
+        _outerEdgeGuard.locations = @[@0, @0.22, @0.78, @1];
     }
     [CATransaction begin];
     [CATransaction setDisableActions:YES];

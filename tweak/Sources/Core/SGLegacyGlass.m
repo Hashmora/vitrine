@@ -364,9 +364,16 @@ static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CG
         CGFloat w = insetV + (v.baseY + v.scaleY * H) / H * usableV;
         // Magnified about the middle: the point samples nearer the middle, by the magnification, then bends as usual.
         CGFloat su = 0.5 + (u - 0.5) / magnification, sw = 0.5 + (w - 0.5) / magnification;
-        // The tab lens has no upper/lower rim refraction. Shape its side
-        // crescents with a vertical envelope that vanishes at y = 0 and 1.
-        CGFloat envelope = lateral ? pow(MAX(0, 1 - pow(2 * w - 1, 2)), 1.6) : 1;
+        // The tab and switch lenses have no upper/lower rim refraction. Keep
+        // the middle strongest, but let the side crescents taper out with a
+        // small tail instead of ending as flat vertical cuts.
+        CGFloat envelope = 1;
+        if (lateral) {
+            CGFloat y = fabs(2 * w - 1);
+            CGFloat body = pow(MAX(0, 1 - y * y), 1.32);
+            CGFloat tails = pow(MAX(0, 1 - y / 0.985), 5.0) * 0.18;
+            envelope = MIN(1, body + tails);
+        }
         CGPoint from = CGPointMake(MAX(0.0, MIN(1.0, su + v.dispX * dU * envelope)),
                                    MAX(0.0, MIN(1.0, sw + (lateral ? 0 : v.dispY * dV))));
         vertices[i] = (SGMeshVertex){from, {u, w, v.depth}};
