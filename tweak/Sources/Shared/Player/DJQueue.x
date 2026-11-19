@@ -608,7 +608,10 @@ static NSString *historyUID(SPTPlayerTrack *track) {
 // The DJ track put in the core's queue ahead of its turn (below), and its uri as kept over a launch: the copy is still in
 // the core's queue then, and was shown as a track queued by hand (above its own card) when it was not wanted any more.
 static SPTPlayerTrack *sAheadQueued;
+// The exact q-UID of an owned copy, never its song URI. Other queued copies
+// of that URI are independently owned by the user.
 static NSString *sAheadBeforeLaunch;
+static SPTPlayerTrack *queuedCopyOf(SPTPlayerTrack *track, SPTPlayerState *state, BOOL *notLast);
 
 static void saveSession(void) {
     SPTPlayerState *state = SGPlayerState();
@@ -626,7 +629,7 @@ static void saveSession(void) {
         @"played": lastOf(played),
         @"voiced": lastOf(sVoiced ?: [NSSet set]),
         @"copies": sCopyOf ?: @{},
-        @"ahead": sAheadQueued ? SGURIString(sAheadQueued.URI) ?: @"" : @"",
+        @"aheadUID": sAheadQueued ? queuedCopyOf(sAheadQueued, state, NULL).UID ?: @"" : @"",
     };
     NSMutableDictionary *signature = [session mutableCopy];
     [signature removeObjectForKey:@"savedAt"];
@@ -663,7 +666,7 @@ static void restoreSession(SPTPlayerState *state) {
     sPlayedBefore = [set(@"played") mutableCopy];
     sOrder = [lastOf([saved[@"order"] isKindOfClass:NSArray.class] ? saved[@"order"] : @[]) mutableCopy];
     sOrdered = [saved[@"ordered"] boolValue] && sOrder.count;
-    if ([saved[@"ahead"] isKindOfClass:NSString.class] && [saved[@"ahead"] length]) sAheadBeforeLaunch = saved[@"ahead"];
+    if ([saved[@"aheadUID"] isKindOfClass:NSString.class] && [saved[@"aheadUID"] length]) sAheadBeforeLaunch = saved[@"aheadUID"];
     if ([saved[@"copies"] isKindOfClass:NSDictionary.class]) {
         sCopyOf = [NSMutableDictionary dictionary];
         [(NSDictionary *)saved[@"copies"] enumerateKeysAndObjectsUsingBlock:^(id key, id info, BOOL *stop) {
@@ -922,6 +925,56 @@ static void noteCopy(SPTPlayerTrack *copy, SPTPlayerTrack *original) {
 // track playing ends by itself, the core goes on to its queue first, so the user's next plays and not the core's own for
 // a moment before a skip away from it. Kept while the user's order has it next; taken out of the core's queue when not.
 static NSDate *sAheadAt;
+// An in-flight queueTrack: the UID is assigned asynchronously by Spotify, so
+// only a genuinely new q-UID after this command can be claimed as our copy.
+// A preexisting user copy of the same URI is never eligible.
+static NSMutableDictionary<NSString *, NSDictionary *> *sPendingCopies;
+static NSMutableDictionary<NSString *, NSString *> *sCancelledCopies;
+static void dropQueuedUID(NSString *uid, NSString *why);
+
+static void reconcilePendingCopies(SPTPlayerState *state) {
+    if (!isDJSession(state) || !sPendingCopies.count) return;
+    NSArray<SPTPlayerTrack *> *present = state.track ? [@[state.track] arrayByAddingObjectsFromArray:state.future ?: @[]]
+                                                   : state.future ?: @[];
+    for (NSString *originalUID in [sPendingCopies.allKeys copy]) {
+        NSDictionary *pending = sPendingCopies[originalUID];
+        SPTPlayerTrack *original = pending[@"original"];
+        if (!original || ![pending[@"context"] isEqualToString:SGURIString(state.contextURI)] ||
+            CACurrentMediaTime() - [pending[@"started"] doubleValue] > 8) {
+            [sPendingCopies removeObjectForKey:originalUID];
+            [sCancelledCopies removeObjectForKey:originalUID];
+            continue;
+        }
+        NSMutableArray<SPTPlayerTrack *> *newCopies = [NSMutableArray array];
+        for (SPTPlayerTrack *t in present) {
+            if (!isCoreQueued(t) || !t.UID.length || [pending[@"before"] containsObject:t.UID] ||
+                ![SGURIString(t.URI) isEqualToString:SGURIString(original.URI)] ||
+                sCopyOf[t.UID]) continue;
+            BOOL repeated = NO;
+            for (SPTPlayerTrack *seen in newCopies) if ([seen.UID isEqualToString:t.UID]) repeated = YES;
+            if (!repeated) [newCopies addObject:t];
+        }
+        // A second fresh copy of this song means a possible concurrent manual
+        // add: do not guess which one Vitrine owns, and never delete either.
+        if (newCopies.count > 1) {
+            [sPendingCopies removeObjectForKey:originalUID];
+            [sCancelledCopies removeObjectForKey:originalUID];
+            SGLog(@"queue: ambiguous new copies of %@; leaving both in the core", originalUID);
+            continue;
+        }
+        SPTPlayerTrack *owned = newCopies.firstObject;
+        if (!owned) continue;
+        noteCopy(owned, original);
+        [sPendingCopies removeObjectForKey:originalUID];
+        NSString *cancel = sCancelledCopies[originalUID];
+        [sCancelledCopies removeObjectForKey:originalUID];
+        if (cancel) {
+            NSString *uid = [owned.UID copy];
+            dispatch_async(dispatch_get_main_queue(), ^{ dropQueuedUID(uid, cancel); });
+        }
+    }
+}
+
 // Set while advanceTo waits for a queued copy to reach the state: nothing is queued ahead meanwhile.
 static BOOL sQueueWaiting;
 // Set from a tap on a row until the player is sent on: the rows the tap hid are not taken for the user's order then.
@@ -951,15 +1004,18 @@ static NSArray<SPTPlayerTrack *> *historyFutureRows(SPTPlayerState *state) {
 // The core's queued copy of `track` among the tracks queued by hand that come first in the future (the last such, the
 // one put in latest), and whether any track queued by hand comes after it.
 static SPTPlayerTrack *queuedCopyOf(SPTPlayerTrack *track, SPTPlayerState *state, BOOL *notLast) {
-    NSString *uri = SGURIString(track.URI);
+    if (notLast) *notLast = NO;
+    if (!track || !state) return nil;
+    reconcilePendingCopies(state);
     SPTPlayerTrack *found = nil;
     BOOL after = NO;
-    // Not only at the front: after a step back the core has the track it left before its queue (a copy put in ahead was
-    // not found there, and a second one was put in).
     for (SPTPlayerTrack *t in state.future) {
         if ([SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) break;
         if (!isCoreQueued(t)) continue;
-        if (uri.length && [SGURIString(t.URI) isEqualToString:uri]) { found = t; after = NO; }
+        NSDictionary *owned = t.UID.length ? sCopyOf[t.UID] : nil;
+        // URI equality alone is unsafe: the user can queue the same track.
+        if (owned && [owned[@"uid"] isEqualToString:track.UID] &&
+            [owned[@"uri"] isEqualToString:SGURIString(track.URI)]) { found = t; after = NO; }
         else if (found) after = YES;
     }
     if (notLast) *notLast = after;
@@ -972,32 +1028,48 @@ static SPTPlayerTrack *queuedCopyOf(SPTPlayerTrack *track, SPTPlayerState *state
 static SPTPlayerTrack *sDropped;
 static NSDate *sDroppedAt;
 
-static void dropQueuedTries(NSString *uri, NSString *why, int tries);
-static void dropQueued(NSString *uri, NSString *why) { dropQueuedTries(uri, why, 0); }
-static void dropQueuedTries(NSString *uri, NSString *why, int tries) {
+static NSUInteger sQueueSessionGeneration;
+static void dropQueuedTries(NSString *uid, NSString *why, int tries, NSUInteger generation);
+// A failed ownership lookup must be non-destructive: if the new q-UID has not
+// arrived, defer cancellation until it can be uniquely identified.
+static void dropQueued(SPTPlayerTrack *original, NSString *why) {
+    if (!original.UID.length) return;
+    SPTPlayerTrack *copy = queuedCopyOf(original, SGPlayerState(), NULL);
+    if (copy) { dropQueuedUID(copy.UID, why); return; }
+    if (sPendingCopies[original.UID]) {
+        if (!sCancelledCopies) sCancelledCopies = [NSMutableDictionary dictionary];
+        sCancelledCopies[original.UID] = why;
+    }
+}
+static void dropQueuedUID(NSString *uid, NSString *why) {
+    if (!uid.length || !sCopyOf[uid]) return;
+    dropQueuedTries(uid, why, 0, sQueueSessionGeneration);
+}
+static void dropQueuedTries(NSString *uid, NSString *why, int tries, NSUInteger generation) {
+    if (generation != sQueueSessionGeneration || !sCopyOf[uid]) return;
     id queue = sLastQueue, player = queuePlayer();
     SEL setQueue = NSSelectorFromString(@"setQueue:options:loggingParams:");
-    if (!queue || ![player respondsToSelector:setQueue]) { SGLog(@"queue: %@ could not be taken out of the core's queue (%@)", uri, why); return; }
-    // The whole list, as the page sends it for a removal, with that one copy left out: given only its queued tracks,
-    // the core changed nothing (the copy played all the same).
+    if (!queue || ![player respondsToSelector:setQueue]) {
+        SGLog(@"queue: owned copy %@ cannot be removed (%@)", uid, why);
+        return;
+    }
     NSMutableArray<SPTPlayerTrack *> *left = [[queue valueForKey:@"nextTracks"] mutableCopy];
     NSInteger drop = -1;
     for (NSInteger i = 0; i < (NSInteger)left.count; i++) {
         if ([SGURIString(left[i].URI) isEqualToString:@"spotify:delimiter"]) break;
-        if (!isCoreQueued(left[i])) continue;
-        if ([SGURIString(left[i].URI) isEqualToString:uri]) drop = i;
+        if (isCoreQueued(left[i]) && [left[i].UID isEqualToString:uid]) { drop = i; break; }
     }
     if (drop < 0) {
-        if (tries < 0) return;   // a check after a removal: the readers' queue has it gone already
-        // Put in a moment ago, it may not have reached the queue the readers were told yet: looked for again.
+        if (tries < 0) return;
         if (tries < 8) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                if (sAheadQueued && [SGURIString(sAheadQueued.URI) isEqualToString:uri]) return;   // wanted again meanwhile
-                dropQueuedTries(uri, why, tries + 1);
+                if (generation != sQueueSessionGeneration || !sCopyOf[uid]) return;
+                // The same copy became the user's next again.
+                SPTPlayerTrack *owned = sAheadQueued;
+                if (owned && [sCopyOf[uid][@"uid"] isEqualToString:owned.UID]) return;
+                dropQueuedTries(uid, why, tries + 1, generation);
             });
-        } else {
-            SGLog(@"queue: %@ is not in the core's queue to take out (%@)", uri, why);
-        }
+        } else SGLog(@"queue: owned copy %@ no longer in core queue (%@)", uid, why);
         return;
     }
     [left removeObjectAtIndex:drop];
@@ -1006,23 +1078,24 @@ static void dropQueuedTries(NSString *uri, NSString *why, int tries) {
     sOwnQueueCommand = YES;
     id result = ((id (*)(id, SEL, id, id, id))objc_msgSend)(player, setQueue, copy, nil, nil);
     sOwnQueueCommand = NO;
-    SGLog(@"queue: %@ is taken out of the core's queue (%@), it answered %@", uri, why, result);
-    // Sent with the queue the readers were told last, which may be one from before the player moved on (a copy taken out
-    // as the player came to the next track stayed, and showed as queued by hand): looked at again, and sent again with
-    // the queue as it is then.
+    SGLog(@"queue: owned copy %@ removed (%@); core answered %@", uid, why, result);
     if (tries >= 100) return;
     int checks = tries < 0 ? -tries : 0;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (sAheadQueued && [SGURIString(sAheadQueued.URI) isEqualToString:uri]) return;   // wanted again meanwhile
+        if (generation != sQueueSessionGeneration || !sCopyOf[uid]) return;
+        SPTPlayerTrack *owned = sAheadQueued;
+        if (owned && [sCopyOf[uid][@"uid"] isEqualToString:owned.UID]) return;
         BOOL there = NO;
         for (SPTPlayerTrack *t in SGPlayerState().future) {
             if ([SGURIString(t.URI) isEqualToString:@"spotify:delimiter"]) break;
-            if (isCoreQueued(t) && [SGURIString(t.URI) isEqualToString:uri]) { there = YES; break; }
+            if (isCoreQueued(t) && [t.UID isEqualToString:uid]) { there = YES; break; }
         }
         if (!there) return;
-        if (checks >= 3) { SGLog(@"queue: %@ is still in the core's queue after %d tries (%@)", uri, checks + 1, why); return; }
-        SGLog(@"queue: %@ is still in the core's queue, taken out again (%@)", uri, why);
-        dropQueuedTries(uri, why, -(checks + 1));
+        if (checks >= 3) {
+            SGLog(@"queue: owned copy %@ remains after %d tries (%@)", uid, checks + 1, why);
+            return;
+        }
+        dropQueuedTries(uid, why, -(checks + 1), generation);
     });
 }
 
@@ -1030,11 +1103,25 @@ static id queueInCore(SPTPlayerTrack *track) {
     id wrapper = queueWrapper();
     SEL queueTrack = NSSelectorFromString(@"queueTrack:");
     if (![wrapper respondsToSelector:queueTrack]) return nil;
-    // Only the track: the core takes no voice (spotify:media:) into its queue; asked to, it answered and did not
-    // put it in (9.1.90), so a track whose card has not played loses its voice when it is played from the queue.
+    // Snapshot existing queued UIDs *before* the command: a hand-queued copy
+    // of this exact song must never be mistaken for the one we just created.
+    SPTPlayerState *state = SGPlayerState();
+    if (track.UID.length && isDJSession(state)) {
+        NSMutableSet<NSString *> *before = [NSMutableSet set];
+        for (SPTPlayerTrack *t in state.future) if (isCoreQueued(t) && t.UID.length) [before addObject:t.UID];
+        for (SPTPlayerTrack *t in [sLastQueue valueForKey:@"nextTracks"])
+            if (isCoreQueued(t) && t.UID.length) [before addObject:t.UID];
+        if (!sPendingCopies) sPendingCopies = [NSMutableDictionary dictionary];
+        sPendingCopies[track.UID] = @{@"original":track, @"before":before,
+                                      @"context":SGURIString(state.contextURI) ?: @"",
+                                      @"started":@(CACurrentMediaTime())};
+    }
+    // The core takes a song but no voice item into its queue.
     sOwnQueueCommand = YES;
     id result = ((id (*)(id, SEL, id))objc_msgSend)(wrapper, queueTrack, track);
     sOwnQueueCommand = NO;
+    // Some wrapper versions return void/nil for a successfully dispatched request.
+    // Keep the short-lived pending identity until the core publishes the q-UID.
     return result ?: @YES;
 }
 
@@ -1103,19 +1190,24 @@ static void queueAhead(void) {
     if (want && cardUnheard(state, want)) want = nil;
     // The copy put in before the launch: taken up when it is still the one wanted (below), taken out when not.
     if (sAheadBeforeLaunch && !sAheadQueued) {
-        NSString *uri = sAheadBeforeLaunch;
+        NSString *uid = sAheadBeforeLaunch;
         sAheadBeforeLaunch = nil;
+        NSDictionary *owned = sCopyOf[uid];
         BOOL there = NO;
-        for (SPTPlayerTrack *t in state.future) if (isCoreQueued(t) && [SGURIString(t.URI) isEqualToString:uri]) there = YES;
-        if (there && ![SGURIString(want.URI) isEqualToString:uri]) {
-            dropQueued(uri, @"put in ahead before the launch, not the user's next now");
+        for (SPTPlayerTrack *t in state.future) if (isCoreQueued(t) && [t.UID isEqualToString:uid]) there = YES;
+        if (there && owned && want && [owned[@"uid"] isEqualToString:want.UID] &&
+            [owned[@"uri"] isEqualToString:SGURIString(want.URI)]) {
+            sAheadQueued = want;
+            sAheadAt = [NSDate date];
+        } else if (there && owned) {
+            dropQueuedUID(uid, @"old prepared DJ copy no longer wanted after relaunch");
             sSignature = nil;
         }
     }
     if (sAheadQueued && !sameGroup(sAheadQueued, want)) {
         sDropped = sAheadQueued;
         sDroppedAt = [NSDate date];
-        dropQueued(SGURIString(sAheadQueued.URI), @"no longer the user's next");
+        dropQueued(sAheadQueued, @"no longer the user's next");
         sAheadQueued = nil;
     }
     if (!want) return;
@@ -1123,7 +1215,7 @@ static void queueAhead(void) {
     SPTPlayerTrack *copy = sAheadQueued ? queuedCopyOf(sAheadQueued, state, &notLast) : nil;
     // A track queued by hand after it is to play before the DJ's: it is put in again, behind that one.
     if (copy && notLast) {
-        dropQueued(SGURIString(sAheadQueued.URI), @"a track was queued by hand after it");
+        dropQueued(sAheadQueued, @"a track was queued by hand after it");
         sAheadQueued = nil;
     }
     // Taken out by the page (Clear, a swipe) a while after it was put in: it is put in again.
@@ -1132,6 +1224,14 @@ static void queueAhead(void) {
         sAheadQueued = nil;
     }
     if (sAheadQueued) return;
+    // The request is asynchronous. Do not issue a duplicate while Spotify is
+    // still assigning the UID of the copy we just asked it to queue.
+    if (sPendingCopies[want.UID]) {
+        [sCancelledCopies removeObjectForKey:want.UID];
+        sAheadQueued = want;
+        sAheadAt = [NSDate date];
+        return;
+    }
     // A copy of it the core has already (put back in its queue by a step back) is the one: no second is put in.
     SPTPlayerTrack *have = queuedCopyOf(want, state, &notLast);
     if (have && !notLast) {
@@ -1190,7 +1290,7 @@ static id advanceTo(SPTPlayerTrack *target, BOOL voiceFirst) {
     // gone to directly, the core is not on its last track and makes no next segment until it has played through those.
     if (onlyThisLeft(state, target)) {
         if (sAheadQueued && !sameGroup(sAheadQueued, target)) {
-            dropQueued(SGURIString(sAheadQueued.URI), @"the segment's last is played");
+            dropQueued(sAheadQueued, @"the segment's last is played");
             sAheadQueued = nil;
         }
         id landed = landAtSegmentEnd(target);
@@ -1203,7 +1303,7 @@ static id advanceTo(SPTPlayerTrack *target, BOOL voiceFirst) {
         if (sAheadQueued) {
             sDropped = sAheadQueued;
             sDroppedAt = [NSDate date];
-            dropQueued(SGURIString(sAheadQueued.URI), @"the core goes to the track itself");
+            dropQueued(sAheadQueued, @"the core goes to the track itself");
             sAheadQueued = nil;
         }
         BOOL voice = [SGURIString(next.URI) hasPrefix:@"spotify:media:"];
@@ -1213,7 +1313,7 @@ static id advanceTo(SPTPlayerTrack *target, BOOL voiceFirst) {
     // Already put in ahead of its turn: the player goes on to that copy. Another one put in ahead goes out first.
     id result = nil;
     BOOL ahead = sameGroup(sAheadQueued, target);
-    if (sAheadQueued && !ahead) dropQueued(SGURIString(sAheadQueued.URI), @"another track is played");
+    if (sAheadQueued && !ahead) dropQueued(sAheadQueued, @"another track is played");
     sAheadQueued = nil;
     if (ahead) {
         SGLog(@"queue: %@ [%@] is played from the core's queue, where it was put ahead", target.trackTitle, target.UID);
@@ -1443,9 +1543,12 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward);
 // Out of the DJ's session: nothing of it is left for the page, its cells or the player to act on.
 static void leaveDJ(void) {
     if (!sDJActive) return;
-    if (sAheadQueued) dropQueued(SGURIString(sAheadQueued.URI), @"the DJ's session ended");
+    if (sAheadQueued) dropQueued(sAheadQueued, @"the DJ's session ended");
     sAheadQueued = nil;
     sDJActive = NO;
+    sQueueSessionGeneration++;
+    [sPendingCopies removeAllObjects];
+    [sCancelledCopies removeAllObjects];
     clearSavedSession();
     SGPlayerSetDJTransitionMuted(NO);
     sInjected = @[];
@@ -1511,6 +1614,7 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     sLastQueue = queue;
     *forward = queue;
     SPTPlayerState *state = SGPlayerState();
+    reconcilePendingCopies(state);
     NSArray<SPTPlayerTrack *> *next = [queue valueForKey:@"nextTracks"];
     NSString *signature = signatureOf(state, next);
     if (sCachedMerged.count && [signature isEqualToString:sSignature]) {
@@ -1859,13 +1963,13 @@ void SGDJQueueBeginPick(void) {
     // Remove our prepared old song before that replacement can consume it.
     SPTPlayerTrack *prepared = sAheadQueued;
     sAheadQueued = nil;
-    if (prepared) dropQueued(SGURIString(prepared.URI), @"waiting for a new DJ set");
+    if (prepared) dropQueued(prepared, @"waiting for a new DJ set");
     drawNewSegmentButton(sQueuePageView);
 }
 void SGDJQueueFinishPick(BOOL changed) {
     sPickingSegment = NO;
     if (changed && sDJActive) {
-        if (sAheadQueued) dropQueued(SGURIString(sAheadQueued.URI), @"new DJ set landed");
+        if (sAheadQueued) dropQueued(sAheadQueued, @"new DJ set landed");
         sAheadQueued = nil;
         forgetOrder();
     }
@@ -2973,6 +3077,7 @@ static void scheduleHandOver(void) {
         sJumpRefused = NO;
     }
     if (!isDJSession(state)) return;
+    reconcilePendingCopies(state);
     SPTPlayerTrack *track = state.track;
     static NSString *lastKey, *lastUID;
     // The first state of a launch is the session going on where it was, not the player coming to the track.
@@ -3021,13 +3126,8 @@ static void scheduleHandOver(void) {
     BOOL droppedLate = sDropped && sDroppedAt && -sDroppedAt.timeIntervalSinceNow < 5;
     SPTPlayerTrack *put = sAheadQueued ?: (droppedLate ? sDropped : nil);
     // A skip of ours to a DJ track that the core took to a copy of it in its queue (put in ahead before a launch).
-    if (arrived && isCoreQueued(track) && track.UID.length && !sCopyOf[track.UID] && !put && sSkipTarget && sSkipAt &&
-        -sSkipAt.timeIntervalSinceNow < 3 && [SGURIString(track.URI) isEqualToString:SGURIString(sSkipTarget.URI)]) {
-        SGLog(@"queue: %@, skipped to, plays from the core's queue: shown as the DJ's", track.trackTitle);
-        noteCopy(track, sSkipTarget);
-        sSignature = nil;
-        refreshReaders();
-    }
+    // A matching URI is not proof this was a DJ copy: only an owned q-UID
+    // identified at creation may borrow the DJ's artwork or history.
     // A copy known from before a launch (sCopyOf is kept): its DJ track has played now, the core's own is passed.
     NSString *copied = isCoreQueued(track) ? sCopyOf[track.UID][@"uid"] : nil;
     if (arrived && copied.length && !put && ![sHidden containsObject:baseUID(copied)]) {
@@ -3037,7 +3137,10 @@ static void scheduleHandOver(void) {
         sSignature = nil;
         refreshReaders();
     }
-    if (put && arrived && isCoreQueued(track) && [SGURIString(track.URI) isEqualToString:SGURIString(put.URI)]) {
+    reconcilePendingCopies(state);
+    NSDictionary *ownedArrival = track.UID.length ? sCopyOf[track.UID] : nil;
+    if (put && arrived && isCoreQueued(track) && [ownedArrival[@"uid"] isEqualToString:put.UID] &&
+        [ownedArrival[@"uri"] isEqualToString:SGURIString(put.URI)]) {
         // By the player's own track: its row is no longer among the page's once the core's copy of it plays.
         SGLog(@"queue: %@, put in ahead, is playing from the core's queue", track.trackTitle);
         noteCopy(track, put);
