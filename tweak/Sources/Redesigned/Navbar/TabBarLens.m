@@ -195,7 +195,7 @@ static BOOL bubbles(void);
         _glyphEdgePane.clear = YES;
         _glyphEdgePane.blurRadius = 0.32;
         _glyphEdgePane.magnification = 1.0;  // icon geometry is not scaled
-        _glyphEdgePane.lensScale = 1.04;
+        _glyphEdgePane.lensScale = 1.025;
         _glyphEdgePane.lateralRefraction = YES;
         _glyphEdgePane.sharp = YES;
         _glyphEdgePane.rimless = YES;
@@ -203,7 +203,9 @@ static BOOL bubbles(void);
         _glyphEdgeMask = [CAGradientLayer layer];
         _glyphEdgeMask.startPoint = CGPointMake(0, 0.5);
         _glyphEdgeMask.endPoint = CGPointMake(1, 0.5);
-        _glyphEdgeMask.locations = @[@0, @0.09, @0.23, @0.35, @0.65, @0.77, @0.91, @1];
+        // Confine reflected glyphs to the actual boundary. A broad 35%
+        // crescent showed the distorted icon *beside* the intact green icon.
+        _glyphEdgeMask.locations = @[@0, @0.045, @0.10, @0.17, @0.83, @0.90, @0.955, @1];
         _glyphEdgePane.layer.mask = _glyphEdgeMask;
     }
     if (!_platterEdgePane) {
@@ -226,9 +228,14 @@ static BOOL bubbles(void);
         _platterEdgeMask = [CAGradientLayer layer];
         _platterEdgeMask.startPoint = CGPointMake(0, 0.5);
         _platterEdgeMask.endPoint = CGPointMake(1, 0.5);
-        _platterEdgeMask.locations = _glyphEdgeMask.locations;
+        // The reduced platter has a broader edge than individual glyphs.
+        // Its refraction stays wide even when glyph reflection is narrowed.
+        _platterEdgeMask.locations = @[@0, @0.09, @0.23, @0.35, @0.65, @0.77, @0.91, @1];
         _platterEdgePane.layer.mask = _platterEdgeMask;
-        [self addSubview:_platterEdgePane];
+        // Host-level sibling: inside the lifted lens the backdrop sampled
+        // its own composite, not the 0.92x capsule in the actual tab host.
+        // A sibling just above the main lens sees the reduced platter below
+        // it, while remaining below the ordinary and accent glyph groups.
     }
     [self syncGlyphEdgeStack];
 }
@@ -238,7 +245,13 @@ static BOOL bubbles(void);
 // and made an offset reflection of the icon instead of bending its own edge.
 - (void)syncGlyphEdgeStack {
     UIView *host = self.superview;
-    if (!_glyphEdgePane || !host) return;
+    if (!host) return;
+    if (_platterEdgePane) {
+        // UIKit may reorder siblings on late tab layout: restore the optical
+        // sibling between the main scaled glass and both glyph groups.
+        [host insertSubview:_platterEdgePane aboveSubview:self];
+    }
+    if (!_glyphEdgePane) return;
     UIView *target = _tintOverlay.superview == host ? _tintOverlay : host;
     if (_glyphEdgePane.superview != target) [target addSubview:_glyphEdgePane];
     if (target.subviews.lastObject != _glyphEdgePane) [target bringSubviewToFront:_glyphEdgePane];
@@ -268,7 +281,10 @@ static BOOL bubbles(void);
     [super didMoveToSuperview];
     // The overlay is a sibling of this lens. It must not survive a bar being
     // removed or moved to another host during a Spotify navigation rebuild.
-    if (!self.superview) [_glyphEdgePane removeFromSuperview];
+    if (!self.superview) {
+        [_glyphEdgePane removeFromSuperview];
+        [_platterEdgePane removeFromSuperview];
+    }
 }
 
 - (void)layoutSubviews {
@@ -295,7 +311,7 @@ static BOOL bubbles(void);
     _perimeter.frame = bounds;
     _perimeter.path = outline;
     if (_platterEdgePane) {
-        _platterEdgePane.frame = bounds;
+        if (!CGRectEqualToRect(_platterEdgePane.bounds, bounds)) _platterEdgePane.bounds = bounds;
         _platterEdgePane.layer.cornerRadius = radius;
         _platterEdgeMask.frame = bounds;
     }
@@ -317,10 +333,29 @@ static BOOL bubbles(void);
         [self showGlass:NO animated:NO];
         [self snapToRest];
         [_glyphEdgePane removeFromSuperview];
+        [_platterEdgePane removeFromSuperview];
     }
 }
 
 #pragma mark - what the bar tells it
+
+// Glass material and the pale resting selection must NOT cross-fade while
+// the raised bubble is still in flight: this used to make a white flash on
+// release and could brighten with rapid taps. Use the same render-server
+// spring duration as the actual bubble, with a generation check for retaps.
+- (void)dropGlassAfterPlayback {
+    if (!_glassOn || _touching || _liftTarget > 0.001) return;
+    NSUInteger generation = _pulseGeneration;
+    NSUInteger count = _playback.length / sizeof(SGLensSample);
+    NSTimeInterval duration = count > 1 ? (count - 1) * kPlayStep : 0.10;
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        typeof(self) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_pulseGeneration != generation || strongSelf->_touching ||
+            strongSelf->_liftTarget > 0.001) return;
+        [strongSelf showGlass:NO animated:YES];
+    });
+}
 
 - (void)setRestFrame:(CGRect)frame animated:(BOOL)animated {
     BOOL first = CGRectIsEmpty(_restFrame);
@@ -340,24 +375,19 @@ static BOOL bubbles(void);
         return;
     }
     [self takeOverPlayback];
+    ++_pulseGeneration; // invalidate any previous material-drop timer
     _tL = left;
     _tR = right;
-    // A tap on another tab also raises the native lens briefly. The gesture
-    // path owns the lens during a real drag and never uses this pulse.
+    // A tap on another tab also raises the native lens briefly. Never drop
+    // its glass on a fixed 0.22-second timer while its spring is still moving.
     if (bubbles() && fabs((left + right - _L - _R) / 2) > 8 && !_touching) {
-        NSUInteger pulse = ++_pulseGeneration;
         _lift = MAX(_lift, 1);
         _vLift = 0;
         _liftTarget = 0;
         [self showGlass:YES animated:NO];
-        __weak typeof(self) weakSelf = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.22 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            typeof(self) strongSelf = weakSelf;
-            if (strongSelf && strongSelf->_pulseGeneration == pulse && !strongSelf->_touching)
-                [strongSelf showGlass:NO animated:YES];
-        });
     }
     [self playToTargets];
+    [self dropGlassAfterPlayback];
 }
 
 // Whether a finger lifts the pill into the glass bubble. With the legacy glass off the bubble's pane is a plain dark blur,
@@ -531,13 +561,16 @@ static BOOL bubbles(void) {
 - (void)endTouch {
     if (!_touching) return;
     _touching = NO;
+    ++_pulseGeneration;
     _liftTarget = 0;
     _tL = CGRectGetMinX(_restFrame);
     _tR = CGRectGetMaxX(_restFrame);
     if (bubbles()) _vSq += kLensPoke * 0.6;
-    // The glass goes back to the pill while the bubble is still on its way to the tab.
-    [self showGlass:NO animated:YES];
+    // Keep the clear material above the glyphs until the return spring has
+    // reached its target. Early cross-fade exposed the white resting pill
+    // through the raised lens and caused the release flash.
     [self playToTargets];
+    [self dropGlassAfterPlayback];
 }
 
 - (void)flush {
@@ -677,6 +710,13 @@ static BOOL bubbles(void) {
             [self tintScaleXForState:[self state] opticalScaleX:sx], sy, 1);
         [CATransaction commit];
     }
+    if (_platterEdgePane && _platterEdgePane.superview) {
+        [UIView performWithoutAnimation:^{
+            if (!CGRectEqualToRect(self->_platterEdgePane.bounds, self.bounds)) self->_platterEdgePane.bounds = self.bounds;
+            self->_platterEdgePane.center = center;
+            self->_platterEdgePane.transform = CGAffineTransformMakeScale(sx, sy);
+        }];
+    }
     if (_glyphEdgePane && _glyphEdgePane.superview) {
         UIView *edgeHost = _glyphEdgePane.superview;
         CGPoint edgeCenter = [self.superview convertPoint:center toView:edgeHost];
@@ -791,6 +831,9 @@ static BOOL bubbles(void) {
     [self.layer removeAnimationForKey:@"lens.x"];
     [self.layer removeAnimationForKey:@"lens.sx"];
     [self.layer removeAnimationForKey:@"lens.sy"];
+    [_platterEdgePane.layer removeAnimationForKey:@"lens.x"];
+    [_platterEdgePane.layer removeAnimationForKey:@"lens.sx"];
+    [_platterEdgePane.layer removeAnimationForKey:@"lens.sy"];
     [_glyphEdgePane.layer removeAnimationForKey:@"lens.x"];
     [_glyphEdgePane.layer removeAnimationForKey:@"lens.sx"];
     [_glyphEdgePane.layer removeAnimationForKey:@"lens.sy"];
@@ -869,6 +912,17 @@ static BOOL bubbles(void) {
     add(@"lens.x", @"position.x", xs);
     add(@"lens.sx", @"transform.scale.x", sxs);
     add(@"lens.sy", @"transform.scale.y", sys);
+    if (_platterEdgePane && _platterEdgePane.superview == self.superview) {
+        for (NSString *key in @[@"lens.x", @"lens.sx", @"lens.sy"]) {
+            NSString *path = [key isEqualToString:@"lens.x"] ? @"position.x" :
+                             ([key isEqualToString:@"lens.sx"] ? @"transform.scale.x" : @"transform.scale.y");
+            CAKeyframeAnimation *a = [CAKeyframeAnimation animationWithKeyPath:path];
+            a.values = [key isEqualToString:@"lens.x"] ? xs : ([key isEqualToString:@"lens.sx"] ? sxs : sys);
+            a.duration = duration;
+            a.calculationMode = kCAAnimationLinear;
+            [_platterEdgePane.layer addAnimation:a forKey:key];
+        }
+    }
     // Stage 26 moved this pane INSIDE SelectedContentView. The old
     // equality check silently skipped its render-server release animation.
     if (_glyphEdgePane && _glyphEdgePane.superview && self.superview) {
