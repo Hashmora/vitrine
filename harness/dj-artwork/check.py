@@ -12,5 +12,13 @@ assert 'return djTitle(card.accessibilityLabel);' not in identity
 for look in ('Native', 'Redesigned'):
     text = (root/f'tweak/Sources/{look}/Home/DJArtwork.x').read_text()
     assert 'SGDJArtworkIsConfirmedCard(row)' in text
+    assert 'SGDJArtworkNeedsPlaceholder(row, holder, &retry)' in text
+    assert 'if (retry)' in text and 'dispatch_after(' in text
     assert 'SGDJLabel(' not in text and 'SGRDJLabel(' not in text
 print('DJ artwork identity gates: PASS')
+
+identity_missing = identity
+assert 'foundBitmapSlot && !nativeArtwork && placeholder' in identity_missing
+assert 'now - firstSeen.doubleValue >= 0.8' in identity_missing
+assert 'SGDJ_TRACE(@"artwork.placeholder"' in identity_missing
+print('DJ blank-placeholder fallback: PASS (requires device verification)')

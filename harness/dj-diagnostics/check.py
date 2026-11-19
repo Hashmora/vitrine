@@ -103,3 +103,25 @@ assert {'rapid_track_changes', 'artwork_unconfirmed'} <= {x['code'] for x in fin
 assert not any(x['code'] == 'rapid_track_changes' for x in
                module.interpret([], burst[:4], [])), 'false positive on small skips'
 print('DJ diagnostic driver wiring, redaction, offline capture and heuristics: PASS')
+
+# Old PR #227 captures were incorrectly described as a single extra reference
+# because the player-state callback fired only once. Poll samples describe the
+# actual retained state (but do NOT imply repeated network responses).
+non_dj = [{'dj': {'contextKind': 'other', 'future': [{}] * 16, 'reverseCount': 5}}
+          for _ in range(6)]
+non_dj.append({'dj': {'contextKind': 'dj', 'future': [{}] * 16, 'reverseCount': 16}})
+cap_source = root / 'scripts/dj-cap-occupancy.py'
+cap_spec = importlib.util.spec_from_file_location('dj_cap_occupancy', cap_source)
+cap_module = importlib.util.module_from_spec(cap_spec)
+cap_spec.loader.exec_module(cap_module)
+cost = cap_module.non_dj_cap_cost(non_dj)
+assert cost == {'snapshots': 6, 'avgExtraNext': 14.0, 'peakExtraNext': 14,
+                'withExtraNext': 6, 'prevObserved': 6, 'avgExtraPrev': 3.0, 'peakExtraPrev': 3,
+                'withExtraPrev': 6}, cost
+assert cap_module.non_dj_cap_cost([]) == {'snapshots': 0}
+# Keep a local recorder's implementation intact; test the independent analyzer.
+with tempfile.TemporaryDirectory() as temp:
+    path = Path(temp) / 'samples.jsonl'
+    path.write_text('\n'.join(json.dumps(r) for r in non_dj) + '\n')
+    assert cap_module.non_dj_cap_cost(cap_module.read_samples(path)) == cost
+print('DJ cap occupancy via standalone analyzer: PASS')
