@@ -30,7 +30,7 @@
 static char kBarKey, kHostKey, kNavGlassKey, kNavTintKey, kSelPillKey, kRetriesKey, kGlyphOverlayKey, kOutlineLiveKey, kFilledLiveKey, kCreateDiscKey, kGlyphsTakenKey;
 static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, kTemplateKey;
 static char kCreateTargetKey, kCreateGenerationKey;
-static char kAccentCopyKey, kAccentIconKey, kAccentNameKey, kBottomFadeKey;
+static char kAccentCopyKey, kAccentIconKey, kAccentNameKey, kAccentCreateDiscKey, kAccentDiscImageKey, kBottomFadeKey;
 // The bar is a floating capsule, not a full-width slab.
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
@@ -742,11 +742,13 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
         UIView *button = buttons[i];
         UIImageView *nativeIcon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
         UITabBarItem *item = i < bar.items.count ? bar.items[i] : nil;
-        // The WHITE overlay already uses the correct normal/selected glyph.
-        // Never mirror selectedImage for every tab: that gives a different
-        // silhouette when the bubble crosses an unselected button.
-        UIImage *glyph = nativeIcon.image ?: ((item == bar.selectedItem && item.selectedImage)
-                                                ? item.selectedImage : item.image);
+        // The native selected lens shows filled glyphs for EVERY tab it
+        // overlaps, including both tabs when its edge crosses their centers.
+        // Stage 28 incorrectly copied the normal outline glyph for all but
+        // selectedItem, so a moving lens lost its second filled accent icon.
+        UIImage *glyph = item.selectedImage ?: nativeIcon.image ?: item.image;
+        BOOL createOpen = i < bar.sources.count && isCreateSource(bar.sources[i]) && bar.awaitingCreateClose;
+        if (createOpen && nativeIcon.image) glyph = nativeIcon.image;
         if (glyph) {
             UIImageView *coloredIcon = objc_getAssociatedObject(button, &kAccentIconKey);
             if (!coloredIcon) {
@@ -772,6 +774,39 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
             }
             coloredIcon.hidden = NO;
             [used addObject:coloredIcon];
+        }
+        // With Create open, turnCreate deliberately hides the white plus and
+        // paints a green disc whose *alpha mask* cuts out the plus. The normal
+        // bar is excluded from the lens by _normalCutout, so this disc must be
+        // mirrored into SelectedContentView or Create becomes an empty hole.
+        // Never substitute a rectangular white exception in the cutout.
+        UIView *liveDisc = objc_getAssociatedObject(button, &kCreateDiscKey);
+        UIView *accentDisc = objc_getAssociatedObject(button, &kAccentCreateDiscKey);
+        BOOL showDisc = liveDisc && liveDisc.superview == button && liveDisc.alpha > 0.001;
+        if (showDisc) {
+            if (!accentDisc) {
+                accentDisc = [UIView new];
+                accentDisc.userInteractionEnabled = NO;
+                accentDisc.accessibilityElementsHidden = YES;
+                objc_setAssociatedObject(button, &kAccentCreateDiscKey, accentDisc, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            if (accentDisc.superview != selected) [selected insertSubview:accentDisc atIndex:0];
+            accentDisc.bounds = liveDisc.bounds;
+            accentDisc.center = [liveDisc.superview convertPoint:liveDisc.center toView:selected];
+            accentDisc.transform = liveDisc.transform;
+            accentDisc.layer.cornerRadius = liveDisc.layer.cornerRadius;
+            accentDisc.backgroundColor = liveDisc.backgroundColor;
+            accentDisc.alpha = liveDisc.alpha;
+            accentDisc.hidden = NO;
+            UIImage *discImage = nativeIcon.image ?: item.image;
+            UIImage *lastDiscImage = objc_getAssociatedObject(accentDisc, &kAccentDiscImageKey);
+            if (discImage != lastDiscImage || !accentDisc.layer.mask ||
+                fabs(accentDisc.layer.mask.bounds.size.width - liveDisc.bounds.size.width) > 0.1) {
+                accentDisc.layer.mask = discHole(discImage, liveDisc.bounds.size.width);
+                objc_setAssociatedObject(accentDisc, &kAccentDiscImageKey, discImage, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+        } else if (accentDisc) {
+            accentDisc.hidden = YES;
         }
         UILabel *nativeTitle = nil;
         for (UIView *view in button.subviews) {

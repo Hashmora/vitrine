@@ -82,11 +82,12 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     if ([_pane isKindOfClass:SGLegacyGlassView.class]) {
         SGLegacyGlassView *glass = (SGLegacyGlassView *)_pane;
         glass.clear = YES;
-        // A real blur/displacement band, not merely a refractive mesh hidden
-        // under the synthetic track. The center is masked out below.
-        // The rim must visually absorb the inset track, not leave its ends
-        // as sharp inner edges under an otherwise transparent bubble.
-        glass.blurRadius = 2.55;
+        // The held glass must stay *optically clear in the middle*. Stage 28
+        // applied 2.55pt blur to the whole backdrop; even with a radial mask,
+        // most of the reduced track was shown through two blurred copies.
+        // Limit blur to the thin exposed rim and let the synthetic mini-track
+        // supply the sharp center. Do not change the shared glass factory.
+        glass.blurRadius = 1.25;
         glass.lensScale = kHeldLensScale * 1.65;
         // Switch thumbs refract the *entire rounded perimeter*, including
         // the top and bottom of the mini-track. The lateral-only profile
@@ -146,17 +147,17 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     _pane.layer.zPosition = 1;
     [self insertSubview:_pane aboveSubview:_inner];
     _sideRefractionMask = [CAGradientLayer layer];
-    // A wide radial profile refracts the sides, top and bottom of the
-    // *whole* raised thumb. Its inner portion fades over the same area as
-    // the reduced mini-track, so no internal hard capsule edge survives.
+    // The old radial mask admitted backdrop blur over most of the thumb.
+    // A narrow outer falloff keeps the green/grey center crisp and confines
+    // the displacement + blur to the physical edge of the lifted capsule.
     _sideRefractionMask.type = kCAGradientLayerRadial;
     _sideRefractionMask.startPoint = CGPointMake(0.5, 0.5);
     _sideRefractionMask.endPoint = CGPointMake(1.0, 1.0);
-    _sideRefractionMask.locations = @[@0, @0.22, @0.42, @0.64, @1];
+    _sideRefractionMask.locations = @[@0, @0.58, @0.72, @0.87, @1];
     _sideRefractionMask.colors = @[(id)UIColor.clearColor.CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.07].CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.42].CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.94].CGColor,
+                                   (id)UIColor.clearColor.CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.12].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.78].CGColor,
                                    (id)UIColor.whiteColor.CGColor];
     _pane.layer.mask = _sideRefractionMask;
     _ring = [CAShapeLayer layer];
