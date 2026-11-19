@@ -6,6 +6,8 @@ identity = (root/'tweak/Sources/Shared/Player/DJArtworkIdentity.m').read_text()
 assert 'kSpotifyDJURI' in identity
 assert 'playlistLabel(card.accessibilityLabel)' in identity
 assert 'containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0)' in identity
+assert 'editorialDJIdentity' in identity and 'isDedicatedDJComponent' in identity
+assert 'return confirmed;' in identity
 assert 'return djTitle(card.accessibilityLabel);' not in identity
 for look in ('Native', 'Redesigned'):
     text = (root/f'tweak/Sources/{look}/Home/DJArtwork.x').read_text()

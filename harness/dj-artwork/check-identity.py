@@ -4,8 +4,10 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 text = (root / 'tweak/Sources/Shared/Player/DJArtworkIdentity.m').read_text()
-assert 'BOOL confirmed = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);' in text
+assert 'BOOL explicitIdentity = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);' in text
+assert 'BOOL confirmed = explicitIdentity || dedicated || editorial;' in text
 assert 'BOOL genericPlaylist = playlistLabel(card.accessibilityLabel) && !confirmed;' in text
+assert 'editorialDJIdentity' in text and 'isDedicatedDJComponent' in text
 assert 'SGDJProbeArtworkDecision(confirmed, genericPlaylist);' in text
 assert 'return confirmed;' in text
 assert 'if (playlistLabel(card.accessibilityLabel))' not in text, 'strong DJ identity masked by generic playlist label'
