@@ -334,7 +334,7 @@ static SGMeshTemplate *SGBuildTemplate(CGFloat radius, BOOL classic) {
 }
 
 // The mesh for `size`, from the cached template of its corner radius.
-static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CGFloat lensScale, BOOL classic, BOOL lateral) {
+static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CGFloat lensScale, BOOL classic, BOOL lateral, CGFloat verticalReach) {
     radius = MIN(radius, MIN(size.width, size.height) / 2);
     if (radius <= 0 || size.width < 1 || size.height < 1) return nil;
 
@@ -372,10 +372,14 @@ static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CG
             CGFloat y = fabs(2 * w - 1);
             CGFloat body = pow(MAX(0, 1 - y * y), 1.32);
             CGFloat tails = pow(MAX(0, 1 - y / 0.985), 5.0) * 0.18;
-            envelope = MIN(1, body + tails);
+            // A tab-bar border can run along the very top/bottom of this
+            // enlarged lens. Without a nonzero rim tail, no amount of
+            // widening the horizontal mask can bend that border there.
+            envelope = MIN(1, body + tails + verticalReach * 0.42);
         }
+        CGFloat vertical = lateral ? verticalReach * pow(fabs(2 * u - 1), 2.0) : 1;
         CGPoint from = CGPointMake(MAX(0.0, MIN(1.0, su + v.dispX * dU * envelope)),
-                                   MAX(0.0, MIN(1.0, sw + (lateral ? 0 : v.dispY * dV))));
+                                   MAX(0.0, MIN(1.0, sw + v.dispY * dV * vertical)));
         vertices[i] = (SGMeshVertex){from, {u, w, v.depth}};
     }
     id transform = SGMakeMeshTransform(vertices, vertexCount, (SGMeshFace *)tmpl.faces.bytes, tmpl.faces.length / sizeof(SGMeshFace));
@@ -577,6 +581,14 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     [self setNeedsLayout];
 }
 
+- (void)setLateralVerticalReach:(CGFloat)lateralVerticalReach {
+    lateralVerticalReach = MAX(0, MIN(0.5, lateralVerticalReach));
+    if (_lateralVerticalReach == lateralVerticalReach) return;
+    _lateralVerticalReach = lateralVerticalReach;
+    _meshSize = CGSizeZero;
+    [self setNeedsLayout];
+}
+
 - (void)setMagnification:(CGFloat)magnification {
     // The tab lens requests 0.92. Other panes request 1 or greater;
     // keep their existing displacement unchanged.
@@ -647,7 +659,8 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     [CATransaction setDisableActions:YES];
     self.layer.cornerRadius = radius;
     _backdropLayer.frame = self.bounds;
-    id mesh = SGMakeGlassMesh(size, radius, _magnification, _lensScale, classic, _lateralRefraction);
+    id mesh = SGMakeGlassMesh(size, radius, _magnification, _lensScale, classic,
+                              _lateralRefraction, _lateralVerticalReach);
     // No mesh (a radius of 0): the last one goes rather than staying for a shape it was not made for.
     [_backdropLayer setValue:mesh forKey:@"meshTransform"];
     [CATransaction commit];

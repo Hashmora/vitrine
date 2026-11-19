@@ -87,12 +87,11 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
         // most of the reduced track was shown through two blurred copies.
         // Limit blur to the thin exposed rim and let the synthetic mini-track
         // supply the sharp center. Do not change the shared glass factory.
-        glass.blurRadius = 1.25;
-        glass.lensScale = kHeldLensScale * 1.65;
-        // Switch thumbs refract the *entire rounded perimeter*, including
-        // the top and bottom of the mini-track. The lateral-only profile
-        // used for tab icons hid exactly these curved parts of the thumb.
-        glass.lateralRefraction = NO;
+        glass.blurRadius = 1.45;
+        glass.lensScale = kHeldLensScale * 1.30;
+        // The native switch's held centre is clear: only the LEFT/RIGHT
+        // crescents blur and refract. The white specular ring is separate.
+        glass.lateralRefraction = YES;
         // At the screen's scale: a 1x backdrop under a lens this small showed the track soft, and the thumb is small enough
         // for the cost.
         glass.sharp = YES;
@@ -147,18 +146,20 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     _pane.layer.zPosition = 1;
     [self insertSubview:_pane aboveSubview:_inner];
     _sideRefractionMask = [CAGradientLayer layer];
-    // The old radial mask admitted backdrop blur over most of the thumb.
-    // A narrow outer falloff keeps the green/grey center crisp and confines
-    // the displacement + blur to the physical edge of the lifted capsule.
-    _sideRefractionMask.type = kCAGradientLayerRadial;
-    _sideRefractionMask.startPoint = CGPointMake(0.5, 0.5);
-    _sideRefractionMask.endPoint = CGPointMake(1.0, 1.0);
-    _sideRefractionMask.locations = @[@0, @0.58, @0.72, @0.87, @1];
-    _sideRefractionMask.colors = @[(id)UIColor.clearColor.CGColor,
+    // A HORIZONTAL mask: not a radial blur ring. Widen the side lobes
+    // just enough to dissolve the reduced track's abrupt endpoints; the
+    // middle and the top/bottom middle of the switch remain tack-sharp.
+    _sideRefractionMask.startPoint = CGPointMake(0, 0.5);
+    _sideRefractionMask.endPoint = CGPointMake(1, 0.5);
+    _sideRefractionMask.locations = @[@0, @0.08, @0.27, @0.37, @0.63, @0.73, @0.92, @1];
+    _sideRefractionMask.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.92].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.88].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.25].CGColor,
                                    (id)UIColor.clearColor.CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.12].CGColor,
-                                   (id)[UIColor colorWithWhite:1 alpha:0.78].CGColor,
-                                   (id)UIColor.whiteColor.CGColor];
+                                   (id)UIColor.clearColor.CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.25].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.88].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.92].CGColor];
     _pane.layer.mask = _sideRefractionMask;
     _ring = [CAShapeLayer layer];
     _ring.fillColor = [UIColor colorWithRed:0.9 green:0.95 blue:1 alpha:0.06].CGColor;
@@ -358,9 +359,10 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     // A layer's shadow is not a view's animatable property: it fades in its own animation, as long as the swell.
     CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"shadowOpacity"];
     fade.fromValue = @(_shade.presentationLayer ? _shade.presentationLayer.shadowOpacity : _shade.shadowOpacity);
-    fade.toValue = @(lifted ? 0.35f : 0.0f);
+    CGFloat shadow = lifted ? (_hasTrack ? 0.09f : 0.35f) : 0.0f;
+    fade.toValue = @(shadow);
     fade.duration = lifted ? 0.2 : 0.3;
-    _shade.shadowOpacity = lifted ? 0.35f : 0.0f;
+    _shade.shadowOpacity = shadow;
     [_shade addAnimation:fade forKey:@"fade"];
 }
 
