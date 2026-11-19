@@ -2,6 +2,7 @@
 
 #if SG_DRIVER
 #import <stdatomic.h>
+#import <stdlib.h>
 #import <dispatch/dispatch.h>
 
 // No files, network, UIKit or Spotify calls on the observed paths. The driver

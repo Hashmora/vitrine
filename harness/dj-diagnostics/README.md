@@ -19,8 +19,8 @@ Queue to check the rows and Next DJ Set; try Edit/Remove/Undo or a swipe;
 change track, then go Previous; and pause during a DJ-set transition. These
 are *manual reproduction steps*; the diagnostic command does not trigger them.
 To stop earlier press Ctrl-C. For a longer session, use `--seconds 0` and stop
-with Ctrl-C. The script also checks visible UI elements every 3 seconds by
-`find`, and detects prolonged mute/handover and mismatched queue state.
+with Ctrl-C. The script also checks visible UI elements every 3 seconds using one
+read-only `dj.ui` traversal, and detects prolonged mute/handover and mismatched queue state.
 
 The resulting `out/dj-diagnostics-YYYYMMDD-HHMMSS.zip` contains:
 
