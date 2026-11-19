@@ -572,6 +572,15 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
 - (void)getState:(id)request onResponse:(id)onResponse {
     Class requestClass = NSClassFromString(@"ESPGetStateRequest"), optional = NSClassFromString(@"ESPOptionalInt64");
     if (requestClass && optional && [request isKindOfClass:requestClass]) {
+        // Context-bearing requests can safely keep Spotify's native cap outside DJ.
+        // The long-lived subscription carries no context and is established before
+        // DJ starts; do NOT gate that subscription on the currently playing state.
+        id boundContext = [request respondsToSelector:@selector(contextURI)] ? [request valueForKey:@"contextURI"] : nil;
+        NSString *boundURI = SGURIString(boundContext);
+        if (boundURI.length && ![boundURI isEqualToString:kDJContext]) {
+            %orig;
+            return;
+        }
         // The player retains this subscription when the context changes. Do
         // not gate it on today's context: Spotify would not request the missing
         // DJ future tracks when the user switches into DJ later.
@@ -1010,6 +1019,7 @@ NSDictionary *SGDJQueueDiagnostics(void) {
              @"localAudioReady": @(SGPlayerMusicOutput() != NULL),
              @"speedAllowed": @(SGPlayerSpeedAllowed()),
              @"muted": @(SGPlayerDJTransitionMuted()), @"mutedBuffers": @(SGPlayerDJTransitionMutedBuffers()), @"paused": @(state.isPaused), @"duplicateBeforeOutro": @(repeatedCurrentOutro(state) != nil),
+             @"reverseCount": @(state.reverse.count),
              @"nonDJCapSamples": @(sCapNonDJSamples), @"nonDJExtraNextTotal": @(sCapNonDJExtraNext),
              @"nonDJExtraPrevTotal": @(sCapNonDJExtraPrev), @"nonDJExtraNextPeak": @(sCapNonDJPeakNext),
              @"nonDJExtraPrevPeak": @(sCapNonDJPeakPrev),

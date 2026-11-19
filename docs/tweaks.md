@@ -913,6 +913,27 @@ Spotify's own through.
 
 ## Diagnostics
 
+### DJ state subscription caps (PR #227 review)
+
+Spotify 9.1.90 subscribes to `ESPGetStateRequest` **before** it chooses the
+playback context, and the subscription persists when it switches to DJ. That
+request has no context URI, so checking `SGPlayerState()` at subscription time
+would cap DJ to two upcoming tracks forever. Requests that *do* carry a known
+non-DJ context retain Spotify's native cap. The context-free long-lived
+subscription must still ask for 16 future and 16 previous tracks if DJ Queue is
+on. Lowering it without a supported subscription refresh causes missing DJ
+queue rows. This is a known outside-DJ exception, **not** a claim of zero cost.
+
+The standalone `scripts/dj-cap-occupancy.py CAPTURE.zip` reports non-DJ *snapshot* occupancy
+(number of future and previous references in excess of the original caps of
+two) rather than the number of messages/bytes. In the captured 2026-11-20
+60-second non-DJ sample, all 78 polled snapshots contained 16 future references
+(14 above baseline). Those 78 snapshots describe a single sustained state;
+**they do not represent 78 network responses**, and no byte, CPU, latency or
+battery cost is inferred. An actual request/response byte measurement needs
+instrumentation of the ESP transport on the supported Spotify build. This
+exception should be discussed with the PR owner before merge.
+
 ### AI DJ regression recorder (driver builds)
 
 For PR #227, `SG_DRIVER=1` provides the read-only `dj.trace` event ring and the
