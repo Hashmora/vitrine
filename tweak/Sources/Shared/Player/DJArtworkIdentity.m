@@ -65,9 +65,63 @@ static BOOL viewHasEditorialDJIdentity(UIView *view, NSUInteger depth) {
     for (UIView *child in view.subviews) if (viewHasEditorialDJIdentity(child, depth + 1)) return YES;
     return NO;
 }
+static char kMissingArtCardKey, kMissingArtSinceKey;
 #if SG_DRIVER
-static char kArtworkProbeSignature;
+static char kArtworkProbeSignature, kMissingArtProbeKey;
 #endif
+// Spotify's official DJ can be exposed as a plain "DJ, Playlist" card in
+// Recents with no URI, publisher or DJ component reachable from UIKit. Avoid
+// restoring the old title-only override: a user playlist named DJ has the
+// same title, but its loaded UIImageView must never be covered by our art.
+// Only the empty Encore placeholder can use this compatibility path.
+BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
+    if (retry) *retry = NO;
+    BOOL candidate = card && holder && djTitle(card.accessibilityLabel) &&
+        playlistLabel(card.accessibilityLabel) &&
+        ([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"] ||
+         [card.accessibilityIdentifier isEqualToString:@"Components.UI.HomeCard"] ||
+         [card.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"]);
+    BOOL nativeArtwork = NO, foundBitmapSlot = NO, placeholder = NO;
+    if (candidate) {
+        for (UIView *sub in holder.subviews) {
+            if ([sub.accessibilityIdentifier hasPrefix:@"SG.DJArtwork"] ||
+                [sub.accessibilityIdentifier hasPrefix:@"SGR.DJArtwork"]) continue;
+            if ([sub isKindOfClass:UIImageView.class]) {
+                foundBitmapSlot = YES;
+                if (((UIImageView *)sub).image) nativeArtwork = YES;
+            }
+            if ([NSStringFromClass(sub.class) containsString:@"Placeholder"] && !sub.hidden && sub.alpha > 0.01)
+                placeholder = YES;
+        }
+    }
+    BOOL missing = candidate && foundBitmapSlot && !nativeArtwork && placeholder;
+    if (!missing) {
+        objc_setAssociatedObject(holder, &kMissingArtCardKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(holder, &kMissingArtSinceKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    NSValue *previousCard = objc_getAssociatedObject(holder, &kMissingArtCardKey);
+    NSNumber *firstSeen = objc_getAssociatedObject(holder, &kMissingArtSinceKey);
+    if (missing && (!previousCard || previousCard.nonretainedObjectValue != card || !firstSeen)) {
+        objc_setAssociatedObject(holder, &kMissingArtCardKey, [NSValue valueWithNonretainedObject:card], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(holder, &kMissingArtSinceKey, @(now), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        firstSeen = @(now);
+        if (retry) *retry = YES;
+    }
+    BOOL useFallback = missing && firstSeen && now - firstSeen.doubleValue >= 0.8;
+#if SG_DRIVER
+    NSString *signature = [NSString stringWithFormat:@"%d-%d-%d-%d-%d", candidate, foundBitmapSlot,
+                           nativeArtwork, placeholder, useFallback];
+    if (![objc_getAssociatedObject(holder, &kMissingArtProbeKey) isEqualToString:signature]) {
+        objc_setAssociatedObject(holder, &kMissingArtProbeKey, signature, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        SGDJ_TRACE(@"artwork.placeholder", (@{@"candidate": @(candidate), @"bitmapSlot": @(foundBitmapSlot),
+             @"nativeArtwork": @(nativeArtwork), @"placeholder": @(placeholder), @"fallback": @(useFallback),
+             @"history": @([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"])}));
+    }
+#endif
+    return useFallback;
+}
+
 BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     if (!card || !djTitle(card.accessibilityLabel)) return NO;
     BOOL explicitIdentity = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);
