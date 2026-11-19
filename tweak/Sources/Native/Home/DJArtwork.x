@@ -64,8 +64,14 @@ static void SGDJDraw(UIView *holder) {
     [holder bringSubviewToFront:overlay];
 }
 %hook SGDJCardImage
-- (void)didMoveToWindow { %orig; SGDJDraw((UIView *)self); }
-- (void)layoutSubviews { %orig; SGDJDraw((UIView *)self); }
+- (void)didMoveToWindow {
+    %orig;
+    SGDJDraw((UIView *)self);
+}
+- (void)layoutSubviews {
+    %orig;
+    SGDJDraw((UIView *)self);
+}
 %end
 %ctor {
     if (!SGNativeUI()) return;
