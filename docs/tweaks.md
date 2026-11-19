@@ -786,8 +786,13 @@ each "Up next" card as a row of its own before the track it introduces. In any o
 Spotify's own through.
 
 - **How many:** the DJ's segment, about five tracks. The player's state subscription asks for two tracks to come and
-  two behind; both caps are raised to 16 at launch, for every context, since the subscription is made before any
-  context is known (with two behind, a step back from a new segment found only the tracks the hand-over went past). With a
+  two behind; both caps are raised to 16 for the one launch-time subscription, before a context is known.
+  Explicit context-scoped requests remain at Spotify's original caps outside DJ. A global subscription cannot be
+  changed per context without safely resubscribing Spotify's player observers, so no state-based conditional is used
+  (doing so loses the next DJ tracks on a later DJ launch). With the diagnostic driver enabled, `dj.state` reports
+  `nonDJCapSamples`, `nonDJExtraNextTotal`, `nonDJExtraPrevTotal`, and both peak values; they measure extra
+  retained *track references* against Spotify's original 2+2 cap. Actual bytes, CPU and network latency still require
+  on-device profiling (with two behind, a step back from a new segment found only the tracks the hand-over went past). With a
   cap of 80 the core still gave one segment (9.1.90): the next is made when the core comes to the last track of this
   one. The core asks for it itself, with no context page from the app (no `play`, `updateContext` or
   `updateContextPage`), so it cannot be asked for earlier. With nothing of a segment left but removed or played

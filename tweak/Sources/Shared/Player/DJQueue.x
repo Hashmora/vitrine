@@ -10,8 +10,10 @@
 //
 // The player's subscription asks the core for the state with a cap on the tracks to come
 // (ESPGetStateRequest.nextTracksCap), two at first; it is raised here so the state's future is the whole segment. The
-// subscription is made once, at launch, before any context is known, so the cap is raised for every context: kFutureCap
-// is what the DJ's segment needs and no more. The core gives no more than one segment whatever the cap (9.1.90: with a
+// subscription is made once, at launch, before any context is known. Scoping it by the
+// *current* state would permanently leave DJ with two tracks when playback starts later;
+// do not do so. Only a request carrying an explicit context can be scoped. Remaining
+// global-subscription overhead is counted by sampleDJCapCost and exposed via SG_DRIVER. The core gives no more than one segment whatever the cap (9.1.90: with a
 // cap of 80 the DJ's future was its 4 tracks and 2 voices); the next segment is made when the core comes to the last
 // track of this one. The core asks for it itself: the app gives it no context page then (no play, updateContext or
 // updateContextPage, 9.1.90), so there is nothing here to ask it earlier with.
@@ -104,6 +106,13 @@ static void skipToNextDJSegment(void);
 
 // The DJ's segment (five tracks, a voice before the first and one after the last) with room for the hand-queued.
 static const int64_t kFutureCap = 16;
+// The long-lived state subscription precedes context selection. Measure how many
+// additional TRACK REFERENCES are actually retained outside DJ, not a guessed
+// byte/CPU cost. A real latency/battery measurement needs device profiling.
+static NSUInteger sCapNonDJSamples, sCapNonDJExtraNext, sCapNonDJExtraPrev;
+static NSUInteger sCapNonDJPeakNext, sCapNonDJPeakPrev;
+static CFAbsoluteTime sCapLastSampleAt;
+static void sampleDJCapCost(SPTPlayerState *state);
 // How long the page keeps its rows while the core has no tracks to come.
 static const NSTimeInterval kGapSeconds = 3;
 // How long the core has to move to a track it was asked to skip back to.
@@ -2259,6 +2268,12 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
 - (void)getState:(id)request onResponse:(id)onResponse {
     Class requestClass = NSClassFromString(@"ESPGetStateRequest"), optional = NSClassFromString(@"ESPOptionalInt64");
     if (requestClass && optional && [request isKindOfClass:requestClass]) {
+        // Some callers may supply a specific playback context. Only those
+        // requests can safely retain Spotify's original caps outside DJ.
+        // The persistent getState subscription normally has NO context here.
+        id context = [request respondsToSelector:@selector(contextURI)] ? [request valueForKey:@"contextURI"] : nil;
+        NSString *uri = SGURIString(context);
+        if (uri.length && ![uri isEqualToString:kDJContext]) { %orig; return; }
         // A message field the request does not have reads as an empty one (value 0): no cap, which is left alone.
         BOOL has = ![request respondsToSelector:NSSelectorFromString(@"hasNextTracksCap")] || [[request valueForKey:@"hasNextTracksCap"] boolValue];
         long long was = has ? [[[request valueForKey:@"nextTracksCap"] valueForKey:@"value"] longLongValue] : 0;
@@ -3108,10 +3123,35 @@ static void scheduleHandOver(void) {
     }];
 }
 
+// A rate-limited diagnostic on non-DJ state snapshots. The baseline subscription
+// requested two previous and two next tracks; count the extra references actually
+// received rather than assuming that the core always returns 16 of each.
+static void sampleDJCapCost(SPTPlayerState *state) {
+    if (!state || isDJSession(state)) return;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - sCapLastSampleAt < 5) return;
+    sCapLastSampleAt = now;
+    NSUInteger next = state.future.count > 2 ? state.future.count - 2 : 0;
+    NSUInteger prev = state.reverse.count > 2 ? state.reverse.count - 2 : 0;
+    sCapNonDJSamples++;
+    sCapNonDJExtraNext += next;
+    sCapNonDJExtraPrev += prev;
+    sCapNonDJPeakNext = MAX(sCapNonDJPeakNext, next);
+    sCapNonDJPeakPrev = MAX(sCapNonDJPeakPrev, prev);
+    if (sCapNonDJSamples == 1 || sCapNonDJSamples % 12 == 0)
+        SGLog(@"queue: non-DJ state cap samples=%lu extra tracks (average next %.1f, prev %.1f; peak next %lu, prev %lu)",
+              (unsigned long)sCapNonDJSamples,
+              (double)sCapNonDJExtraNext / sCapNonDJSamples, (double)sCapNonDJExtraPrev / sCapNonDJSamples,
+              (unsigned long)sCapNonDJPeakNext, (unsigned long)sCapNonDJPeakPrev);
+}
+
 @interface SGDJHistory : NSObject <SGPlayerStateObserver>
 @end
 
 @implementation SGDJHistory
+- (void)playerStateDidReport:(SPTPlayerState *)state {
+    sampleDJCapCost(state);
+}
 - (void)playerStateDidChange:(SPTPlayerState *)state {
     if (isDJSession(state)) restoreSession(state);
     if (![state.contextURI isEqual:sPlayedContext]) {
@@ -3612,7 +3652,10 @@ NSDictionary *SGDJQueueDiagnostics(void) {
     NSMutableArray *future = [NSMutableArray array];
     for (SPTPlayerTrack *t in state.future) [future addObject:item(t)];
     return @{@"context": SGURIString(state.contextURI) ?: @"", @"active": @(sDJActive), @"current": item(state.track), @"shown": item(shownDJTrack(state.track) ?: state.track), @"displayPosition": @(shownDJStateBase(state).position), @"future": future, @"position": @(state.position), @"duration": @(state.duration),
-             @"ordered": @(sOrdered), @"handover": @(sHandingOver), @"muted": @(SGPlayerDJTransitionMuted()), @"mutedBuffers": @(SGPlayerDJTransitionMutedBuffers()), @"paused": @(state.isPaused), @"duplicateBeforeOutro": @(repeatedCurrentOutro(state) != nil)};
+             @"ordered": @(sOrdered), @"handover": @(sHandingOver), @"muted": @(SGPlayerDJTransitionMuted()), @"mutedBuffers": @(SGPlayerDJTransitionMutedBuffers()), @"paused": @(state.isPaused), @"duplicateBeforeOutro": @(repeatedCurrentOutro(state) != nil),
+             @"nonDJCapSamples": @(sCapNonDJSamples), @"nonDJExtraNextTotal": @(sCapNonDJExtraNext),
+             @"nonDJExtraPrevTotal": @(sCapNonDJExtraPrev), @"nonDJExtraNextPeak": @(sCapNonDJPeakNext),
+             @"nonDJExtraPrevPeak": @(sCapNonDJPeakPrev)};
 }
 #endif
 
