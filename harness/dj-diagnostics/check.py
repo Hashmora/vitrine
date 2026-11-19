@@ -26,6 +26,7 @@ assert '@"dj.trace"' in driver and 'SGDJProbeRead(since, limit)' in driver
 assert '@"dj.ui"' in driver and 'SGForEachView(window' in driver
 assert 'SGDJ_TRACE(@"button.tap"' in queue
 assert 'SGDJ_TRACE(@"queue.set"' in queue
+assert 'SGDJ_TRACE(@"skip.internal"' in (root / 'tweak/Sources/Shared/Player/DJQueuePlayback.inc').read_text()
 assert 'SGDJ_TRACE(@"previous.target"' in queue
 assert '#if SG_DRIVER' in core and '#define SGDJ_TRACE(kind, fields) do {} while (0)' in header
 
@@ -95,4 +96,10 @@ samples = [
 findings = module.interpret(samples, [{'event': 'previous.fallback', 'data': {}}], [])
 codes = {x['code'] for x in findings}
 assert {'mute_long', 'handover_long', 'empty_queue', 'previous_fallback'} <= codes
+burst = [{'seq': i + 1, 'event': 'player.state', 't': i / 10.0,
+          'data': {'track': f'{i:08x}', 'arrived': True, 'position': 0.0}} for i in range(10)]
+findings = module.interpret([], burst, [], {'artCandidates': 76, 'artConfirmed': 0})
+assert {'rapid_track_changes', 'artwork_unconfirmed'} <= {x['code'] for x in findings}
+assert not any(x['code'] == 'rapid_track_changes' for x in
+               module.interpret([], burst[:4], [])), 'false positive on small skips'
 print('DJ diagnostic driver wiring, redaction, offline capture and heuristics: PASS')

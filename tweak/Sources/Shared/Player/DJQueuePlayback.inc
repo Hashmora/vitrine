@@ -3,6 +3,9 @@
 static BOOL sAdvancing, sOwnQueueCommand;
 
 static id skipForward(SPTPlayerTrack *to) {
+    // Log our own targeted skips so a fast succession of player.state events
+    // can be distinguished from external user skips in the diagnostic report.
+    SGDJ_TRACE(@"skip.internal", (@{@"target": SGDJProbeTag(to.UID), @"targeted": @(to != nil)}));
     sAdvancing = YES;
     id result = to ? [(id<SPTPlayer>)queuePlayer() skipToNextTrackWithOptions:nil track:to]
                    : [(id<SPTPlayer>)queuePlayer() skipToNextTrackWithOptions:nil];
