@@ -34,13 +34,13 @@ static BOOL viewIdentifiesDJ(UIView *view, NSUInteger depth) {
 }
 BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     if (!card || !djTitle(card.accessibilityLabel)) return NO;
-    if (playlistLabel(card.accessibilityLabel)) {
-        SGDJProbeArtworkDecision(NO, YES);
-        return NO;
-    }
-    // Fail closed when the model identity is unavailable. An unconfirmed card
-    // keeps Spotify's original artwork, instead of painting over a playlist.
+    // Spotify labels its *own* DJ entry as a playlist in some Home/Recents
+    // presentations. A generic playlist label must not veto an explicit
+    // Spotify DJ URI or an unambiguous assistant identity in this card.
     BOOL confirmed = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);
-    SGDJProbeArtworkDecision(confirmed, NO);
+    BOOL genericPlaylist = playlistLabel(card.accessibilityLabel) && !confirmed;
+    // Still fail closed when neither the card nor a descendant identifies the
+    // assistant. A user playlist named "DJ" must keep its original artwork.
+    SGDJProbeArtworkDecision(confirmed, genericPlaylist);
     return confirmed;
 }
