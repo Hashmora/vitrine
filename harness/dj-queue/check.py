@@ -33,6 +33,7 @@ prelude = r'''
 static NSString *SGURIString(id value) { return value; }
 static NSString *kCardSuffix = @"-card";
 static NSMutableDictionary *sCopyOf;
+static void reconcilePendingCopies(SPTPlayerState *state) { (void)state; }
 static NSMutableArray<SPTPlayerTrack *> *sPlayed;
 static NSMutableSet *sHidden, *sPassed, *sPlayedBefore, *sVoiced;
 static BOOL sDJActive = YES, sOrdered, sHandingOver, sAdvancing, sPlayingMoved;
@@ -73,6 +74,13 @@ int main(void) { @autoreleasepool {
     [sPassed removeObject:@"4"]; assert(([historyFutureRows(state) isEqualToArray:@[two,three,five]])); [sPassed addObject:@"4"];
     state.track = five; assert(historyFutureRows(state).count == 0);
     assert(!staysHidden(three));
+    // A hand-queued duplicate of a DJ track is not a copy owned by Vitrine.
+    SPTPlayerTrack *manual = song(@"qManual"); manual.URI = three.URI; manual.provider = @"queue";
+    state.future = @[manual, copy];
+    assert(queuedCopyOf(three, state, NULL) == copy);
+    state.future = @[manual]; assert(queuedCopyOf(three, state, NULL) == nil);
+    state.future = @[copy, manual]; BOOL hasManualAfter = NO;
+    assert(queuedCopyOf(three, state, &hasManualAfter) == copy && hasManualAfter);
     // Last reordered track: its stale context next must be skipped before it sounds.
     state.track = five; SPTPlayerTrack *fresh = song(@"6"); state.future = @[three,fresh];
     sOrdered = YES; assert(skipPastSpent(state) == fresh);
