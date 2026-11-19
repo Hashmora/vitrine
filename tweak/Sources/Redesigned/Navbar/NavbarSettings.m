@@ -5,6 +5,7 @@
 #import "Redesigned/Kit/SGRAccent.h"
 #import "Shared/Navigation/AddTabSheet.h"
 #import "Redesigned/Kit/SGRTokens.h"
+#import "Redesigned/Kit/SGRGlass.h"
 
 // What "Add a tab" offers: URIs Spotify's own router resolves to a page of its own, each with the
 // name of the SPTEncoreIcon class method that draws its glyph. Playlists was spotify:collection:playlists
@@ -327,7 +328,26 @@ static NSArray<NSDictionary *> *stockEntries(void) {
 }
 
 static UIImage *glyphFor(NSDictionary *entry, BOOL active) {
-    return SGRNavbarGlyph(entry, active) ?: [UIImage systemImageNamed:@"square.dashed"];
+    UIImage *image = SGRNavbarGlyph(entry, active);
+    if (image) return image;
+    // On pre-26 iOS the stock TabBar.x source was never built, so it has
+    // no live Encore view to snapshot. Resolve the same tab by its preset
+    // instead of showing a square.dashed placeholder for every tab.
+    NSString *ident = entry[SGRNavbarTitle] ?: entry[SGRNavbarID];
+    for (NSDictionary *preset in tabPresets()) {
+        if (![preset[SGTabTitle] isEqualToString:ident]) continue;
+        NSDictionary *sample = @{SGRNavbarURI: @"preview",
+                                 SGRNavbarIcon: preset[SGTabIcon],
+                                 SGRNavbarIconSet: preset[SGTabIconSet] ?: @"encore"};
+        image = SGRNavbarGlyph(sample, active);
+        if (image) return image;
+        break;
+    }
+    NSDictionary<NSString *, NSString *> *symbols = @{
+        @"Home": @"house.fill", @"Search": @"magnifyingglass",
+        @"Your Library": @"books.vertical", @"Create": @"plus"
+    };
+    return [UIImage systemImageNamed:symbols[ident] ?: @"music.note"];
 }
 
 static UITabBar *previewBar(void) {
@@ -336,6 +356,22 @@ static UITabBar *previewBar(void) {
     bar.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     bar.userInteractionEnabled = NO;
     bar.tintColor = SGRAccent();
+    if (SGRLegacyTabBarOn()) {
+        UITabBarAppearance *clear = [UITabBarAppearance new];
+        [clear configureWithTransparentBackground];
+        clear.backgroundColor = UIColor.clearColor;
+        for (UITabBarItemAppearance *layout in @[clear.stackedLayoutAppearance, clear.inlineLayoutAppearance, clear.compactInlineLayoutAppearance]) {
+            layout.normal.iconColor = UIColor.whiteColor;
+            layout.normal.titleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor};
+            layout.selected.iconColor = SGRAccent();
+            layout.selected.titleTextAttributes = @{NSForegroundColorAttributeName: SGRAccent()};
+        }
+        bar.standardAppearance = clear;
+        bar.scrollEdgeAppearance = clear;
+        bar.backgroundColor = UIColor.clearColor;
+        bar.barTintColor = UIColor.clearColor;
+        bar.translucent = YES;
+    }
     return bar;
 }
 
@@ -350,14 +386,26 @@ static const CGFloat kPlatterInset = 21, kApartItemWidth = 62, kPlatterGap = 12;
 - (void)showEntries:(NSArray<NSDictionary *> *)entries;
 @end
 
+static char kPreviewMainGlassKey, kPreviewApartGlassKey, kPreviewMainDimKey, kPreviewApartDimKey;
+
 @implementation SGRTabBarPreview {
     UITabBar *_main, *_apart;
+    UIView *_mainPlate, *_apartPlate, *_selectedPlate;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     _main = previewBar();
     _apart = previewBar();
+    if (SGRLegacyTabBarOn()) {
+        _mainPlate = SGGlassFor(self, &kPreviewMainGlassKey);
+        _apartPlate = SGGlassFor(self, &kPreviewApartGlassKey);
+        _selectedPlate = [UIView new];
+        _selectedPlate.userInteractionEnabled = NO;
+        _selectedPlate.backgroundColor = [UIColor colorWithWhite:0 alpha:0.38];
+        _selectedPlate.layer.cornerCurve = kCACornerCurveCircular;
+        [self addSubview:_selectedPlate];
+    }
     [self addSubview:_main];
     [self addSubview:_apart];
     self.isAccessibilityElement = YES;
@@ -415,13 +463,38 @@ static NSArray<UITabBarItem *> *itemsFor(NSArray<NSDictionary *> *entries, BOOL 
 }
 
 - (CGSize)sizeThatFits:(CGSize)size {
-    return CGSizeMake(size.width, [_main sizeThatFits:CGSizeMake(size.width, 49)].height);
+    return CGSizeMake(size.width, SGRLegacyTabBarOn() ? 62 :
+                      [_main sizeThatFits:CGSizeMake(size.width, 49)].height);
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGRect bounds = self.bounds, main = bounds, apart = CGRectZero;
-    if (!_apart.hidden) {
+    if (SGRLegacyTabBarOn()) {
+        CGFloat circle = 62;
+        CGFloat apartRoom = _apart.hidden ? 0 : circle + kPlatterGap;
+        CGFloat available = MAX(0, bounds.size.width - 2 * kPlatterInset - apartRoom);
+        NSUInteger count = _main.items.count;
+        CGFloat natural = count > 0 && count <= 4
+            ? 100.3333333333 + 8 + (count - 1) * 83.8888888889
+            : 90 * count;
+        CGFloat mainWidth = MIN(available, natural);
+        CGFloat left = floor((bounds.size.width - mainWidth - apartRoom) / 2);
+        main = CGRectMake(left, 0, mainWidth, circle);
+        if (!_apart.hidden) apart = CGRectMake(CGRectGetMaxX(main) + kPlatterGap, 0, circle, circle);
+        _mainPlate.frame = main;
+        SGShapeGlass(_mainPlate, circle / 2, YES);
+        CGFloat pillWidth = count > 0 && count <= 4 ? 100.3333333333 : MAX(1, mainWidth / MAX(1, count) - 8);
+        _selectedPlate.frame = CGRectMake(CGRectGetMinX(main) + 4, 4, MIN(pillWidth, MAX(1, mainWidth - 8)), 54);
+        _selectedPlate.layer.cornerRadius = 27;
+        SGRDarkenGlass(_mainPlate, &kPreviewMainDimKey, circle / 2, 0.63);
+        _apartPlate.hidden = _apart.hidden;
+        if (!_apart.hidden) {
+            _apartPlate.frame = apart;
+            SGShapeGlass(_apartPlate, circle / 2, YES);
+            SGRDarkenGlass(_apartPlate, &kPreviewApartDimKey, circle / 2, 0.63);
+        }
+    } else if (!_apart.hidden) {
         CGFloat width = MIN(bounds.size.width / 2, _apart.items.count * kApartItemWidth + 2 * kPlatterInset);
         CGRectDivide(bounds, &apart, &main, width, CGRectMaxXEdge);
         main.size.width += 2 * kPlatterInset - kPlatterGap;
