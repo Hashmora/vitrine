@@ -24,6 +24,7 @@
 #import "Diagnostics.h"
 #import "Headers/SPTPlayer.h"
 #import "Core/SGDJDiagnostics.h"
+#import "Core/SGDJProbe.h"
 #import <dlfcn.h>
 #import <mach/mach_time.h>
 #import <objc/message.h>
@@ -745,6 +746,11 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
     dispatch_once(&once, ^{
         all = @{
             @"dj.state" : ^NSDictionary *(NSDictionary *p) { return onMain(^id { return SGDJQueueDiagnostics(); }); },
+            @"dj.trace" : ^NSDictionary *(NSDictionary *p) {
+                uint64_t since = p[@"since"] ? (uint64_t)MAX(0LL, [p[@"since"] longLongValue]) : 0;
+                NSUInteger limit = p[@"limit"] ? (NSUInteger)MAX(1LL, [p[@"limit"] longLongValue]) : 256;
+                return SGDJProbeRead(since, limit);
+            },
             @"tap" : ^NSDictionary *(NSDictionary *p) {
                 return touchAt(target(p), 0.08);
             },
@@ -1127,7 +1133,7 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
 }
 
 static NSSet<NSString *> *readOnly(void) {
-    return [NSSet setWithArray:@[@"find", @"state", @"screenshot", @"log", @"wait", @"get", @"layers"]];
+    return [NSSet setWithArray:@[@"find", @"state", @"dj.state", @"dj.trace", @"screenshot", @"log", @"wait", @"get", @"layers"]];
 }
 
 BOOL SGDriverHandles(NSString *command) {
