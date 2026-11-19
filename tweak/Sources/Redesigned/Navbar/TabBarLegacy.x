@@ -733,16 +733,25 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
 // with centers 83.889pt apart. This is visual layout only; the existing
 // nearest-center drag recognizer remains authoritative for hit testing.
 static const CGFloat kNativeSlotWidth = 100.3333333333;
+static const CGFloat kNativeStep = 83.8888888889;
 static const CGFloat kNativeIconY = 8, kNativeTitleY = 35;
+// Keep the 4-tab button's width even with only 1, 2 or 3 tabs.
+// UIKit's normal layout otherwise restores 86pt buttons and an 82pt pill.
+static CGFloat nativeBarWidth(NSUInteger count) {
+    return kNativeSlotWidth + 8 + (count > 0 ? count - 1 : 0) * kNativeStep;
+}
 static BOOL nativeTabLayout(UITabBar *bar) {
-    return bar.items.count == 4 && bar.bounds.size.width >= 340 && !SGHidden(SGRKeyNavbarHideLabels);
+    NSUInteger count = bar.items.count;
+    return count >= 1 && count <= 4 &&
+        bar.bounds.size.width + 0.5 >= nativeBarWidth(count) &&
+        !SGHidden(SGRKeyNavbarHideLabels);
 }
 
 static void alignTabContent(UITabBar *bar) {
     NSArray<UIView *> *buttons = tabButtons(bar);
     if (buttons.count != bar.items.count) return;
     BOOL native = nativeTabLayout(bar);
-    CGFloat spacing = native ? (bar.bounds.size.width - 8 - kNativeSlotWidth) / 3 : 0;
+    CGFloat spacing = native ? (bar.bounds.size.width - 8 - kNativeSlotWidth) / MAX(1, buttons.count - 1) : 0;
     for (NSUInteger i = 0; i < buttons.count; i++) {
         UIView *button = buttons[i];
         CGRect frame = button.frame;
@@ -1708,7 +1717,10 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     BOOL separate = apartSource && !fold;
     CGFloat apartRoom = separate ? platterHeight + SGRGrid : 0;
     CGFloat availableWidth = width - kNavGlassMargin * 2 - apartRoom;
-    CGFloat naturalWidth = kNavItemWidth * sources.count + kNavItemSpacing * (sources.count - 1);
+    BOOL nativeWidth = sources.count >= 1 && sources.count <= 4 && !hideLabels &&
+                       nativeBarWidth(sources.count) <= availableWidth + 0.5;
+    CGFloat naturalWidth = nativeWidth ? nativeBarWidth(sources.count)
+                        : kNavItemWidth * sources.count + kNavItemSpacing * (sources.count - 1);
     CGFloat itemWidth = naturalWidth > availableWidth
         ? MAX(1, (availableWidth - kNavItemSpacing * (sources.count - 1)) / sources.count)
         : kNavItemWidth;
@@ -1739,7 +1751,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     SGRDarkenGlass(navGlass, &kNavDimKey, glassFrame.size.height / 2, 0.63);
 
     UIView *navTint = SGRGlassFilm(host, &kNavTintKey, navGlass, glassFrame.size.height / 2);
-    navTint.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
+    navTint.backgroundColor = [UIColor colorWithWhite:1 alpha:0.05];
     // SGRGlassFilm sets the film's frame from the pane's; the film is given the pane's bounds and center as well.
     if (!CGSizeEqualToSize(navTint.bounds.size, glassFrame.size)) navTint.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navTint.center, glassCenter)) navTint.center = glassCenter;

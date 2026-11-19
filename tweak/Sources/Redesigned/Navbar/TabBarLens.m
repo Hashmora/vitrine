@@ -9,18 +9,16 @@ static char kLensPaneKey, kLensFilmKey;
 // the middle, slightly reduced backdrop scale, and most of the refraction in
 // the specular rim. The icons stay legible in the centre like on iOS 26.
 // Apple keeps the content subtly smaller behind the lifted lens. The custom
-// mesh supports 0.96 as its minimum; 0.975 looked nearly unchanged at 3x.
-static const CGFloat kLensMagnification = 0.96;
+// mesh permits 0.92 for a measurable, local backdrop reduction.
+static const CGFloat kLensMagnification = 0.92;
 static const CGFloat kLensHeldBlur = 0.08, kLensRestBlur = 2;
 static const CGFloat kLensHeldBend = 0.90;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
 static const CGFloat kLensGrow = 16, kLensOverscroll = 8;
-// Only the accent reveal grows slightly during a hold. Its edge reaches the
-// adjacent glyph before the optical rim does, allowing two complete green
-// glyphs while the glass passes between tabs without enlarging the bubble.
-static const CGFloat kHeldAccentReveal = 16;
+// Optical glass, black base, selected-colour mask and inverse white cutout
+// must share precisely one outline even when two adjacent icons fit inside it.
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
 // The softer magnification and the closer item centers keep glyphs visible through it.
 // Signed deformation: rightward motion spreads the bubble and lowers its height;
@@ -84,12 +82,11 @@ static const CGFloat kPlayStep = 1.0 / 120;
     UIView *_rest;
     UIView *_pane;
     UIView *_film;
-    // The backdrop handles optical distortion; two independent layers handle
-    // a neutral side shade and narrow specular arcs. A broad white film made
-    // the refracted crescents look milky on iOS 18.
-    CAGradientLayer *_sideShade;
-    CAShapeLayer *_edgeGlow;
-    // Separate optical layers: mesh below, faint side shading and specular arcs above.
+    // The same diagonal, masked glass glare as SGGlassThumbView.
+    // The capsule-shaped mask follows this view's exact bounds and transform;
+    // it never draws an independent oversize white stroke.
+    CAGradientLayer *_glare;
+    CAShapeLayer *_glareMask;
     __weak UIView *_restAbove;
     CADisplayLink *_link;
     // The two edges: where they are, how fast they go and where they are going.
@@ -117,11 +114,15 @@ static const CGFloat kPlayStep = 1.0 / 120;
     if (!(self = [super initWithFrame:frame])) return nil;
     self.userInteractionEnabled = NO;
     self.opaque = NO;
+    // A single rounded clip is shared by all optical sublayers; no glow or
+    // backdrop may leak past the visible lifted bubble.
+    self.clipsToBounds = YES;
+    self.layer.cornerCurve = kCACornerCurveCircular;
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     _heldOutset = 8;
     _rest = [UIView new];
     _rest.backgroundColor = [UIColor colorWithWhite:0 alpha:0.36];
-    _rest.layer.cornerCurve = kCACornerCurveContinuous;
+    _rest.layer.cornerCurve = kCACornerCurveCircular;
     [self addSubview:_rest];
     _pane = SGGlassFor(self, &kLensPaneKey);
     _pane.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
@@ -131,33 +132,23 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // No large white overlay: glass highlights are limited to thin curves.
     _film.backgroundColor = UIColor.clearColor;
     _film.userInteractionEnabled = NO;
-    _sideShade = [CAGradientLayer layer];
-    _sideShade.name = @"Vitrine.LegacyLensNeutralSides";
-    _sideShade.startPoint = CGPointMake(0, 0.5);
-    _sideShade.endPoint = CGPointMake(1, 0.5);
-    _sideShade.colors = @[
-        (id)[UIColor colorWithWhite:0 alpha:0.18].CGColor,
-        (id)[UIColor colorWithWhite:0 alpha:0.05].CGColor,
-        (id)UIColor.clearColor.CGColor,
-        (id)UIColor.clearColor.CGColor,
-        (id)[UIColor colorWithWhite:0 alpha:0.05].CGColor,
-        (id)[UIColor colorWithWhite:0 alpha:0.18].CGColor
-    ];
-    _sideShade.locations = @[@0, @0.16, @0.31, @0.69, @0.84, @1];
-    _sideShade.masksToBounds = YES;
-    _sideShade.opacity = 0;
-    [self.layer addSublayer:_sideShade];
-    _edgeGlow = [CAShapeLayer layer];
-    _edgeGlow.name = @"Vitrine.LegacyLensEdgeGlow";
-    _edgeGlow.fillColor = nil;
-    _edgeGlow.strokeColor = [UIColor colorWithWhite:1 alpha:0.58].CGColor;
-    _edgeGlow.lineWidth = 0.9;
-    _edgeGlow.shadowColor = UIColor.whiteColor.CGColor;
-    _edgeGlow.shadowOpacity = 0.38;
-    _edgeGlow.shadowRadius = 2.2;
-    _edgeGlow.shadowOffset = CGSizeZero;
-    _edgeGlow.opacity = 0;
-    [self.layer addSublayer:_edgeGlow];
+    _glare = [CAGradientLayer layer];
+    _glare.name = @"Vitrine.LegacyLensDynamicGlare";
+    _glare.startPoint = CGPointMake(0, 0);
+    _glare.endPoint = CGPointMake(1, 1);
+    // Match the thumb's directional highlight, not a static opaque border.
+    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.68].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.02].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.02].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.40].CGColor];
+    _glare.locations = @[@0, @0.32, @0.68, @1];
+    _glareMask = [CAShapeLayer layer];
+    _glareMask.fillColor = nil;
+    _glareMask.strokeColor = UIColor.whiteColor.CGColor;
+    _glareMask.lineWidth = 0.95;
+    _glare.mask = _glareMask;
+    _glare.opacity = 0;
+    [self.layer addSublayer:_glare];
     return self;
 }
 
@@ -171,6 +162,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     [super layoutSubviews];
     CGRect bounds = self.bounds;
     CGFloat radius = bounds.size.height / 2;
+    self.layer.cornerRadius = radius;
     _rest.frame = bounds;
     _rest.layer.cornerRadius = radius;
     if (!CGRectEqualToRect(_pane.frame, bounds)) _pane.frame = bounds;
@@ -179,19 +171,14 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // Preserve the capsule's real size. Only the optical content shrinks;
     // no relayout of the UITabBarButtons happens when the finger presses.
     _film.alpha = 0;
-    _sideShade.frame = bounds;
-    _sideShade.cornerRadius = radius;
-    _edgeGlow.frame = bounds;
-    CGFloat h = CGRectGetHeight(bounds), w = CGRectGetWidth(bounds);
-    CGFloat x = MIN(radius * 0.76, w / 4);
-    CGMutablePathRef sides = CGPathCreateMutable();
-    // Two side crescents: nothing is drawn across the top/bottom of the lens.
-    CGPathMoveToPoint(sides, NULL, x, 2);
-    CGPathAddCurveToPoint(sides, NULL, 0.5, h * 0.30, 0.5, h * 0.70, x, h - 2);
-    CGPathMoveToPoint(sides, NULL, w - x, 2);
-    CGPathAddCurveToPoint(sides, NULL, w - 0.5, h * 0.30, w - 0.5, h * 0.70, w - x, h - 2);
-    _edgeGlow.path = sides;
-    CGPathRelease(sides);
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _glare.frame = bounds;
+    _glareMask.frame = _glare.bounds;
+    CGRect pathBounds = CGRectInset(_glare.bounds, 0.5, 0.5);
+    _glareMask.path = [UIBezierPath bezierPathWithRoundedRect:pathBounds
+                                           cornerRadius:CGRectGetHeight(pathBounds) / 2].CGPath;
+    [CATransaction commit];
 }
 
 - (void)didMoveToWindow {
@@ -274,8 +261,9 @@ static BOOL bubbles(void) {
 }
 
 - (CGFloat)tintScaleXForState:(SGLensSample)st opticalScaleX:(CGFloat)sx {
-    CGFloat lift = MAX(0, MIN(1, st.lift));
-    return sx + kHeldAccentReveal * lift / MAX(1, self.bounds.size.width);
+    // Same silhouette as the optical glass; its width already covers both
+    // neighbouring 24pt glyphs at the midpoint of 83.9pt-spaced tabs.
+    return sx;
 }
 
 - (CGPathRef)newNormalCutoutPathAt:(CGPoint)center sx:(CGFloat)sx sy:(CGFloat)sy {
@@ -367,7 +355,7 @@ static BOOL bubbles(void) {
     if (!tintOverlay) { _tintMask = nil; [self updateNormalCutout]; return; }
     _tintMask = [CALayer layer];
     _tintMask.backgroundColor = UIColor.whiteColor.CGColor;
-    _tintMask.cornerCurve = kCACornerCurveContinuous;
+    _tintMask.cornerCurve = kCACornerCurveCircular;
     _tintMask.masksToBounds = YES;
     tintOverlay.layer.mask = _tintMask;
     [self applyPose];
@@ -445,8 +433,7 @@ static BOOL bubbles(void) {
         // Dark, nearly clear center against the darker tab platter; unlike
         // a white film, the side shading never washes out the green glyphs.
         self->_rest.alpha = on ? 0.38 : 1;
-        self->_sideShade.opacity = on ? 1 : 0;
-        self->_edgeGlow.opacity = on ? 1 : 0;
+        self->_glare.opacity = on ? 1 : 0;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
@@ -516,6 +503,14 @@ static BOOL bubbles(void) {
         self.center = center;
         self.transform = CGAffineTransformMakeScale(sx, sy);
     }];
+    // The glare follows the signed motion of the glass, just like the thumb's
+    // moving light, rather than staying a fixed white outline on the screen.
+    CGFloat motion = tanh((_vL + _vR) / 1800);
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _glare.startPoint = CGPointMake(MAX(0, MIN(1, 0.10 + motion * 0.18)), 0);
+    _glare.endPoint = CGPointMake(MAX(0, MIN(1, 0.90 + motion * 0.18)), 1);
+    [CATransaction commit];
     if (_tintMask) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES];

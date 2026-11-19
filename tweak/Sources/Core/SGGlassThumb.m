@@ -82,6 +82,9 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
         glass.clear = YES;
         glass.blurRadius = 0;
         glass.lensScale = kHeldLensScale;
+        // The held switch thumb has side crescents too: an SDF-like
+        // horizontal displacement fading toward its top and bottom.
+        glass.lateralRefraction = YES;
         // At the screen's scale: a 1x backdrop under a lens this small showed the track soft, and the thumb is small enough
         // for the cost.
         glass.sharp = YES;
