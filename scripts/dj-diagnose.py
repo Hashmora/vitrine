@@ -98,7 +98,7 @@ def scrub_trace(reply):
         "queue.enter", "queue.leave", "queue.rows", "queue.set", "queue.swipe",
         "button.tap", "button.render", "pick.begin", "pick.finish", "player.state",
         "previous.refused", "previous.target", "previous.fallback",
-        "segment.skip.begin", "segment.skip.end", "segment.hold.begin",
+        "skip.internal", "segment.skip.begin", "segment.skip.end", "segment.hold.begin",
         "segment.land.begin", "segment.outro.begin",
     }
     allowed_strings = {"track", "target", "current", "direction"}
@@ -135,8 +135,9 @@ class Driver:
         return obj
 
 
-def interpret(samples, events, errors):
+def interpret(samples, events, errors, artwork=None):
     findings = []
+    artwork = artwork or {}
 
     def flag(key, severity, message):
         if not any(x["code"] == key for x in findings):
@@ -188,6 +189,24 @@ def interpret(samples, events, errors):
            for i, e in enumerate(events)) and not any(
             e["event"] == "button.render" and not e["data"].get("visible") for e in events):
         flag("button_not_hidden", "warning", "Next DJ Set was shown but no hide redraw was recorded after leaving DJ")
+    # A fast run through many distinct zero-position tracks was present in
+    # the first PR #227 recording but previously returned zero warnings.
+    # This is suspicious, not proof of a playback bug: an explicit jump or
+    # internally requested skips may account for it. Preserve those events.
+    arrivals = [e for e in events if e.get("event") == "player.state" and
+                e.get("data", {}).get("arrived") and
+                e.get("data", {}).get("position", 999) <= 1.5]
+    for index, first in enumerate(arrivals):
+        window = [e for e in arrivals[index:] if 0 <= e["t"] - first["t"] <= 3]
+        if len({e.get("data", {}).get("track") for e in window}) >= 8:
+            flag("rapid_track_changes", "warning",
+                 "At least eight distinct tracks arrived near 0 s within three seconds; "
+                 "compare skip.internal and user actions to determine whether the skips were intended")
+            break
+    if artwork.get("artCandidates", 0) >= 10 and artwork.get("artConfirmed", 0) == 0:
+        flag("artwork_unconfirmed", "warning",
+             "DJ artwork classifier saw at least ten candidates but confirmed none; "
+             "check the card identity fields and native/redesigned Home and Recents")
     if len(samples) < 2:
         flag("insufficient_samples", "info", "Too few samples to check transitions")
     return findings
@@ -287,7 +306,7 @@ def capture(args):
         print("Stopping capture…")
     finally:
         duration = time.monotonic() - began
-        findings = interpret(samples, events, errors)
+        findings = interpret(samples, events, errors, art)
         write_jsonl(folder / "samples.jsonl", samples)
         write_jsonl(folder / "events.jsonl", events)
         write_jsonl(folder / "errors.jsonl", errors)
