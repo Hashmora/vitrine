@@ -2,6 +2,7 @@
 // Verified on 9.1.90: Artwork.Row.Library > EncoreImageView; HomeCard and
 // RecentsListRow > Encore.ImageView > UIImageView + PlaceholderView.
 #import "Core/SGCore.h"
+#import "Shared/Player/DJQueue.h"
 
 static UIImage *SGDJCover;
 static NSHashTable<UIView *> *SGDJHolders;
@@ -74,6 +75,7 @@ static void SGDJDraw(UIView *holder) {
 }
 %end
 %ctor {
-    if (!SGNativeUI()) return;
+    // DJ artwork is part of the DJ Queue feature, not a global image replacement.
+    if (!SGNativeUI() || !SGEnabled(SGKeyDJQueue)) return;
     %init(SGDJCardImage = objc_getClass("_TtCE15Encore_MediaKitO16EncoreFoundation6Encore9ImageView"));
 }
