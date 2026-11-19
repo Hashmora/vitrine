@@ -71,8 +71,14 @@ static void SGRDJDraw(UIView *holder) {
     [holder bringSubviewToFront:overlay];
 }
 %hook SGRDJCardImage
-- (void)didMoveToWindow { %orig; SGRDJDraw((UIView *)self); }
-- (void)layoutSubviews { %orig; SGRDJDraw((UIView *)self); }
+- (void)didMoveToWindow {
+    %orig;
+    SGRDJDraw((UIView *)self);
+}
+- (void)layoutSubviews {
+    %orig;
+    SGRDJDraw((UIView *)self);
+}
 %end
 %ctor {
     if (!SGRedesignedUI()) return;
