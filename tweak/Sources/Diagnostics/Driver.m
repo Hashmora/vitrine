@@ -1039,6 +1039,12 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
                     return @{};
                 });
             },
+            @"previous" : ^NSDictionary *(NSDictionary *p) {
+                return onMain(^id {
+                    [requirePlayer() skipToPreviousTrackWithOptions:nil];
+                    return @{};
+                });
+            },
             @"next" : ^NSDictionary *(NSDictionary *p) {
                 return onMain(^id {
                     [requirePlayer() skipToNextTrackWithOptions:nil];
