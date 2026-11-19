@@ -43,7 +43,12 @@ assert 'Neutral request fallback' not in settings
 assert 'SGKeyDJPickFallback' not in pick
 assert '%hook' not in pick
 assert 'jumpWithCompletion:' not in queue
-assert 'button.accessibilityLabel = @"Next DJ Set"' in queue
+assert 'SGDJQueueNextSetTapped(void)' in queue
+assert 'SGDJNativeDrawNextSet' in queue and 'SGRDJQueueDrawNextSet' in queue
+native = (root / 'tweak/Sources/Native/NowPlaying/DJQueueButton.m').read_text()
+redesigned = (root / 'tweak/Sources/Redesigned/NowPlaying/DJQueueButton.m').read_text()
+assert 'button.accessibilityLabel = @"Next DJ Set"' in native and 'button.accessibilityLabel = @"Next DJ Set"' in redesigned
+assert 'glassButtonConfiguration' in redesigned and 'glassButtonConfiguration' not in native
 print('Next DJ Set settings and request isolation: PASS')
 
 if sys.platform != 'darwin':

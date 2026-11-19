@@ -61,6 +61,7 @@
 #import "DJPick.h"
 #import "SpeedPitch.h"
 #import "Shared/AlbumQueue/AlbumQueue.h"
+#import "DJQueueHeader.h"
 
 static BOOL sameTrack(SPTPlayerTrack *a, SPTPlayerTrack *b) {
     return [a.URI isEqual:b.URI] && [a.provider isEqualToString:b.provider];
@@ -302,12 +303,13 @@ static NSHashTable<UIView *> *sAvatarViews;
 static BOOL sDJActive;
 // The queue reader can activate before the page receives its final layout.
 static __weak UIView *sQueuePageView;
-static char kNewSegmentButton, kNewSegmentEditPending, kNewSegmentConfigKey;
+static char kNewSegmentEditPending;
 static NSArray<SPTPlayerTrack *> *sEditRemoved;
 static NSDate *sEditRemovedAt;
 static __weak UIControl *sEditUndoButton;
 static NSHashTable<UIControl *> *sButtonsBeforeRemove;
 static void drawNewSegmentButtonSoon(UIView *page);
+static void hideNextDJSet(UIView *page);
 
 static void loadCardAvatar(NSString *url) {
     if (!url.length || [url isEqualToString:sCardAvatarURL]) return;
@@ -1573,8 +1575,7 @@ static void leaveDJ(void) {
     sDJActive = NO;
     // The header timer is about to stop; waiting for its next tick could
     // leave Next DJ Set visible indefinitely on Spotify's non-DJ queue.
-    UIButton *nextSet = objc_getAssociatedObject(sQueuePageView, &kNewSegmentButton);
-    nextSet.hidden = YES;
+    hideNextDJSet(sQueuePageView);
     [sHeaderTimer invalidate];
     sHeaderTimer = nil;
     sQueueSessionGeneration++;
@@ -1897,101 +1898,45 @@ static void drawNewSegmentButtonSoon(UIView *page) {
 }
 // Use the queue's native Edit text as the typography size reference. Spotify's
 // Edit control may be a UIKit button or a hosting view containing a label.
-// SwiftUI-rendered text is not always exposed as a UILabel; in that case use
-// the equivalent compact Footnote size instead of a fixed 14-point override.
-static CGFloat nextDJSetEditFontSize(UIView *edit) {
-    UILabel *label = (UILabel *)descendant(edit, ^BOOL(UIView *candidate) {
-        if (![candidate isKindOfClass:UILabel.class]) return NO;
-        UILabel *text = (UILabel *)candidate;
-        NSString *title = text.text ?: text.attributedText.string;
-        return [title caseInsensitiveCompare:@"Edit"] == NSOrderedSame && text.font.pointSize > 0;
-    });
-    if (label) return label.font.pointSize;
-    if ([edit isKindOfClass:UIButton.class]) {
-        UIFont *nativeFont = ((UIButton *)edit).titleLabel.font;
-        if (nativeFont.pointSize > 0) return nativeFont.pointSize;
+// Behaviour and current DJ state belong to Shared. Each look independently
+// renders this action beside Spotify's Edit pill, through DJQueueHeader.h.
+void SGDJQueueNextSetTapped(void) {
+    if (!SGEnabled(SGKeyDJQueuePickButton) || !sDJActive || sPickingSegment || sHandingOver ||
+        !isDJSession(SGPlayerState())) return;
+    if (SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip) != SGDJQueueSetModeRequest) {
+        skipToNextDJSegment();
+        return;
     }
-    return [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote].pointSize;
+    SGDJPickRequest(queuePlayer(), ^(NSError *error) {
+        if (error && error.code != NSUserCancelledError) {
+            [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Couldn't change DJ set"
+                               detail:error.localizedDescription symbol:@"exclamationmark.circle"];
+        }
+    });
 }
-static void drawNewSegmentButton(UIView *page) {
-    UIButton *button = objc_getAssociatedObject(page, &kNewSegmentButton);
-    UIView *edit = descendant(page, ^BOOL(UIView *view) {
-        return [view.accessibilityIdentifier isEqualToString:@"queue-edit-button"];
-    });
-    UIView *host = page;
-    BOOL visible = SGEnabled(SGKeyDJQueuePickButton) && sDJActive && isDJSession(SGPlayerState()) && edit
-        && ![objc_getAssociatedObject(page, &kNewSegmentEditPending) boolValue] && !queueInEdit(page);
-    for (UIView *v = edit; v && v != page; v = v.superview) {
-        if (v.hidden || v.alpha <= 0.01) { visible = NO; break; }
-    }
-    if (!visible || !host || host.bounds.size.width < 200) { button.hidden = YES; return; }
-    if (!button) {
-        button = [UIButton buttonWithType:UIButtonTypeSystem];
-        button.accessibilityIdentifier = @"vitrine-dj-new-segment";
-        button.accessibilityLabel = @"Next DJ Set";
-        button.accessibilityHint = @"Skip to the next DJ segment";
-        button.titleLabel.adjustsFontForContentSizeCategory = YES;
-        [button addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
-            if (!SGEnabled(SGKeyDJQueuePickButton) || sPickingSegment || sHandingOver || !isDJSession(SGPlayerState())) return;
-            if (SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip) != SGDJQueueSetModeRequest) {
-                skipToNextDJSegment();
-                return;
-            }
-            // Request mode uses the former neutral fallback directly. Do not
-            // dispatch a native jump or hook the request sheet's own button.
-            SGDJPickRequest(queuePlayer(), ^(NSError *error) {
-                if (error && error.code != NSUserCancelledError) {
-                    [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Couldn't change DJ set"
-                                       detail:error.localizedDescription symbol:@"exclamationmark.circle"];
-                }
-            });
-        }] forControlEvents:UIControlEventTouchUpInside];
-        objc_setAssociatedObject(page, &kNewSegmentButton, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
+static void renderNextDJSet(UIView *page, UIView *edit, BOOL visible) {
     BOOL requestMode = SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip) == SGDJQueueSetModeRequest;
     BOOL enabled = !sPickingSegment && !sHandingOver && (!requestMode ||
         [queuePlayer() respondsToSelector:NSSelectorFromString(@"signal:parameters:options:loggingParams:")]);
     NSString *title = sPickingSegment ? @"Changing…" : @"Next DJ Set";
-    CGFloat editFontSize = nextDJSetEditFontSize(edit);
-    NSString *signature = [NSString stringWithFormat:@"%@/%d/%.2f", title, requestMode, editFontSize];
-    if (![objc_getAssociatedObject(button, &kNewSegmentConfigKey) isEqual:signature]) {
-        UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
-        config.title = title;
-        config.image = [UIImage systemImageNamed:@"forward.end.fill"];
-        config.imagePadding = 6;
-        config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold];
-        config.baseForegroundColor = UIColor.whiteColor;
-        config.background.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
-        config.background.cornerRadius = 16;
-        config.background.backgroundInsets = NSDirectionalEdgeInsetsMake(6, 0, 6, 0);
-        config.contentInsets = NSDirectionalEdgeInsetsMake(6, 12, 6, 12);
-        UIFont *font = [UIFont fontWithName:@"SpotifyMixUI-Bold" size:editFontSize]
-            ?: [UIFont systemFontOfSize:editFontSize weight:UIFontWeightBold];
-        config.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
-            NSMutableDictionary *result = [attributes mutableCopy];
-            result[NSFontAttributeName] = font;
-            return result;
-        };
-        button.configuration = config;
-        button.accessibilityHint = requestMode ? @"Ask DJ for a new set using a neutral suggestion" : @"Skip to the next DJ segment";
-        objc_setAssociatedObject(button, &kNewSegmentConfigKey, signature, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    if (SGRedesignedUI()) SGRDJQueueDrawNextSet(page, edit, visible, enabled, requestMode, title);
+    else SGDJNativeDrawNextSet(page, edit, visible, enabled, requestMode, title);
+}
+static void hideNextDJSet(UIView *page) {
+    if (!page) return;
+    renderNextDJSet(page, nil, NO);
+}
+static void drawNewSegmentButton(UIView *page) {
+    if (!page) return;
+    UIView *edit = descendant(page, ^BOOL(UIView *view) {
+        return [view.accessibilityIdentifier isEqualToString:@"queue-edit-button"];
+    });
+    BOOL visible = SGEnabled(SGKeyDJQueuePickButton) && sDJActive && isDJSession(SGPlayerState()) && edit &&
+        ![objc_getAssociatedObject(page, &kNewSegmentEditPending) boolValue] && !queueInEdit(page);
+    for (UIView *view = edit; view && view != page; view = view.superview) {
+        if (view.hidden || view.alpha <= 0.01) { visible = NO; break; }
     }
-    if (button.enabled != enabled) button.enabled = enabled;
-    CGRect editFrame = [edit convertRect:edit.bounds toView:host];
-    CGSize size = [button sizeThatFits:CGSizeMake(200, 44)];
-    CGFloat available = CGRectGetMinX(editFrame) - 108;
-    if (available < 100 || CGRectGetMinY(editFrame) < 0 || CGRectGetMaxY(editFrame) > page.bounds.size.height) {
-        button.hidden = YES;
-        return;
-    }
-    CGFloat width = MIN(size.width, available);
-    button.titleLabel.numberOfLines = 1;
-    button.titleLabel.adjustsFontSizeToFitWidth = YES;
-    button.titleLabel.minimumScaleFactor = 0.8;
-    button.frame = CGRectMake(CGRectGetMinX(editFrame) - width - 8, CGRectGetMidY(editFrame) - 22, width, 44);
-    if (button.superview != host) [host addSubview:button];
-    [host bringSubviewToFront:button];
-    button.hidden = NO;
+    renderNextDJSet(page, edit, visible);
 }
 
 void SGDJQueueBeginPick(void) {
@@ -2212,8 +2157,7 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
     if (!page || !page.window || edit.window != page.window) return;
     objc_setAssociatedObject(page, &kNewSegmentEditPending, hidden ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (hidden) {
-        UIButton *button = objc_getAssociatedObject(page, &kNewSegmentButton);
-        button.hidden = YES;
+        hideNextDJSet(page);
     } else {
         drawNewSegmentButtonSoon(page);
     }
@@ -2236,8 +2180,7 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
     if (enteringEdit) {
         // Do this before Spotify's action: no half-second header-timer lag.
         objc_setAssociatedObject(page, &kNewSegmentEditPending, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        UIButton *button = objc_getAssociatedObject(page, &kNewSegmentButton);
-        button.hidden = YES;
+        hideNextDJSet(page);
     }
     %orig;
     if (leavingEdit) {
