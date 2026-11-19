@@ -31,7 +31,6 @@ static char kBarKey, kHostKey, kNavGlassKey, kNavTintKey, kSelPillKey, kRetriesK
 static char kCirclePaneKey, kCircleFilmKey, kLeadKey, kTrailKey, kTabColorKey, kTemplateKey;
 static char kCreateTargetKey, kCreateGenerationKey;
 static char kAccentCopyKey, kAccentIconKey, kAccentNameKey, kBottomFadeKey;
-static char kBumpGenerationKey, kBumpOriginalOpacityKey;
 // The bar is a floating capsule, not a full-width slab.
 static const CGFloat kNavGlassMargin = 16;        // gap at each side
 static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it to the now playing card
@@ -79,8 +78,8 @@ static void updateBottomFade(UIView *stockBar) {
         gradient.startPoint = CGPointMake(0.5, 0);
         gradient.endPoint = CGPointMake(0.5, 1);
         gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0].CGColor,
-                            (id)[UIColor colorWithWhite:0 alpha:0.025].CGColor,
-                            (id)[UIColor colorWithWhite:0 alpha:0.12].CGColor];
+                            (id)[UIColor colorWithWhite:0 alpha:0.045].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.22].CGColor];
         gradient.locations = @[@0, @0.50, @1];
         objc_setAssociatedObject(stockBar, &kBottomFadeKey, fade, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
@@ -444,9 +443,11 @@ static void learnGlyphs(UIView *source, UITabBarItem *item) {
 
 #pragma mark - taps
 
-// A tap that ends on the tab already open moves no pill, so the icon pulses instead.
-// The default glyph and its accent mirror are *separate* views. Growing only
-// the white glyph exposes a white halo around the stationary green glyph.
+// A tap on the already selected tab bounces the normal and accent images in
+// exactly the same coordinates. Never set an image layer's model opacity to
+// zero: interrupted taps and UIKit relayout can otherwise strand it hidden.
+// Render-server keyframes replace one another without completion callbacks or
+// persistent view transforms, so rapid retaps cannot accumulate hidden state.
 static NSArray<UIView *> *tabButtons(UITabBar *bar);
 static void bumpIcon(UITabBar *bar, UITabBarItem *item) {
     if (!item) return;
@@ -455,53 +456,29 @@ static void bumpIcon(UITabBar *bar, UITabBarItem *item) {
     UIView *button = index < buttons.count ? buttons[index] : nil;
     UIImageView *white = objc_getAssociatedObject(button, &kGlyphOverlayKey);
     UIImageView *accent = objc_getAssociatedObject(button, &kAccentIconKey);
-    BOOL useAccent = tintedTabs() && accent.superview && !accent.hidden && !sg_minimized;
-    __block UIView *animatedGlyph = useAccent ? accent : white;
-    if (!animatedGlyph || animatedGlyph.hidden) {
-        // Fallback when UIKit has not yet laid out the overlay (first tap).
-        SGForEachView(bar, ^(UIView *v) {
-            if (animatedGlyph || v.hidden || ![v isKindOfClass:UIImageView.class]) return;
-            UIImage *image = ((UIImageView *)v).image;
-            if (image && (image == item.image || image == item.selectedImage)) animatedGlyph = v;
+    NSMutableArray<UIImageView *> *glyphs = [NSMutableArray arrayWithCapacity:2];
+    if (white && white.superview && !white.hidden) [glyphs addObject:white];
+    if (tintedTabs() && !sg_minimized && accent && accent.superview && !accent.hidden)
+        [glyphs addObject:accent];
+    if (!glyphs.count) {
+        // First-layout fallback: the stock UIImageView is the only available
+        // renderer until the legacy tab has constructed its two copies.
+        SGForEachView(bar, ^(UIView *view) {
+            if (glyphs.count || view.hidden || ![view isKindOfClass:UIImageView.class]) return;
+            UIImage *image = ((UIImageView *)view).image;
+            if (image && (image == item.image || image == item.selectedImage))
+                [glyphs addObject:(UIImageView *)view];
         });
     }
-    if (!animatedGlyph) return;
-    // Temporarily remove the white *source* from the composite while the
-    // selected-colour copy pulses. Use layer.opacity rather than view.alpha:
-    // syncLensAccent reads view.alpha when Spotify relayouts the buttons.
-    CALayer *whiteLayer = useAccent ? white.layer : nil;
-    NSNumber *previousOpacity = whiteLayer ? objc_getAssociatedObject(whiteLayer, &kBumpOriginalOpacityKey) : nil;
-    CGFloat whiteOpacity = previousOpacity ? previousOpacity.doubleValue : (whiteLayer ? whiteLayer.opacity : 1);
-    NSUInteger generation = whiteLayer ? [objc_getAssociatedObject(whiteLayer, &kBumpGenerationKey) unsignedIntegerValue] + 1 : 0;
-    if (whiteLayer) {
-        objc_setAssociatedObject(whiteLayer, &kBumpOriginalOpacityKey, @(whiteOpacity), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(whiteLayer, &kBumpGenerationKey, @(generation), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        whiteLayer.opacity = 0;
-        [CATransaction commit];
+    for (UIImageView *glyph in glyphs) {
+        [glyph.layer removeAnimationForKey:@"sg.selected.bump"];
+        CAKeyframeAnimation *bump = [CAKeyframeAnimation animationWithKeyPath:@"transform.scale"];
+        bump.values = @[@1.0, @1.12, @1.0];
+        bump.keyTimes = @[@0, @0.40, @1];
+        bump.calculationMode = kCAAnimationCubic;
+        bump.duration = 0.26;
+        [glyph.layer addAnimation:bump forKey:@"sg.selected.bump"];
     }
-    CGAffineTransform base = animatedGlyph.transform;
-    [UIView animateKeyframesWithDuration:0.26 delay:0
-        options:UIViewKeyframeAnimationOptionBeginFromCurrentState | UIViewKeyframeAnimationOptionCalculationModeCubic
-        animations:^{
-            [UIView addKeyframeWithRelativeStartTime:0 relativeDuration:0.4 animations:^{
-                animatedGlyph.transform = CGAffineTransformScale(base, 1.12, 1.12);
-            }];
-            [UIView addKeyframeWithRelativeStartTime:0.4 relativeDuration:0.6 animations:^{
-                animatedGlyph.transform = base;
-            }];
-        } completion:^(__unused BOOL finished) {
-            animatedGlyph.transform = base;
-            if (whiteLayer && [objc_getAssociatedObject(whiteLayer, &kBumpGenerationKey) unsignedIntegerValue] == generation) {
-                [CATransaction begin];
-                [CATransaction setDisableActions:YES];
-                whiteLayer.opacity = whiteOpacity;
-                [CATransaction commit];
-                objc_setAssociatedObject(whiteLayer, &kBumpGenerationKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                objc_setAssociatedObject(whiteLayer, &kBumpOriginalOpacityKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            }
-        }];
 }
 
 // The bar's UITabBarButtons, left to right, which is the order of its items.
@@ -658,11 +635,10 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
         objc_setAssociatedObject(host, &kAccentCopyKey, selected, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (selected.superview != host) [host addSubview:selected];
-    // Selected content sits above the clear lens; ordinary content below it is
-    // the separate backdrop/warp source, as on the native tab platter.
-    if (lens.refracting) [host insertSubview:selected belowSubview:lens];
-    else if ([host.subviews indexOfObject:selected] < [host.subviews indexOfObject:lens])
-        [host bringSubviewToFront:selected];
+    // The selected copy is the final sharp artwork. It must stay above BOTH
+    // refraction layers even when UIKit asks for layout during an active drag;
+    // putting it below the main 0.92x lens made glyphs shrink and go dark.
+    if (host.subviews.lastObject != selected) [host bringSubviewToFront:selected];
     if (!CGRectEqualToRect(selected.frame, host.bounds)) selected.frame = host.bounds;
     selected.hidden = NO;
     NSArray<UIView *> *buttons = tabButtons(bar);

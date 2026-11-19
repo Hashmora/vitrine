@@ -192,7 +192,10 @@ static BOOL bubbles(void);
         _glyphEdgePane.layer.mask = _glyphEdgeMask;
     }
     if (_glyphEdgePane.superview != host) [host addSubview:_glyphEdgePane];
-    [host bringSubviewToFront:_glyphEdgePane];
+    // Edge glass samples the background and the inverse-masked normal bar.
+    // The fully coloured copies are composited AFTER it, not sampled again:
+    // otherwise Search/Library/Create can acquire doubled white/green halos.
+    if (_tintOverlay.superview == host) [host insertSubview:_glyphEdgePane belowSubview:_tintOverlay];
 }
 
 - (void)updateGlyphEdgeMaskLeft:(CGFloat)left right:(CGFloat)right {
@@ -535,7 +538,11 @@ static BOOL bubbles(void) {
         // Only the thin horizontal edge band is over icons. It is a *second*
         // optical source with magnification 1, while the centre/backdrop
         // remains underneath at 0.92. Never put the whole .92 pane over tabs.
-        if (_glyphEdgePane.superview == host) [host bringSubviewToFront:_glyphEdgePane];
+        if (_glyphEdgePane.superview == host) {
+            if (_tintOverlay.superview == host)
+                [host insertSubview:_glyphEdgePane belowSubview:_tintOverlay];
+            else [host bringSubviewToFront:_glyphEdgePane];
+        }
     } else {
         UIView *above = _restAbove;
         _restAbove = nil;
