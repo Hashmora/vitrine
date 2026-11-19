@@ -99,67 +99,7 @@ UIView *SGDJArtworkEnclosingCard(UIView *holder) {
     return card;
 }
 
-// A missing cover is not evidence of DJ identity. Before using the legacy
-// placeholder path, reject any card whose metadata explicitly points to a
-// *different* Spotify playlist. Only inspect strings already exposed by UIKit;
-// never call undocumented model selectors from a layout hook.
-static BOOL otherPlaylistURIInString(NSString *value) {
-    if (!value.length) return NO;
-    NSString *prefix = @"spotify:playlist:";
-    NSRange scan = NSMakeRange(0, value.length);
-    while (scan.length) {
-        NSRange found = [value rangeOfString:prefix options:NSCaseInsensitiveSearch range:scan];
-        if (found.location == NSNotFound) break;
-        NSUInteger start = NSMaxRange(found), end = start;
-        while (end < value.length) {
-            unichar ch = [value characterAtIndex:end];
-            if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-                  (ch >= '0' && ch <= '9'))) break;
-            ++end;
-        }
-        if (end > start) {
-            NSString *uri = [value substringWithRange:NSMakeRange(found.location, end - found.location)];
-            if ([uri caseInsensitiveCompare:kSpotifyDJURI] != NSOrderedSame) return YES;
-        }
-        if (end >= value.length) break;
-        scan = NSMakeRange(MAX(end, NSMaxRange(found)), value.length - MAX(end, NSMaxRange(found)));
-    }
-    return NO;
-}
-static BOOL cardHasOtherPlaylistURI(UIView *view, NSUInteger depth) {
-    if (!view || depth > 5) return NO;
-    if (otherPlaylistURIInString(view.accessibilityIdentifier) ||
-        otherPlaylistURIInString(view.accessibilityLabel) ||
-        otherPlaylistURIInString(view.accessibilityValue) ||
-        otherPlaylistURIInString(view.accessibilityHint)) return YES;
-    for (UIView *sub in view.subviews) {
-        if (cardHasOtherPlaylistURI(sub, depth + 1)) return YES;
-    }
-    return NO;
-}
-// Encore occasionally wraps its native artwork in another view. Check the
-// image slot itself and nested image views, not just direct holder children;
-// never replace a real cover even when the placeholder view still exists.
-static BOOL hasNativeBitmap(UIView *view, NSUInteger depth, CGFloat minimumExtent, BOOL *foundSlot) {
-    if (!view || depth > 3) return NO;
-    NSString *identifier = view.accessibilityIdentifier;
-    if ([identifier hasPrefix:@"SG.DJArtwork"] || [identifier hasPrefix:@"SGR.DJArtwork"]) return NO;
-    if ([view isKindOfClass:UIImageView.class]) {
-        UIImageView *slot = (UIImageView *)view;
-        // Do not mistake a tiny placeholder symbol for the artwork bitmap.
-        BOOL coverSize = MIN(slot.bounds.size.width, slot.bounds.size.height) >= minimumExtent;
-        if (coverSize) {
-            *foundSlot = YES;
-            if (slot.image || slot.layer.contents) return YES;
-        }
-    }
-    for (UIView *child in view.subviews) {
-        if (hasNativeBitmap(child, depth + 1, minimumExtent, foundSlot)) return YES;
-    }
-    return NO;
-}
-
-static char kMissingArtCardKey, kMissingArtSinceKey, kMissingArtLabelKey;
+static char kMissingArtCardKey, kMissingArtSinceKey;
 #if SG_DRIVER
 static char kArtworkProbeSignature, kMissingArtProbeKey;
 #endif
@@ -167,9 +107,7 @@ static char kArtworkProbeSignature, kMissingArtProbeKey;
 // Recents with no URI, publisher or DJ component reachable from UIKit. Avoid
 // restoring the old title-only override: a user playlist named DJ has the
 // same title, but its loaded UIImageView must never be covered by our art.
-// Only the empty Encore placeholder can use this compatibility path. If
-// Spotify omits both URI and cover, two different playlist models can still
-// have identical UIKit trees; the compatibility path cannot prove ownership.
+// Only the empty Encore placeholder can use this compatibility path.
 BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
     if (retry) *retry = NO;
     BOOL candidate = card && holder && djTitle(card.accessibilityLabel) &&
@@ -179,32 +117,28 @@ BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
          [card.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"]);
     BOOL nativeArtwork = NO, foundBitmapSlot = NO, placeholder = NO;
     if (candidate) {
-        CGFloat coverExtent = MAX(8, MIN(holder.bounds.size.width, holder.bounds.size.height) * 0.6);
-        nativeArtwork = hasNativeBitmap(holder, 0, coverExtent, &foundBitmapSlot);
         for (UIView *sub in holder.subviews) {
+            if ([sub.accessibilityIdentifier hasPrefix:@"SG.DJArtwork"] ||
+                [sub.accessibilityIdentifier hasPrefix:@"SGR.DJArtwork"]) continue;
+            if ([sub isKindOfClass:UIImageView.class]) {
+                foundBitmapSlot = YES;
+                if (((UIImageView *)sub).image) nativeArtwork = YES;
+            }
             if ([NSStringFromClass(sub.class) containsString:@"Placeholder"] && !sub.hidden && sub.alpha > 0.01)
                 placeholder = YES;
         }
     }
-    // Evaluate the potentially costly URI lookup only for a truly empty tile.
-    BOOL missing = candidate && foundBitmapSlot && !nativeArtwork && placeholder &&
-        !cardHasOtherPlaylistURI(card, 0);
+    BOOL missing = candidate && foundBitmapSlot && !nativeArtwork && placeholder;
     if (!missing) {
         objc_setAssociatedObject(holder, &kMissingArtCardKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(holder, &kMissingArtSinceKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(holder, &kMissingArtLabelKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     NSValue *previousCard = objc_getAssociatedObject(holder, &kMissingArtCardKey);
     NSNumber *firstSeen = objc_getAssociatedObject(holder, &kMissingArtSinceKey);
-    NSString *previousLabel = objc_getAssociatedObject(holder, &kMissingArtLabelKey);
-    // A Recents cell can be reused for another playlist without replacing the
-    // underlying UIView. Do not inherit its 0.8 s placeholder deadline.
-    if (missing && (!previousCard || previousCard.nonretainedObjectValue != card || !firstSeen ||
-                    ![previousLabel isEqualToString:card.accessibilityLabel])) {
+    if (missing && (!previousCard || previousCard.nonretainedObjectValue != card || !firstSeen)) {
         objc_setAssociatedObject(holder, &kMissingArtCardKey, [NSValue valueWithNonretainedObject:card], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(holder, &kMissingArtSinceKey, @(now), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(holder, &kMissingArtLabelKey, card.accessibilityLabel, OBJC_ASSOCIATION_COPY_NONATOMIC);
         firstSeen = @(now);
         if (retry) *retry = YES;
     }
@@ -229,10 +163,6 @@ BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     BOOL editorial = !explicitIdentity && !dedicated &&
         (editorialDJIdentity(card.accessibilityLabel) || viewHasEditorialDJIdentity(card, 0));
     BOOL confirmed = explicitIdentity || dedicated || editorial;
-    // Even editorial text in an embedded element must not override a card
-    // explicitly pointing to a *different* Spotify playlist model.
-    BOOL foreignPlaylist = confirmed && cardHasOtherPlaylistURI(card, 0);
-    if (foreignPlaylist) confirmed = NO;
     BOOL genericPlaylist = playlistLabel(card.accessibilityLabel) && !confirmed;
     SGDJProbeArtworkDecision(confirmed, genericPlaylist);
 
@@ -246,8 +176,7 @@ BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
         objc_setAssociatedObject(card, &kArtworkProbeSignature, signature, OBJC_ASSOCIATION_COPY_NONATOMIC);
         SGDJ_TRACE(@"artwork.classifier", (@{
             @"explicit": @(explicitIdentity), @"dedicated": @(dedicated),
-            @"editorial": @(editorial), @"foreignPlaylist": @(foreignPlaylist),
-            @"genericPlaylist": @(genericPlaylist),
+            @"editorial": @(editorial), @"genericPlaylist": @(genericPlaylist),
             @"confirmed": @(confirmed),
             @"history": @([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"]),
             @"shortcut": @([card.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"])
