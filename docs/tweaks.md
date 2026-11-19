@@ -913,6 +913,18 @@ Spotify's own through.
 
 ## Diagnostics
 
+### AI DJ regression recorder (driver builds)
+
+For PR #227, `SG_DRIVER=1` provides the read-only `dj.trace` event ring and the
+existing `dj.state` snapshot (now with queue/order counts, button state and
+pseudonymous track IDs). Capture them automatically with
+`python3 scripts/dj-diagnose.py --port 8086 --seconds 240` while reproducing
+issues in the simulator. The generated ZIP has a Markdown report and redacted
+JSON timelines; see `harness/dj-diagnostics/README.md`. Release builds do not
+record these events. `dj.trace` is memory-only, so the recorder must be running
+*before* a crash to preserve the lead-up.
+
+
 A build with FLEX in it (`make build`, `make install FLEX=1`) runs `Diagnostics/`: the tree server, the hang
 sampler, and the phone driver, which lets an agent on the Mac work the app without anyone touching the phone.
 The server listens on the phone's loopback only, 127.0.0.1:8085, which the Mac reaches through iproxy over
