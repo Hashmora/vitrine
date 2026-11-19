@@ -25,8 +25,8 @@ static const CGFloat kLensGrow = 16, kLensOverscroll = 8;
 // leftward motion narrows it and raises its height. When the finger stops, a slow
 // spring briefly reverses that shape before relaxing. A signed velocity (rather
 // than its absolute value) is essential for the two directions to feel distinct.
-static const CGFloat kLensStretchSpeed = 1050, kLensDirectionalStretch = 0.077;
-static const CGFloat kLensMaxDeform = 0.115, kLensVolume = 0.70, kLensMaxLag = 0.075;
+static const CGFloat kLensStretchSpeed = 800, kLensDirectionalStretch = 0.115;
+static const CGFloat kLensMaxDeform = 0.15, kLensVolume = 0.76, kLensMaxLag = 0.09;
 // The surface tension: once the edges are near their targets, they pull each other back to the bubble's width, with
 // a damper of their own, so a stretched bubble draws in and gives a small bounce rather than ringing. It is off
 // while the bubble is chasing a finger (the stretch is what shows the chase), and fades in over the last
@@ -35,7 +35,7 @@ static const CGFloat kLensTension = 150, kLensTensionRatio = 0.53, kLensTensionR
 // Slower body response than the moving edges: deceleration in either direction
 // kicks the squash *opposite* to its moving shape, with a small damped rebound.
 // Acceleration gives a much gentler kick so the lens does not jitter while dragged.
-static const CGFloat kLensSquashOmega = 6.4, kLensSquashRatio = 0.54, kLensSquashKick = 0.0040;
+static const CGFloat kLensSquashOmega = 6.1, kLensSquashRatio = 0.54, kLensSquashKick = 0.0047;
 static const CGFloat kLensPoke = 0.8;
 
 typedef struct { CGFloat k, c; } SGRSpring;   // unit mass
@@ -192,10 +192,24 @@ static BOOL bubbles(void);
         _glyphEdgePane.layer.mask = _glyphEdgeMask;
     }
     if (_glyphEdgePane.superview != host) [host addSubview:_glyphEdgePane];
-    // Edge glass samples the background and the inverse-masked normal bar.
-    // The fully coloured copies are composited AFTER it, not sampled again:
-    // otherwise Search/Library/Create can acquire doubled white/green halos.
-    if (_tintOverlay.superview == host) [host insertSubview:_glyphEdgePane belowSubview:_tintOverlay];
+    // The edge band must see the selected (accent) glyphs in its backdrop.
+    // Keep the 0.92x platter pane UNDER the glyphs, but place only this
+    // 1.0x optical crescent AFTER the selected group in the render stack.
+    // The inverse mask removes white normal glyphs from the same region.
+    if (_tintOverlay.superview == host) [host insertSubview:_glyphEdgePane aboveSubview:_tintOverlay];
+}
+
+// UIKit can bring the selected overlay to front on each layout pass. Reassert
+// the optical order without touching the icon layers or their animations.
+- (void)syncGlyphEdgeStack {
+    UIView *host = self.superview;
+    if (!_glassOn || !_glyphEdgePane || !host || _glyphEdgePane.superview != host) return;
+    if (_tintOverlay.superview == host) {
+        NSUInteger edge = [host.subviews indexOfObject:_glyphEdgePane];
+        NSUInteger selected = [host.subviews indexOfObject:_tintOverlay];
+        if (edge != NSNotFound && selected != NSNotFound && edge < selected)
+            [host insertSubview:_glyphEdgePane aboveSubview:_tintOverlay];
+    } else [host bringSubviewToFront:_glyphEdgePane];
 }
 
 - (void)updateGlyphEdgeMaskLeft:(CGFloat)left right:(CGFloat)right {
@@ -422,7 +436,14 @@ static BOOL bubbles(void) {
 // The mask is in the same host coordinates as the lens. Its *shape* follows both
 // the moving spring and the layer keyframe playback after the finger is released.
 - (void)setTintOverlay:(UIView *)tintOverlay {
-    if (_tintOverlay == tintOverlay) { [self updateNormalCutout]; if (tintOverlay) [self applyPose]; return; }
+    if (_tintOverlay == tintOverlay) {
+        [self updateNormalCutout];
+        if (tintOverlay) {
+            [self syncGlyphEdgeStack];
+            [self applyPose];
+        }
+        return;
+    }
     _tintOverlay.layer.mask = nil;
     _tintOverlay = tintOverlay;
     if (!tintOverlay) { _tintMask = nil; [self updateNormalCutout]; return; }
@@ -431,6 +452,7 @@ static BOOL bubbles(void) {
     _tintMask.cornerCurve = kCACornerCurveCircular;
     _tintMask.masksToBounds = YES;
     tintOverlay.layer.mask = _tintMask;
+    [self syncGlyphEdgeStack];
     [self applyPose];
 }
 
@@ -535,14 +557,9 @@ static BOOL bubbles(void) {
         [host bringSubviewToFront:self];
         if (_normalContent.superview == host) [host bringSubviewToFront:_normalContent];
         if (_tintOverlay.superview == host) [host bringSubviewToFront:_tintOverlay];
-        // Only the thin horizontal edge band is over icons. It is a *second*
-        // optical source with magnification 1, while the centre/backdrop
-        // remains underneath at 0.92. Never put the whole .92 pane over tabs.
-        if (_glyphEdgePane.superview == host) {
-            if (_tintOverlay.superview == host)
-                [host insertSubview:_glyphEdgePane belowSubview:_tintOverlay];
-            else [host bringSubviewToFront:_glyphEdgePane];
-        }
+        // This separately masked edge-only pane samples the green artwork
+        // with magnification 1; the whole 0.92x pane stays below the icons.
+        [self syncGlyphEdgeStack];
     } else {
         UIView *above = _restAbove;
         _restAbove = nil;
