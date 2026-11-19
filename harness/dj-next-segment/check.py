@@ -51,6 +51,14 @@ assert 'SGDJQueueNextSetTapped(void)' in queue
 assert 'SGDJNativeDrawNextSet' in queue and 'SGRDJQueueDrawNextSet' in queue
 native = (root / 'tweak/Sources/Native/NowPlaying/DJQueueButton.m').read_text()
 redesigned = (root / 'tweak/Sources/Redesigned/NowPlaying/DJQueueButton.m').read_text()
+header = (root / 'tweak/Sources/Shared/Player/DJQueueHeader.h').read_text()
+for symbol, implementation in (('SGDJNativeDrawNextSet', native), ('SGRDJQueueDrawNextSet', redesigned)):
+    # Both look-specific functions must have the exact external name called by Shared.
+    # Checking the call alone would miss an undefined symbol at link time.
+    pattern = r'^void\s+' + re.escape(symbol) + r'\s*\('
+    assert re.search(pattern, header, re.M), f'missing {symbol} declaration'
+    assert re.search(pattern, implementation, re.M), f'missing {symbol} implementation'
+    assert re.search(r'\b' + re.escape(symbol) + r'\s*\(', queue), f'missing {symbol} call'
 assert 'button.accessibilityLabel = @"Next DJ Set"' in native and 'button.accessibilityLabel = @"Next DJ Set"' in redesigned
 assert 'glassButtonConfiguration' in redesigned and 'glassButtonConfiguration' not in native
 print('Next DJ Set settings and request isolation: PASS')

@@ -19,7 +19,7 @@ static UILabel *editLabel(UIView *root) {
     return nil;
 }
 
-void SGDJNativeQueueDrawNextSet(UIView *page, UIView *edit, BOOL visible, BOOL enabled, BOOL requestMode, NSString *title) {
+void SGDJNativeDrawNextSet(UIView *page, UIView *edit, BOOL visible, BOOL enabled, BOOL requestMode, NSString *title) {
     if (!page) return;
     UIButton *button = objc_getAssociatedObject(page, &kButtonKey);
     if (!visible || !edit || page.bounds.size.width < 200) { if (button) button.hidden = YES; return; }
