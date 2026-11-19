@@ -101,6 +101,11 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // lens samples and bends the *capsule's* outside border. No change to the
     // center of the lens or to the inward refracting edge.
     CAGradientLayer *_outerEdgeGuard;
+    // A second, edge-only backdrop sits ABOVE the glyphs. Unlike the platter
+    // lens it samples them at 1x, so the 0.92x platter reduction never shrinks
+    // icons. Its two crescents are masked to leave the centre untouched.
+    SGLegacyGlassView *_glyphEdgePane;
+    CAGradientLayer *_glyphEdgeMask;
     BOOL _glassOn;
     NSUInteger _pulseGeneration;
     // A bubble nobody holds is not run frame by frame on the main thread, which a tab loading under it would stall
@@ -159,6 +164,62 @@ static const CGFloat kPlayStep = 1.0 / 120;
     [_link invalidate];
 }
 
+static BOOL bubbles(void);
+
+- (void)ensureGlyphEdgePane {
+    UIView *host = self.superview;
+    if (!host || !bubbles()) return;
+    if (!_glyphEdgePane) {
+        _glyphEdgePane = [SGLegacyGlassView new];
+        _glyphEdgePane.accessibilityElementsHidden = YES;
+        _glyphEdgePane.userInteractionEnabled = NO;
+        _glyphEdgePane.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        _glyphEdgePane.clipsToBounds = YES;
+        _glyphEdgePane.layer.cornerCurve = kCACornerCurveCircular;
+        _glyphEdgePane.capsule = YES;
+        _glyphEdgePane.clear = YES;
+        _glyphEdgePane.blurRadius = 0.08;
+        _glyphEdgePane.magnification = 1.0;  // icon geometry is not scaled
+        _glyphEdgePane.lensScale = 0.90;
+        _glyphEdgePane.lateralRefraction = YES;
+        _glyphEdgePane.sharp = YES;
+        _glyphEdgePane.rimless = YES;
+        _glyphEdgePane.alpha = 0;
+        _glyphEdgeMask = [CAGradientLayer layer];
+        _glyphEdgeMask.startPoint = CGPointMake(0, 0.5);
+        _glyphEdgeMask.endPoint = CGPointMake(1, 0.5);
+        _glyphEdgeMask.locations = @[@0, @0.07, @0.19, @0.28, @0.72, @0.81, @0.93, @1];
+        _glyphEdgePane.layer.mask = _glyphEdgeMask;
+    }
+    if (_glyphEdgePane.superview != host) [host addSubview:_glyphEdgePane];
+    [host bringSubviewToFront:_glyphEdgePane];
+}
+
+- (void)updateGlyphEdgeMaskLeft:(CGFloat)left right:(CGFloat)right {
+    if (!_glyphEdgeMask) return;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _glyphEdgeMask.frame = _glyphEdgePane.bounds;
+    _glyphEdgeMask.colors = @[
+        (id)[UIColor colorWithWhite:1 alpha:left].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:left * 0.88].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:left * 0.16].CGColor,
+        (id)[UIColor clearColor].CGColor,
+        (id)[UIColor clearColor].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:right * 0.16].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:right * 0.88].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:right].CGColor
+    ];
+    [CATransaction commit];
+}
+
+- (void)didMoveToSuperview {
+    [super didMoveToSuperview];
+    // The overlay is a sibling of this lens. It must not survive a bar being
+    // removed or moved to another host during a Spotify navigation rebuild.
+    if (_glyphEdgePane.superview != self.superview) [_glyphEdgePane removeFromSuperview];
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGRect bounds = self.bounds;
@@ -179,6 +240,11 @@ static const CGFloat kPlayStep = 1.0 / 120;
     CGRect pathBounds = CGRectInset(_glare.bounds, 0.5, 0.5);
     _glareMask.path = [UIBezierPath bezierPathWithRoundedRect:pathBounds
                                            cornerRadius:CGRectGetHeight(pathBounds) / 2].CGPath;
+    if (_glyphEdgePane) {
+        if (!CGRectEqualToRect(_glyphEdgePane.bounds, bounds)) _glyphEdgePane.bounds = bounds;
+        _glyphEdgePane.layer.cornerRadius = radius;
+        _glyphEdgeMask.frame = bounds;
+    }
     [CATransaction commit];
 }
 
@@ -191,10 +257,9 @@ static const CGFloat kPlayStep = 1.0 / 120;
         _lift = _vLift = _liftTarget = 0;
         [self showGlass:NO animated:NO];
         [self snapToRest];
+        [_glyphEdgePane removeFromSuperview];
     }
 }
-
-static BOOL bubbles(void);
 
 #pragma mark - what the bar tells it
 
@@ -289,6 +354,7 @@ static BOOL bubbles(void) {
     UIView *bar = _normalContent;
     if (!_glassOn || !bar || !self.superview || CGRectIsEmpty(_restFrame)) {
         if (_pane.layer.mask == _outerEdgeGuard) _pane.layer.mask = nil;
+        [self updateGlyphEdgeMaskLeft:1 right:1];
         return;
     }
     CGPoint center; CGFloat sx, sy;
@@ -301,6 +367,9 @@ static BOOL bubbles(void) {
     CGFloat rightClearance = CGRectGetMaxX(barInHost) - center.x - halfWidth;
     CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance - 6) / 24));
     CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance - 6) / 24));
+    // Both the 0.92x platter lens and the 1x icon-edge lens obey the same
+    // outer-edge guard at Home / Create.
+    [self updateGlyphEdgeMaskLeft:leftAlpha right:rightAlpha];
     if (leftAlpha >= 0.999 && rightAlpha >= 0.999) {
         if (_pane.layer.mask == _outerEdgeGuard) _pane.layer.mask = nil;
         return;
@@ -410,10 +479,14 @@ static BOOL bubbles(void) {
 - (void)showGlass:(BOOL)on animated:(BOOL)animated {
     if (_glassOn == on) return;
     _glassOn = on;
+    if (on) [self ensureGlyphEdgePane];
     // While raised, the pane must actually sit above the tab artwork: a
     // CABackdropLayer only refracts layers *behind* it. At rest it goes back
     // under the white icons and titles.
     [self standOverTabs:on];
+    // The outer (glyph) pane must have the right geometry on the first held
+    // frame, not only after the first CADisplayLink tick.
+    if (on) [self applyPose];
     [self updateNormalCutout];
     [self updateOuterEdgeGuard];
     if ([_pane isKindOfClass:SGLegacyGlassView.class]) {
@@ -435,6 +508,7 @@ static BOOL bubbles(void) {
         // a white film, the side shading never washes out the green glyphs.
         self->_rest.alpha = on ? 0.12 : 1;
         self->_glare.opacity = on ? 1 : 0;
+        self->_glyphEdgePane.alpha = on ? 1 : 0;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
@@ -458,6 +532,10 @@ static BOOL bubbles(void) {
         [host bringSubviewToFront:self];
         if (_normalContent.superview == host) [host bringSubviewToFront:_normalContent];
         if (_tintOverlay.superview == host) [host bringSubviewToFront:_tintOverlay];
+        // Only the thin horizontal edge band is over icons. It is a *second*
+        // optical source with magnification 1, while the centre/backdrop
+        // remains underneath at 0.92. Never put the whole .92 pane over tabs.
+        if (_glyphEdgePane.superview == host) [host bringSubviewToFront:_glyphEdgePane];
     } else {
         UIView *above = _restAbove;
         _restAbove = nil;
@@ -524,6 +602,13 @@ static BOOL bubbles(void) {
         _tintMask.transform = CATransform3DMakeScale(
             [self tintScaleXForState:[self state] opticalScaleX:sx], sy, 1);
         [CATransaction commit];
+    }
+    if (_glyphEdgePane && _glyphEdgePane.superview == self.superview) {
+        [UIView performWithoutAnimation:^{
+            if (!CGRectEqualToRect(self->_glyphEdgePane.bounds, self.bounds)) self->_glyphEdgePane.bounds = self.bounds;
+            self->_glyphEdgePane.center = center;
+            self->_glyphEdgePane.transform = CGAffineTransformMakeScale(sx, sy);
+        }];
     }
     [self updateNormalCutout];
     [self updateOuterEdgeGuard];
@@ -630,6 +715,9 @@ static BOOL bubbles(void) {
     [self.layer removeAnimationForKey:@"lens.x"];
     [self.layer removeAnimationForKey:@"lens.sx"];
     [self.layer removeAnimationForKey:@"lens.sy"];
+    [_glyphEdgePane.layer removeAnimationForKey:@"lens.x"];
+    [_glyphEdgePane.layer removeAnimationForKey:@"lens.sx"];
+    [_glyphEdgePane.layer removeAnimationForKey:@"lens.sy"];
     [_tintMask removeAnimationForKey:@"lens.x"];
     [_tintMask removeAnimationForKey:@"lens.sx"];
     [_tintMask removeAnimationForKey:@"lens.sy"];
@@ -705,6 +793,18 @@ static BOOL bubbles(void) {
     add(@"lens.x", @"position.x", xs);
     add(@"lens.sx", @"transform.scale.x", sxs);
     add(@"lens.sy", @"transform.scale.y", sys);
+    if (_glyphEdgePane && _glyphEdgePane.superview == self.superview) {
+        void (^edgeRun)(NSString *, NSString *, NSArray *) = ^(NSString *key, NSString *path, NSArray *values) {
+            CAKeyframeAnimation *a = [CAKeyframeAnimation animationWithKeyPath:path];
+            a.values = values;
+            a.duration = duration;
+            a.calculationMode = kCAAnimationLinear;
+            [self->_glyphEdgePane.layer addAnimation:a forKey:key];
+        };
+        edgeRun(@"lens.x", @"position.x", xs);
+        edgeRun(@"lens.sx", @"transform.scale.x", sxs);
+        edgeRun(@"lens.sy", @"transform.scale.y", sys);
+    }
     // Core Animation runs the released lens on the render server; match that
     // playback on the accent mask, instead of leaving the color behind at release.
     if (_tintMask) {
