@@ -707,7 +707,9 @@ static void leaveDJ(void) {
     sEditRemoved = nil;
     sEditRemovedAt = nil;
     sEditUndoButton = nil;
+    sEditUndoSnackbar = nil;
     sButtonsBeforeRemove = nil;
+    sSnackbarMessagesBeforeRemove = nil;
     [sCarded removeAllObjects];
     [sCardTracks removeAllObjects];
     sAheadBeforeLaunch = nil;
