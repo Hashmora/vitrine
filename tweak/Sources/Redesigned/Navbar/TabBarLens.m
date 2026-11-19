@@ -2,6 +2,9 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRGlass.h"
 #import "Redesigned/Kit/SGRTokens.h"
+#import <objc/runtime.h>
+
+static char kLensGlyphDeghostKey;
 
 static char kLensPaneKey, kLensFilmKey;
 
@@ -193,9 +196,11 @@ static BOOL bubbles(void);
         _glyphEdgePane.layer.cornerCurve = kCACornerCurveCircular;
         _glyphEdgePane.capsule = YES;
         _glyphEdgePane.clear = YES;
-        _glyphEdgePane.blurRadius = 0.32;
+        _glyphEdgePane.blurRadius = 0.16;
         _glyphEdgePane.magnification = 1.0;  // icon geometry is not scaled
-        _glyphEdgePane.lensScale = 1.025;
+        // Keep the rim sample close to the very same glyph. Excessive mesh
+        // shift read like a separate offset / horizontally smeared green copy.
+        _glyphEdgePane.lensScale = 0.86;
         _glyphEdgePane.lateralRefraction = YES;
         _glyphEdgePane.sharp = YES;
         _glyphEdgePane.rimless = YES;
@@ -205,7 +210,7 @@ static BOOL bubbles(void);
         _glyphEdgeMask.endPoint = CGPointMake(1, 0.5);
         // Confine reflected glyphs to the actual boundary. A broad 35%
         // crescent showed the distorted icon *beside* the intact green icon.
-        _glyphEdgeMask.locations = @[@0, @0.045, @0.10, @0.17, @0.83, @0.90, @0.955, @1];
+        _glyphEdgeMask.locations = @[@0, @0.07, @0.17, @0.26, @0.74, @0.83, @0.93, @1];
         _glyphEdgePane.layer.mask = _glyphEdgeMask;
     }
     if (!_platterEdgePane) {
@@ -217,10 +222,13 @@ static BOOL bubbles(void);
         _platterEdgePane.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
         _platterEdgePane.capsule = YES;
         _platterEdgePane.clear = YES;
-        _platterEdgePane.blurRadius = 0.25;
+        _platterEdgePane.blurRadius = 0.48;
         _platterEdgePane.magnification = 1.0;
-        _platterEdgePane.lensScale = 1.12;
+        _platterEdgePane.lensScale = 1.06;
         _platterEdgePane.lateralRefraction = YES;
+        // Reach the top and bottom edges of the already reduced platter
+        // without distorting the icons or the full-length straight rails.
+        _platterEdgePane.lateralVerticalReach = 0.32;
         _platterEdgePane.sharp = YES;
         _platterEdgePane.rimless = YES;
         _platterEdgePane.alpha = 0;
@@ -230,7 +238,7 @@ static BOOL bubbles(void);
         _platterEdgeMask.endPoint = CGPointMake(1, 0.5);
         // The reduced platter has a broader edge than individual glyphs.
         // Its refraction stays wide even when glyph reflection is narrowed.
-        _platterEdgeMask.locations = @[@0, @0.09, @0.23, @0.35, @0.65, @0.77, @0.91, @1];
+        _platterEdgeMask.locations = @[@0, @0.10, @0.25, @0.39, @0.61, @0.75, @0.90, @1];
         _platterEdgePane.layer.mask = _platterEdgeMask;
         // Host-level sibling: inside the lifted lens the backdrop sampled
         // its own composite, not the 0.92x capsule in the actual tab host.
@@ -255,6 +263,66 @@ static BOOL bubbles(void);
     UIView *target = _tintOverlay.superview == host ? _tintOverlay : host;
     if (_glyphEdgePane.superview != target) [target addSubview:_glyphEdgePane];
     if (target.subviews.lastObject != _glyphEdgePane) [target bringSubviewToFront:_glyphEdgePane];
+}
+
+// There is ONE green UIImageView for each tab. The rim backdrop bends pixels
+// sampled from that exact view, but those original pixels must not also remain
+// fully opaque directly under the bent rim; otherwise the icon appears twice.
+// Attenuate ONLY the static pixels where a moving side crescent overlaps a
+// glyph. The unbent centre is unchanged, and the source is restored at rest.
+- (void)clearGlyphSourceMasks {
+    for (UIView *view in _tintOverlay.subviews) {
+        if (![view isKindOfClass:UIImageView.class]) continue;
+        CALayer *mask = objc_getAssociatedObject(view, &kLensGlyphDeghostKey);
+        if (mask && view.layer.mask == mask) view.layer.mask = nil;
+    }
+}
+
+- (void)updateGlyphSourceMasksAt:(CGPoint)center sx:(CGFloat)sx {
+    if (!_tintOverlay || !self.superview || !_glassOn || !_glyphEdgePane || !_glyphEdgePane.alpha) {
+        [self clearGlyphSourceMasks];
+        return;
+    }
+    CGFloat half = self.bounds.size.width * sx * 0.5;
+    CGFloat edges[2] = { center.x - half, center.x + half };
+    for (UIView *view in _tintOverlay.subviews) {
+        if (![view isKindOfClass:UIImageView.class] || view.hidden || view.alpha < 0.01) continue;
+        CGRect rect = [view convertRect:view.bounds toView:self.superview];
+        CGFloat width = CGRectGetWidth(rect);
+        if (width < 1) continue;
+        CGFloat x = CGRectGetMidX(rect);
+        CGFloat edge = fabs(x - edges[0]) < fabs(x - edges[1]) ? edges[0] : edges[1];
+        CAGradientLayer *mask = objc_getAssociatedObject(view, &kLensGlyphDeghostKey);
+        if (fabs(edge - x) >= width * 0.5 + 8) {
+            if (mask && view.layer.mask == mask) view.layer.mask = nil;
+            continue;
+        }
+        if (!mask) {
+            mask = [CAGradientLayer layer];
+            mask.startPoint = CGPointMake(0, 0.5);
+            mask.endPoint = CGPointMake(1, 0.5);
+            mask.colors = @[(id)UIColor.whiteColor.CGColor,
+                            (id)UIColor.whiteColor.CGColor,
+                            (id)[UIColor colorWithWhite:1 alpha:0.08].CGColor,
+                            (id)UIColor.whiteColor.CGColor,
+                            (id)UIColor.whiteColor.CGColor];
+            objc_setAssociatedObject(view, &kLensGlyphDeghostKey, mask, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        // Drop direct-pixel alpha only within ~6pt of the refracting edge.
+        // Clamp to the glyph's bounds; all five stops must be sorted.
+        CGFloat unit = (edge - CGRectGetMinX(rect)) / width;
+        CGFloat band = 6.0 / width;
+        CGFloat b = MAX(0, MIN(1, unit - band * 0.45));
+        CGFloat c = MAX(b, MIN(1, unit));
+        CGFloat d = MAX(c, MIN(1, unit + band));
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        mask.frame = view.bounds;
+        mask.locations = @[@0, @(b), @(c), @(d), @1];
+        // At a fully outside edge the mask becomes a no-op automatically.
+        if (view.layer.mask != mask) view.layer.mask = mask;
+        [CATransaction commit];
+    }
 }
 
 - (void)updateGlyphEdgeMaskLeft:(CGFloat)left right:(CGFloat)right {
@@ -460,8 +528,10 @@ static BOOL bubbles(void) {
     // Preserve almost all of the outward optical band at both endpoints.
     // Stage 26 reduced these alphas to zero, so the scaled platter edge
     // appeared completely unbent at Home and Create.
-    CGFloat leftAlpha = MAX(0.94, MIN(1, (leftClearance - 6) / 24));
-    CGFloat rightAlpha = MAX(0.94, MIN(1, (rightClearance - 6) / 24));
+    // Only the OUTWARD ends are protected. Do not disable refraction at
+    // internal tab boundaries: they must still bend the scaled platter.
+    CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance + 3) / 18));
+    CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance + 3) / 18));
     // Both the 0.92x platter lens and the 1x icon-edge lens obey the same
     // outer-edge guard at Home / Create.
     [self updateGlyphEdgeMaskLeft:leftAlpha right:rightAlpha];
@@ -521,6 +591,7 @@ static BOOL bubbles(void) {
         }
         return;
     }
+    [self clearGlyphSourceMasks];
     _tintOverlay.layer.mask = nil;
     _tintOverlay = tintOverlay;
     if (!tintOverlay) { _tintMask = nil; [self syncGlyphEdgeStack]; [self updateNormalCutout]; return; }
@@ -605,6 +676,7 @@ static BOOL bubbles(void) {
         glass.sharp = on;
         glass.rimless = on;
         glass.lateralRefraction = on;
+        glass.lateralVerticalReach = on ? 0.24 : 0;
     }
     void (^change)(void) = ^{
         SGRShowGlass(self->_pane, on);
@@ -618,6 +690,7 @@ static BOOL bubbles(void) {
         self->_glyphEdgePane.alpha = (on && self->_tintOverlay) ? 1 : 0;
         self->_platterEdgePane.alpha = on ? 1 : 0;
     };
+    if (!on) [self clearGlyphSourceMasks];
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
 }
@@ -700,6 +773,7 @@ static BOOL bubbles(void) {
     _glare.startPoint = CGPointMake(MAX(0, MIN(1, 0.10 + motion * 0.18)), 0);
     _glare.endPoint = CGPointMake(MAX(0, MIN(1, 0.90 + motion * 0.18)), 1);
     [CATransaction commit];
+    [self updateGlyphSourceMasksAt:center sx:sx];
     if (_tintMask) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES];

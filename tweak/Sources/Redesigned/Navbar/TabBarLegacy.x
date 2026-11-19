@@ -42,12 +42,13 @@ static const CGFloat kNavButtonHeight = 54;
 static const CGFloat kNavPlatterHeightIconOnly = 62;
 static const CGFloat kNavIconOnlyImageShift = 4;
 static const CGFloat kNavItemSpacing = 0;  // another 2pt closer, without resizing the icons
-static const CGFloat kNavCircleSide = 48;   // the compact bar's circles before the now playing card has a radius to follow
+static const CGFloat kNavCircleSide = 48;   // fallback size for an apart circle outside compact mode
+static const CGFloat kNavCompactCircleSide = 62; // native compact platter: 54pt rest / 70pt pressed
 static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its items instead of stretching them
 static const CGFloat kSelPillInset = 4;     // a slightly taller bubble with more tab title headroom
 static const CGFloat kSelPillXInset = 4;  // wider resting underlay, still with even side gaps
 static const CGFloat kLensOverhang = 4;     // the held bubble stands a little taller above and below the capsule
-static const CGFloat kBarPressScale = 1.018; // the capsule breathes more gently while the bubble is up
+static const CGFloat kBarPressScale = 1.027; // measured compact lift without scaling glyphs
 static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
 static BOOL sg_minimized;
@@ -283,6 +284,8 @@ static char kNavDimKey, kCircleDimKey;
     CAGradientLayer *_heldGlare;
     CAShapeLayer *_heldGlarePath;
     BOOL _held;
+    CGFloat _trackingStartX, _trackingDX;
+    CAShapeLayer *_heldPerimeter;
     BOOL _shown, _configured, _open;
 }
 
@@ -291,7 +294,10 @@ static char kNavDimKey, kCircleDimKey;
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     _pane = SGGlassFor(self, &kCirclePaneKey);
     _pane.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    SGGlassInteractive(self, _pane);
+    // Do NOT install SGGlassInteractive here. Its generic recognizer
+    // stretches the *whole circle* with a strong rubber-band transform and
+    // adds a coloured central spotlight; native compact controls move only
+    // the raised lens a short distance behind the finger.
     _film = SGRGlassFilm(self, &kCircleFilmKey, _pane, 0);
     _glyph = [UIImageView new];
     _glyph.userInteractionEnabled = NO;
@@ -307,24 +313,27 @@ static char kNavDimKey, kCircleDimKey;
         _heldEdge.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
         _heldEdge.capsule = YES;
         _heldEdge.clear = YES;
-        _heldEdge.blurRadius = 0.70;
-        _heldEdge.magnification = 1.0;
-        _heldEdge.lensScale = 1.12;
+        _heldEdge.blurRadius = 0.12;
+        _heldEdge.magnification = 0.92;
+        _heldEdge.lensScale = 0.90;
+        _heldEdge.lateralRefraction = YES;
         _heldEdge.sharp = YES;
         _heldEdge.rimless = YES;
         _heldEdge.alpha = 0;
         _heldEdgeMask = [CAGradientLayer layer];
-        _heldEdgeMask.type = kCAGradientLayerRadial;
-        _heldEdgeMask.startPoint = CGPointMake(0.5, 0.5);
-        _heldEdgeMask.endPoint = CGPointMake(1, 1);
-        _heldEdgeMask.locations = @[@0, @0.53, @0.73, @0.93, @1];
-        _heldEdgeMask.colors = @[(id)UIColor.clearColor.CGColor,
+        _heldEdgeMask.startPoint = CGPointMake(0, 0.5);
+        _heldEdgeMask.endPoint = CGPointMake(1, 0.5);
+        _heldEdgeMask.locations = @[@0, @0.10, @0.29, @0.37, @0.63, @0.71, @0.90, @1];
+        _heldEdgeMask.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.8].CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.72].CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.14].CGColor,
                                  (id)UIColor.clearColor.CGColor,
-                                 (id)[UIColor colorWithWhite:1 alpha:0.23].CGColor,
-                                 (id)[UIColor colorWithWhite:1 alpha:0.90].CGColor,
-                                 (id)UIColor.whiteColor.CGColor];
+                                 (id)UIColor.clearColor.CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.14].CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.72].CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.8].CGColor];
         _heldEdge.layer.mask = _heldEdgeMask;
-        [self addSubview:_heldEdge];
+        [self insertSubview:_heldEdge belowSubview:_glyph];
         _heldGlare = [CAGradientLayer layer];
         _heldGlare.startPoint = CGPointMake(0, 0);
         _heldGlare.endPoint = CGPointMake(1, 1);
@@ -335,9 +344,15 @@ static char kNavDimKey, kCircleDimKey;
         _heldGlarePath = [CAShapeLayer layer];
         _heldGlarePath.fillColor = nil;
         _heldGlarePath.strokeColor = UIColor.whiteColor.CGColor;
-        _heldGlarePath.lineWidth = 1.45;
+        _heldGlarePath.lineWidth = 0.82;
         _heldGlare.mask = _heldGlarePath;
         _heldGlare.opacity = 0;
+        _heldPerimeter = [CAShapeLayer layer];
+        _heldPerimeter.fillColor = nil;
+        _heldPerimeter.strokeColor = [UIColor colorWithWhite:1 alpha:0.38].CGColor;
+        _heldPerimeter.lineWidth = 0.72;
+        _heldPerimeter.opacity = 0;
+        [self.layer addSublayer:_heldPerimeter];
         [self.layer addSublayer:_heldGlare];
     }
     self.isAccessibilityElement = YES;
@@ -352,15 +367,18 @@ static char kNavDimKey, kCircleDimKey;
     // A true circle: the circular corner curve, not the continuous one the capsule's ends and the now playing
     // card have, which on a square draws a squircle.
     CGFloat radius = MIN(bounds.size.width, bounds.size.height) / 2;
-    if (!CGRectEqualToRect(_pane.frame, bounds)) _pane.frame = bounds;
-    SGShapeGlass(_pane, radius, YES);
+    // Native compact platter is 62pt, its quiet glass inset 4pt: 54pt.
+    CGRect quiet = CGRectInset(bounds, 4, 4);
+    if (!CGRectEqualToRect(_pane.frame, quiet)) _pane.frame = quiet;
+    CGFloat quietRadius = quiet.size.height / 2;
+    SGShapeGlass(_pane, quietRadius, YES);
     _pane.layer.cornerCurve = kCACornerCurveCircular;
-    SGRDarkenGlass(_pane, &kCircleDimKey, radius, 0.62);
-    UIView *film = SGRGlassFilm(self, &kCircleFilmKey, _pane, radius);
+    SGRDarkenGlass(_pane, &kCircleDimKey, quietRadius, 0.62);
+    UIView *film = SGRGlassFilm(self, &kCircleFilmKey, _pane, quietRadius);
     film.layer.cornerCurve = kCACornerCurveCircular;
     film.backgroundColor = [UIColor colorWithWhite:1 alpha:0.045];
     if (_heldEdge) {
-        CGRect expanded = CGRectInset(bounds, -7, -7);
+        CGRect expanded = CGRectInset(quiet, -8, -8);  // exactly 70x70 on a 62pt compact platter
         _heldEdge.bounds = (CGRect){CGPointZero, expanded.size};
         _heldEdge.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
         _heldEdge.layer.cornerRadius = expanded.size.height / 2;
@@ -368,8 +386,11 @@ static char kNavDimKey, kCircleDimKey;
         _heldGlare.frame = expanded;
         _heldGlarePath.frame = _heldGlare.bounds;
         CGRect stroke = CGRectInset(_heldGlare.bounds, 0.85, 0.85);
-        _heldGlarePath.path = [UIBezierPath bezierPathWithRoundedRect:stroke
-                                              cornerRadius:stroke.size.height / 2].CGPath;
+        CGPathRef path = [UIBezierPath bezierPathWithRoundedRect:stroke
+                                                 cornerRadius:stroke.size.height / 2].CGPath;
+        _heldGlarePath.path = path;
+        _heldPerimeter.frame = expanded;
+        _heldPerimeter.path = path;
     }
     // bounds and center, not frame: the glyph is turned while Create's menu is up.
     _glyph.bounds = (CGRect){CGPointZero, bounds.size};
@@ -405,12 +426,25 @@ static char kNavDimKey, kCircleDimKey;
     [self setHeld:NO animated:NO];
 }
 
+- (void)applyCompactFingerPose {
+    CGFloat dx = _held ? MAX(-10, MIN(10, _trackingDX * 0.35)) : 0;
+    CGFloat stretch = _held ? MIN(0.035, fabs(dx) / 10 * 0.035) : 0;
+    CGAffineTransform transform = CGAffineTransformMakeTranslation(dx, 0);
+    transform = CGAffineTransformScale(transform, 1 + stretch, 1 - stretch * 0.28);
+    _heldEdge.transform = transform;
+    _heldGlare.affineTransform = transform;
+    _heldPerimeter.affineTransform = transform;
+}
+
 - (void)setHeld:(BOOL)held animated:(BOOL)animated {
     if (_held == held || !_heldEdge) return;
     _held = held;
+    if (!held) _trackingDX = 0;
     void (^update)(void) = ^{
         self->_heldEdge.alpha = held ? 1 : 0;
-        self->_heldGlare.opacity = held ? 1 : 0;
+        self->_heldGlare.opacity = held ? 0.70 : 0;
+        self->_heldPerimeter.opacity = held ? 1 : 0;
+        [self applyCompactFingerPose];
     };
     if (animated && !SGRReduceMotion())
         [UIView animateWithDuration:held ? 0.14 : 0.17 delay:0
@@ -421,8 +455,21 @@ static char kNavDimKey, kCircleDimKey;
 
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
     BOOL accepted = [super beginTrackingWithTouch:touch withEvent:event];
-    if (accepted && _shown) [self setHeld:YES animated:YES];
+    if (accepted && _shown) {
+        _trackingStartX = [touch locationInView:self].x;
+        _trackingDX = 0;
+        [self setHeld:YES animated:YES];
+    }
     return accepted;
+}
+
+- (BOOL)continueTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    BOOL tracking = [super continueTrackingWithTouch:touch withEvent:event];
+    if (_held) {
+        _trackingDX = [touch locationInView:self].x - _trackingStartX;
+        [UIView performWithoutAnimation:^{ [self applyCompactFingerPose]; }];
+    }
+    return tracking;
 }
 
 - (void)endTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
@@ -765,12 +812,15 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
                 coloredIcon.bounds = nativeIcon.bounds;
                 coloredIcon.center = [nativeIcon.superview convertPoint:nativeIcon.center toView:selected];
                 coloredIcon.transform = nativeIcon.transform;
-                coloredIcon.alpha = nativeIcon.alpha;
+                // UIKit can transiently fade the white source while the Create
+            // menu is up. That must not fade the independently masked green
+            // rendition of another tab being crossed by the lens.
+            coloredIcon.alpha = createOpen ? 0 : 1;
             } else {
                 coloredIcon.bounds = CGRectMake(0, 0, 24, 24);
                 coloredIcon.center = [button convertPoint:CGPointMake(CGRectGetMidX(button.bounds), 20) toView:selected];
                 coloredIcon.transform = CGAffineTransformIdentity;
-                coloredIcon.alpha = 1;
+                coloredIcon.alpha = createOpen ? 0 : 1;
             }
             coloredIcon.hidden = NO;
             [used addObject:coloredIcon];
@@ -907,7 +957,9 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
         [host.layer removeAnimationForKey:@"vitrine.legacyTabPress"];
         host.layer.sublayerTransform = CATransform3DIdentity;
     }
-    CATransform3D target = pressed ? CATransform3DMakeScale(kBarPressScale, 0.978, 1) : CATransform3DIdentity;
+    // Apple gives the dark platter a small *positive* lift on hold; the
+    // previous 0.978Y squeezed it just as the glass bubble expanded.
+    CATransform3D target = pressed ? CATransform3DMakeScale(kBarPressScale, 1.017, 1) : CATransform3DIdentity;
     const void *keys[] = { &kNavGlassKey, &kNavTintKey };
     for (NSUInteger i = 0; i < 2; i++) {
         const void *key = keys[i];
@@ -1486,11 +1538,13 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
 
     // As tall as the now playing card beside them, round, and centered on the capsule's row.
     CGRect card = SGRNowPlayingCardFrameIn(host, NULL);
-    CGFloat side = MIN(CGRectIsNull(card) ? kNavCircleSide : card.size.height, platter.size.height);
+    CGFloat side = compact ? MIN(kNavCompactCircleSide, platter.size.height)
+                           : MIN(CGRectIsNull(card) ? kNavCircleSide : card.size.height, platter.size.height);
     CGFloat circleY = platter.origin.y + (platter.size.height - side) / 2;
-    sg_leadFrame = CGRectMake(kNavGlassMargin, circleY, side, side);
+    CGFloat compactMargin = compact ? kNavGlassMargin + 5 : kNavGlassMargin;
+    sg_leadFrame = CGRectMake(compactMargin, circleY, side, side);
     if (!trailSource) sg_trailFrame = CGRectZero;
-    else if (compact) sg_trailFrame = CGRectMake(CGRectGetWidth(host.bounds) - kNavGlassMargin - side, circleY, side, side);
+    else if (compact) sg_trailFrame = CGRectMake(CGRectGetWidth(host.bounds) - compactMargin - side, circleY, side, side);
     else sg_trailFrame = apartFrame;
 
     UITabBarItem *leadItem = leadsCompact(bar, bar.selectedItem) ? bar.selectedItem : nil;

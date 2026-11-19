@@ -56,6 +56,9 @@ BOOL SGLegacyGlassAvailable(void);
 // Lateral refractive crescents for the Legacy tab lens only. The upper and
 // lower edge and the central channel stay unwarped; other panes are unchanged.
 @property (nonatomic) BOOL lateralRefraction;
+// Extra vertical displacement near the LEFT/RIGHT crescents, for the tab
+// platter's top/bottom border. Zero by default (sheets/controls unchanged).
+@property (nonatomic) CGFloat lateralVerticalReach;
 
 @end
 
