@@ -795,8 +795,8 @@ Spotify's own through.
 
 - **How many:** the DJ's segment, about five tracks. The player's state subscription asks for two tracks to come and
   two behind; both caps are raised to 16 for the one launch-time subscription, before a context is known.
-  Explicit context-scoped requests remain at Spotify's original caps outside DJ. A global subscription cannot be
-  changed per context without safely resubscribing Spotify's player observers, so no state-based conditional is used
+  A global subscription cannot be changed per context without safely resubscribing Spotify's player observers, so
+  no state-based conditional is used
   (doing so loses the next DJ tracks on a later DJ launch). With the diagnostic driver enabled, `dj.state` reports
   `nonDJCapSamples`, `nonDJExtraNextTotal`, `nonDJExtraPrevTotal`, and both peak values; they measure extra
   retained *track references* against Spotify's original 2+2 cap. Actual bytes, CPU and network latency still require
