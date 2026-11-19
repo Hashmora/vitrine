@@ -31,6 +31,8 @@
 // punched out of the backdrop sample, leaving only the accent group for the
 // lateral mesh to refract. No mask is retained when the lens is resting.
 @property (nonatomic, weak) UIView *normalContent;
+// Preserve only the animated Create button within the white-group cutout.
+@property (nonatomic, weak) UIView *protectedContent;
 
 // A finger down on the bar at `x`, free to run between the centers `minCenter` and `maxCenter` (a little past them).
 - (void)beginTouchAtX:(CGFloat)x minCenter:(CGFloat)minCenter maxCenter:(CGFloat)maxCenter;

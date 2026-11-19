@@ -58,6 +58,7 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     CAShapeLayer *_flareLeft, *_flareRight;
     CAGradientLayer *_glare;
     CAShapeLayer *_glareRing;
+    CAGradientLayer *_sideRefractionMask;
     CGRect _track;
     BOOL _hasTrack;
     BOOL _lifted;
@@ -80,7 +81,9 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     if ([_pane isKindOfClass:SGLegacyGlassView.class]) {
         SGLegacyGlassView *glass = (SGLegacyGlassView *)_pane;
         glass.clear = YES;
-        glass.blurRadius = 0;
+        // A real blur/displacement band, not merely a refractive mesh hidden
+        // under the synthetic track. The center is masked out below.
+        glass.blurRadius = 1.45;
         glass.lensScale = kHeldLensScale;
         // The held switch thumb has side crescents too: an SDF-like
         // horizontal displacement fading toward its top and bottom.
@@ -119,6 +122,23 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     [_miniClip.layer addSublayer:_flareLeft];
     [_miniClip.layer addSublayer:_flareRight];
     [self addSubview:_inner];
+    // The synthetic mini-track used to cover the backdrop almost entirely.
+    // Put the optical pane above it, but reveal only the two refractive
+    // crescents, leaving the middle of the track completely legible.
+    [self insertSubview:_pane aboveSubview:_inner];
+    _sideRefractionMask = [CAGradientLayer layer];
+    _sideRefractionMask.startPoint = CGPointMake(0, 0.5);
+    _sideRefractionMask.endPoint = CGPointMake(1, 0.5);
+    _sideRefractionMask.locations = @[@0, @0.10, @0.23, @0.36, @0.64, @0.77, @0.90, @1];
+    _sideRefractionMask.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.94].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.90].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.16].CGColor,
+                                   (id)UIColor.clearColor.CGColor,
+                                   (id)UIColor.clearColor.CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.16].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.90].CGColor,
+                                   (id)[UIColor colorWithWhite:1 alpha:0.94].CGColor];
+    _pane.layer.mask = _sideRefractionMask;
     _ring = [CAShapeLayer layer];
     _ring.fillColor = [UIColor colorWithRed:0.9 green:0.95 blue:1 alpha:0.06].CGColor;
     _ring.strokeColor = UIColor.clearColor.CGColor;
@@ -249,6 +269,10 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     if (!CGRectEqualToRect(_pane.bounds, held)) _pane.bounds = held;
     _pane.center = middle;
     SGShapeGlass(_pane, held.size.height / 2, YES);
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _sideRefractionMask.frame = (CGRect){CGPointZero, held.size};
+    [CATransaction commit];
     _rim.bounds = held;
     _rim.center = middle;
     CGRect inner = CGRectInset(held, kLensBand, kLensBand);

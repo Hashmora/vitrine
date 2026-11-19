@@ -12,7 +12,7 @@ static char kLensPaneKey, kLensFilmKey;
 // mesh permits 0.92 for a measurable, local backdrop reduction.
 static const CGFloat kLensMagnification = 0.92;
 static const CGFloat kLensHeldBlur = 0.08, kLensRestBlur = 2;
-static const CGFloat kLensHeldBend = 1.03;
+static const CGFloat kLensHeldBend = 1.14;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
@@ -101,11 +101,12 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // lens samples and bends the *capsule's* outside border. No change to the
     // center of the lens or to the inward refracting edge.
     CAGradientLayer *_outerEdgeGuard;
-    // A second, edge-only backdrop sits ABOVE the glyphs. Unlike the platter
-    // lens it samples them at 1x, so the 0.92x platter reduction never shrinks
-    // icons. Its two crescents are masked to leave the centre untouched.
+    // The edge-only backdrop belongs to the SelectedContentView itself: the
+    // sampled pixels and the accent glyphs share the same coordinate system.
+    // The 0.92x platter lens remains a separate surface underneath the tabs.
     SGLegacyGlassView *_glyphEdgePane;
     CAGradientLayer *_glyphEdgeMask;
+    __weak UIView *_protectedContent; // Create's animated plus is never cut out
     BOOL _glassOn;
     NSUInteger _pulseGeneration;
     // A bubble nobody holds is not run frame by frame on the main thread, which a tab loading under it would stall
@@ -143,15 +144,15 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _glare.startPoint = CGPointMake(0, 0);
     _glare.endPoint = CGPointMake(1, 1);
     // Match the thumb's directional highlight, not a static opaque border.
-    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.87].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.03].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.03].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.61].CGColor];
+    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.95].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.035].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.035].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.72].CGColor];
     _glare.locations = @[@0, @0.32, @0.68, @1];
     _glareMask = [CAShapeLayer layer];
     _glareMask.fillColor = nil;
     _glareMask.strokeColor = UIColor.whiteColor.CGColor;
-    _glareMask.lineWidth = 1.10;
+    _glareMask.lineWidth = 1.25;
     _glare.mask = _glareMask;
     _glare.opacity = 0;
     [self.layer addSublayer:_glare];
@@ -191,25 +192,18 @@ static BOOL bubbles(void);
         _glyphEdgeMask.locations = @[@0, @0.07, @0.19, @0.28, @0.72, @0.81, @0.93, @1];
         _glyphEdgePane.layer.mask = _glyphEdgeMask;
     }
-    if (_glyphEdgePane.superview != host) [host addSubview:_glyphEdgePane];
-    // The edge band must see the selected (accent) glyphs in its backdrop.
-    // Keep the 0.92x platter pane UNDER the glyphs, but place only this
-    // 1.0x optical crescent AFTER the selected group in the render stack.
-    // The inverse mask removes white normal glyphs from the same region.
-    if (_tintOverlay.superview == host) [host insertSubview:_glyphEdgePane aboveSubview:_tintOverlay];
+    [self syncGlyphEdgeStack];
 }
 
-// UIKit can bring the selected overlay to front on each layout pass. Reassert
-// the optical order without touching the icon layers or their animations.
+// The optical crescents must share a render coordinate system with the
+// selected artwork. A separate host-level pane sampled a partly clipped copy
+// and made an offset reflection of the icon instead of bending its own edge.
 - (void)syncGlyphEdgeStack {
     UIView *host = self.superview;
-    if (!_glassOn || !_glyphEdgePane || !host || _glyphEdgePane.superview != host) return;
-    if (_tintOverlay.superview == host) {
-        NSUInteger edge = [host.subviews indexOfObject:_glyphEdgePane];
-        NSUInteger selected = [host.subviews indexOfObject:_tintOverlay];
-        if (edge != NSNotFound && selected != NSNotFound && edge < selected)
-            [host insertSubview:_glyphEdgePane aboveSubview:_tintOverlay];
-    } else [host bringSubviewToFront:_glyphEdgePane];
+    if (!_glyphEdgePane || !host) return;
+    UIView *target = _tintOverlay.superview == host ? _tintOverlay : host;
+    if (_glyphEdgePane.superview != target) [target addSubview:_glyphEdgePane];
+    if (target.subviews.lastObject != _glyphEdgePane) [target bringSubviewToFront:_glyphEdgePane];
 }
 
 - (void)updateGlyphEdgeMaskLeft:(CGFloat)left right:(CGFloat)right {
@@ -234,7 +228,7 @@ static BOOL bubbles(void);
     [super didMoveToSuperview];
     // The overlay is a sibling of this lens. It must not survive a bar being
     // removed or moved to another host during a Spotify navigation rebuild.
-    if (_glyphEdgePane.superview != self.superview) [_glyphEdgePane removeFromSuperview];
+    if (!self.superview) [_glyphEdgePane removeFromSuperview];
 }
 
 - (void)layoutSubviews {
@@ -343,6 +337,12 @@ static BOOL bubbles(void) {
     [self updateOuterEdgeGuard];
 }
 
+- (void)setProtectedContent:(UIView *)protectedContent {
+    if (_protectedContent == protectedContent) return;
+    _protectedContent = protectedContent;
+    [self updateNormalCutout];
+}
+
 - (CGFloat)tintScaleXForState:(SGLensSample)st opticalScaleX:(CGFloat)sx {
     // Same silhouette as the optical glass; its width already covers both
     // neighbouring 24pt glyphs at the midpoint of 83.9pt-spaced tabs.
@@ -359,6 +359,15 @@ static BOOL bubbles(void) {
     CGMutablePathRef path = CGPathCreateMutable();
     CGPathAddRect(path, NULL, bar.bounds);
     CGPathAddRoundedRect(path, NULL, hole, height / 2, height / 2);
+    // A third even-odd contour makes only Create's animated plus visible
+    // inside the inverse cutout. Other white tabs still disappear under the
+    // held lens even while Create remains the selected action.
+    if (_protectedContent.superview) {
+        CGRect create = [_protectedContent convertRect:_protectedContent.bounds toView:bar];
+        CGRect restore = CGRectIntersection(create, hole);
+        if (!CGRectIsNull(restore) && !CGRectIsEmpty(restore))
+            CGPathAddRect(path, NULL, restore);
+    }
     return path;
 }
 
@@ -446,7 +455,7 @@ static BOOL bubbles(void) {
     }
     _tintOverlay.layer.mask = nil;
     _tintOverlay = tintOverlay;
-    if (!tintOverlay) { _tintMask = nil; [self updateNormalCutout]; return; }
+    if (!tintOverlay) { _tintMask = nil; [self syncGlyphEdgeStack]; [self updateNormalCutout]; return; }
     _tintMask = [CALayer layer];
     _tintMask.backgroundColor = UIColor.whiteColor.CGColor;
     _tintMask.cornerCurve = kCACornerCurveCircular;
@@ -627,10 +636,12 @@ static BOOL bubbles(void) {
             [self tintScaleXForState:[self state] opticalScaleX:sx], sy, 1);
         [CATransaction commit];
     }
-    if (_glyphEdgePane && _glyphEdgePane.superview == self.superview) {
+    if (_glyphEdgePane && _glyphEdgePane.superview) {
+        UIView *edgeHost = _glyphEdgePane.superview;
+        CGPoint edgeCenter = [self.superview convertPoint:center toView:edgeHost];
         [UIView performWithoutAnimation:^{
             if (!CGRectEqualToRect(self->_glyphEdgePane.bounds, self.bounds)) self->_glyphEdgePane.bounds = self.bounds;
-            self->_glyphEdgePane.center = center;
+            self->_glyphEdgePane.center = edgeCenter;
             self->_glyphEdgePane.transform = CGAffineTransformMakeScale(sx, sy);
         }];
     }
@@ -825,7 +836,15 @@ static BOOL bubbles(void) {
             a.calculationMode = kCAAnimationLinear;
             [self->_glyphEdgePane.layer addAnimation:a forKey:key];
         };
-        edgeRun(@"lens.x", @"position.x", xs);
+        NSMutableArray<NSNumber *> *edgeXs = [NSMutableArray arrayWithCapacity:count];
+        for (NSUInteger i = 0; i < count; i++) {
+            CGPoint hostCenter;
+            CGFloat xScale, yScale;
+            [self getPose:all[i] center:&hostCenter sx:&xScale sy:&yScale];
+            CGPoint localCenter = [self.superview convertPoint:hostCenter toView:self->_glyphEdgePane.superview];
+            [edgeXs addObject:@(localCenter.x)];
+        }
+        edgeRun(@"lens.x", @"position.x", edgeXs);
         edgeRun(@"lens.sx", @"transform.scale.x", sxs);
         edgeRun(@"lens.sy", @"transform.scale.y", sys);
     }
