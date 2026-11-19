@@ -38,7 +38,19 @@ static void SGDJDraw(UIView *holder) {
            ![row.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"] &&
            ![row.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"]) row = row.superview;
     UIImageView *overlay = (UIImageView *)[holder viewWithTag:SGDJCoverTag];
-    if (!row || !SGDJArtworkIsConfirmedCard(row)) { [overlay removeFromSuperview]; return; }
+    BOOL confirmed = row && SGDJArtworkIsConfirmedCard(row);
+    BOOL retry = NO;
+    BOOL placeholderFallback = !confirmed && row && SGDJArtworkNeedsPlaceholder(row, holder, &retry);
+    if (retry) {
+        // Give Spotify's own artwork loader time to finish. A custom playlist
+        // named DJ keeps its normal image if one arrives during this interval.
+        __weak UIView *weakHolder = holder;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.85 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *current = weakHolder;
+            if (current.window) SGDJDraw(current);
+        });
+    }
+    if (!confirmed && !placeholderFallback) { [overlay removeFromSuperview]; return; }
     if (!SGDJHolders) SGDJHolders = [NSHashTable weakObjectsHashTable];
     [SGDJHolders addObject:holder];
     if (!SGDJCover) SGDJCover = [UIImage imageWithContentsOfFile:SGDJCoverPath()];
