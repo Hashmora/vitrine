@@ -1623,16 +1623,28 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
     return NO;
 }
 
-// A key of an esperanto track, nil when its class has none: the tracks of a setQueue are ESPProvidedTrack, which has no
-// uri key (valueForKey: threw NSUnknownKeyException and the app crashed when a queued track was removed).
+// ESPProvidedTrack exposes the actual URI and UID through contextTrack, not on itself.
+// Check selectors before KVC: asking the wrapper for an unknown key throws on 9.1.90.
 static id espValue(id track, NSArray<NSString *> *keys) {
     for (NSString *key in keys) {
-        if ([track respondsToSelector:NSSelectorFromString(key)]) return [track valueForKey:key];
+        if ([track respondsToSelector:NSSelectorFromString(key)]) {
+            id value = [track valueForKey:key];
+            if (value) return value;
+        }
     }
     return nil;
 }
-static NSString *espURI(id track) { return espValue(track, @[@"uri", @"URI", @"trackUri", @"trackURI"]); }
-static NSString *espUID(id track) { return espValue(track, @[@"uid", @"UID"]); }
+static id espContextTrack(id track) {
+    return espValue(track, @[@"contextTrack"]);
+}
+static NSString *espURI(id track) {
+    id direct = espValue(track, @[@"uri", @"URI", @"trackUri", @"trackURI"]);
+    id nested = direct ?: espValue(espContextTrack(track), @[@"uri", @"URI", @"trackUri", @"trackURI"]);
+    return SGURIString(nested);
+}
+static NSString *espUID(id track) {
+    return espValue(track, @[@"uid", @"UID"]) ?: espValue(espContextTrack(track), @[@"uid", @"UID"]);
+}
 
 %hook _TtC16Queue_UpNextImpl19UpNextTrackProvider
 - (void)player:(id)player queueDidChange:(id)queue {
@@ -2129,11 +2141,11 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
     NSMutableArray *djs = [NSMutableArray array];
     NSMutableSet<NSString *> *sent = [NSMutableSet set];
     for (id track in tracks) {
-        if (!injectedNamed(espURI(track), espUID(track))) continue;
-        [djs addObject:track];
-        // A row named by its uri alone (an esperanto track with no uid key) is the DJ's, but no uid says which one is sent.
         NSString *uid = espUID(track);
-        if (uid.length) [sent addObject:uid];
+        // Never infer ownership from the song URI alone: hand-queued duplicates have the same URI.
+        if (!uid.length || !injectedNamed(espURI(track), uid)) continue;
+        [djs addObject:track];
+        [sent addObject:uid];
     }
     SGLog(@"queue command: setQueue %lu next tracks, %lu of the DJ's rows, %lu rows shown", (unsigned long)tracks.count,
           (unsigned long)djs.count, (unsigned long)sInjected.count);
@@ -2167,7 +2179,9 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
 static void swipeDJRow(SPTPlayerTrack *row, CGFloat x) {
     NSDate *at = [NSDate date];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (sNativeQueueAt && [sNativeQueueAt timeIntervalSinceDate:at] >= 0) {
+        // Native setQueue may acknowledge the swipe without including any DJ rows;
+        // its timestamp alone does not mean the DJ row was actually removed.
+        if (x > 0 && sNativeQueueAt && [sNativeQueueAt timeIntervalSinceDate:at] >= 0) {
             SGLog(@"queue page: the page acted on the swipe of %@ itself", row.trackTitle);
             return;
         }
@@ -2948,6 +2962,7 @@ static void scheduleHandOver(void) {
     // After the rows and the queue put in ahead have settled for this state.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ scheduleHandOver(); });
     if (arrived) {
+        sJumpRefused = NO;
         SGLog(@"queue: the player is on %@ [%@] at %.1f s", SGURIString(track.URI), track.UID, state.position);
         // The core tells the page of a queued track it has come to only with its next queue: the rows are made again now.
         refreshReaders();
@@ -3177,6 +3192,9 @@ static SPTPlayerTrack *playedBefore(SPTPlayerState *state) {
 - (id)skipToPreviousTrackWithOptions:(id)options track:(SPTPlayerTrack *)track loggingParams:(id)params {
     sBackAsked = [NSDate date];
     SPTPlayerState *state = SGPlayerState();
+    // A refused targeted back-step must fall back only once, even if the fallback
+    // re-enters this exact hook. A new track arrival clears the refusal.
+    if (sJumpRefused) return %orig;
     // Keep Spotify's restart-current-track behavior after its first three seconds.
     SPTPlayerTrack *target = !track && isDJSession(state) && state.position < 3 ? playedBefore(state) : nil;
     if (!target) return %orig;
