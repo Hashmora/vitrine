@@ -302,6 +302,11 @@ static NSHashTable<UIView *> *sAvatarViews;
 static BOOL sDJActive;
 // The queue reader can activate before the page receives its final layout.
 static __weak UIView *sQueuePageView;
+static char kNewSegmentButton, kNewSegmentEditPending, kNewSegmentConfigKey;
+static NSArray<SPTPlayerTrack *> *sEditRemoved;
+static NSDate *sEditRemovedAt;
+static __weak UIControl *sEditUndoButton;
+static NSHashTable<UIControl *> *sButtonsBeforeRemove;
 static void drawNewSegmentButtonSoon(UIView *page);
 
 static void loadCardAvatar(NSString *url) {
@@ -334,6 +339,7 @@ static UIView *descendant(UIView *root, BOOL (^match)(UIView *)) {
 // selected or reloaded (the avatar went away on a tap on the card); a view of ours it does not touch stays. In any
 // other row the view is taken off, as cells are reused.
 static const NSInteger kAvatarTag = 0x5367;
+static char kAvatarArtAlpha;
 // Spotify rounds the art of its rows; the avatar takes the corners of a row that is not the card's. Nothing else says
 // what they are (the row's art has no radius on it until its image is set, which the card's never is).
 static const CGFloat kFallbackRadius = 4;
@@ -358,11 +364,15 @@ static void drawAvatarInRow(UIView *row) {
     UIImageView *mine = (UIImageView *)[art viewWithTag:kAvatarTag];
     BOOL isCard = sCardAvatar && sCardTitle.length && [row.accessibilityLabel containsString:sCardTitle];
     if (!isCard) {
+        NSNumber *original = objc_getAssociatedObject(art, &kAvatarArtAlpha);
+        if (mine && original) art.alpha = original.floatValue;
+        objc_setAssociatedObject(art, &kAvatarArtAlpha, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [mine removeFromSuperview];
         return;
     }
     UIImageView *inner = (UIImageView *)descendant(art, ^BOOL(UIView *view) { return [view isMemberOfClass:UIImageView.class] && view.tag != kAvatarTag; });
     if (!mine) {
+        objc_setAssociatedObject(art, &kAvatarArtAlpha, @(art.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         mine = [[UIImageView alloc] init];
         mine.tag = kAvatarTag;
         mine.contentMode = UIViewContentModeScaleAspectFill;
@@ -381,7 +391,8 @@ static void drawAvatarInRow(UIView *row) {
     mine.alpha = 1;
     mine.hidden = NO;
     art.alpha = 1;
-    art.hidden = NO;
+    // Never set hidden on Spotify's Encore stacks (AGENTS.md). Their reuse
+    // restores the alpha recorded above, without altering the native stack.
     [art bringSubviewToFront:mine];
 }
 
@@ -1560,6 +1571,12 @@ static void leaveDJ(void) {
     if (sAheadQueued) dropQueued(sAheadQueued, @"the DJ's session ended");
     sAheadQueued = nil;
     sDJActive = NO;
+    // The header timer is about to stop; waiting for its next tick could
+    // leave Next DJ Set visible indefinitely on Spotify's non-DJ queue.
+    UIButton *nextSet = objc_getAssociatedObject(sQueuePageView, &kNewSegmentButton);
+    nextSet.hidden = YES;
+    [sHeaderTimer invalidate];
+    sHeaderTimer = nil;
     sQueueSessionGeneration++;
     [sPendingCopies removeAllObjects];
     [sCancelledCopies removeAllObjects];
@@ -1586,6 +1603,10 @@ static void leaveDJ(void) {
     [sPassed removeAllObjects];
     [sVoiced removeAllObjects];
     [sCopyOf removeAllObjects];
+    sEditRemoved = nil;
+    sEditRemovedAt = nil;
+    sEditUndoButton = nil;
+    sButtonsBeforeRemove = nil;
     [sCarded removeAllObjects];
     [sCardTracks removeAllObjects];
     sAheadBeforeLaunch = nil;
@@ -1859,10 +1880,8 @@ static BOOL sReloadQueued;
 static CGRect sHandleFrame = {{-1, 0}, {0, 0}};
 static __weak UIView *sUIKitHandle;
 static void alignHeaderPlay(UIView *page);
-static char kNewSegmentButton;
 // While Spotify is switching to Edit, the native Edit pill can remain visible
 // for a layout pass. Do not let a queued redraw resurrect our action meanwhile.
-static char kNewSegmentEditPending;
 static BOOL queueInEdit(UIView *page);
 static void drawNewSegmentButton(UIView *page);
 // On first presentation the Edit control and the DJ queue arrive on different
@@ -1929,30 +1948,35 @@ static void drawNewSegmentButton(UIView *page) {
         }] forControlEvents:UIControlEventTouchUpInside];
         objc_setAssociatedObject(page, &kNewSegmentButton, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
-    config.title = sPickingSegment ? @"Changing…" : @"Next DJ Set";
-    config.image = [UIImage systemImageNamed:@"forward.end.fill"];
-    config.imagePadding = 6;
-    config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold];
-    config.baseForegroundColor = UIColor.whiteColor;
-    config.background.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
-    config.background.cornerRadius = 16;
-    config.background.backgroundInsets = NSDirectionalEdgeInsetsMake(6, 0, 6, 0);
-    config.contentInsets = NSDirectionalEdgeInsetsMake(6, 12, 6, 12);
-    // Keep Spotify Mix UI Bold, but make it the same point size as the native Edit label.
-    // The size is already scaled on the native label (or by the Footnote fallback).
-    CGFloat editFontSize = nextDJSetEditFontSize(edit);
-    UIFont *font = [UIFont fontWithName:@"SpotifyMixUI-Bold" size:editFontSize]
-        ?: [UIFont systemFontOfSize:editFontSize weight:UIFontWeightBold];
-    config.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
-        NSMutableDictionary *result = [attributes mutableCopy];
-        result[NSFontAttributeName] = font;
-        return result;
-    };
-    button.configuration = config;
     BOOL requestMode = SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip) == SGDJQueueSetModeRequest;
-    button.accessibilityHint = requestMode ? @"Ask DJ for a new set using a neutral suggestion" : @"Skip to the next DJ segment";
-    button.enabled = !sPickingSegment && !sHandingOver && (!requestMode || [queuePlayer() respondsToSelector:NSSelectorFromString(@"signal:parameters:options:loggingParams:")]);
+    BOOL enabled = !sPickingSegment && !sHandingOver && (!requestMode ||
+        [queuePlayer() respondsToSelector:NSSelectorFromString(@"signal:parameters:options:loggingParams:")]);
+    NSString *title = sPickingSegment ? @"Changing…" : @"Next DJ Set";
+    CGFloat editFontSize = nextDJSetEditFontSize(edit);
+    NSString *signature = [NSString stringWithFormat:@"%@/%d/%.2f", title, requestMode, editFontSize];
+    if (![objc_getAssociatedObject(button, &kNewSegmentConfigKey) isEqual:signature]) {
+        UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
+        config.title = title;
+        config.image = [UIImage systemImageNamed:@"forward.end.fill"];
+        config.imagePadding = 6;
+        config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold];
+        config.baseForegroundColor = UIColor.whiteColor;
+        config.background.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
+        config.background.cornerRadius = 16;
+        config.background.backgroundInsets = NSDirectionalEdgeInsetsMake(6, 0, 6, 0);
+        config.contentInsets = NSDirectionalEdgeInsetsMake(6, 12, 6, 12);
+        UIFont *font = [UIFont fontWithName:@"SpotifyMixUI-Bold" size:editFontSize]
+            ?: [UIFont systemFontOfSize:editFontSize weight:UIFontWeightBold];
+        config.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *attributes) {
+            NSMutableDictionary *result = [attributes mutableCopy];
+            result[NSFontAttributeName] = font;
+            return result;
+        };
+        button.configuration = config;
+        button.accessibilityHint = requestMode ? @"Ask DJ for a new set using a neutral suggestion" : @"Skip to the next DJ segment";
+        objc_setAssociatedObject(button, &kNewSegmentConfigKey, signature, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    }
+    if (button.enabled != enabled) button.enabled = enabled;
     CGRect editFrame = [edit convertRect:edit.bounds toView:host];
     CGSize size = [button sizeThatFits:CGSizeMake(200, 44)];
     CGFloat available = CGRectGetMinX(editFrame) - 108;
@@ -2131,8 +2155,25 @@ static NSMutableOrderedSet<NSString *> *sPicked;
 
 // What Edit's Remove last took out, and when: the toast's Undo puts the rows back in the page and ticks them again, and
 // sends the core nothing.
-static NSArray<SPTPlayerTrack *> *sEditRemoved;
-static NSDate *sEditRemovedAt;
+static void findSnackbarButtons(UIView *view, NSMutableArray<UIControl *> *buttons) {
+    if (!view) return;
+    if ([view isKindOfClass:UIControl.class] && [view.accessibilityIdentifier isEqualToString:@"SPTSnackbarTextButton"])
+        [buttons addObject:(UIControl *)view];
+    for (UIView *child in view.subviews) findSnackbarButtons(child, buttons);
+}
+static void bindEditUndoSnackbar(void) {
+    if (!sEditRemoved.count || !sEditRemovedAt || -sEditRemovedAt.timeIntervalSinceNow > 10 || !sQueuePageView.window) return;
+    NSMutableArray<UIControl *> *buttons = [NSMutableArray array];
+    findSnackbarButtons(sQueuePageView.window, buttons);
+    NSMutableArray<UIControl *> *fresh = [NSMutableArray array];
+    for (UIControl *button in buttons) {
+        if ([sButtonsBeforeRemove containsObject:button]) continue;
+        [fresh addObject:button];
+    }
+    // Bind only when the new snackbar is unambiguous. A button from an
+    // unrelated snackbar must never undo a DJ edit.
+    if (fresh.count == 1) sEditUndoButton = fresh.firstObject;
+}
 
 // Whether the queue page is in its Edit: the table is always editing (that is how it shows the reorder handles), so
 // it is told by Edit's close button, which shows only then.
@@ -2184,6 +2225,14 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
     UIView *page = sQueuePageView;
     BOOL enteringEdit = sDJActive && queueEditActionFrom(self, page, @"queue-edit-button");
     BOOL leavingEdit = sDJActive && queueEditActionFrom(self, page, @"queue-close-edit-button");
+    BOOL willRemove = sDJActive && [self.accessibilityIdentifier isEqualToString:@"queue-edit-toolbar-remove"] && sPicked.count;
+    if (willRemove) {
+        NSMutableArray<UIControl *> *existing = [NSMutableArray array];
+        findSnackbarButtons(page.window, existing);
+        sButtonsBeforeRemove = [NSHashTable weakObjectsHashTable];
+        for (UIControl *button in existing) [sButtonsBeforeRemove addObject:button];
+        sEditUndoButton = nil;
+    }
     if (enteringEdit) {
         // Do this before Spotify's action: no half-second header-timer lag.
         objc_setAssociatedObject(page, &kNewSegmentEditPending, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -2235,11 +2284,17 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
         }
         sEditRemoved = removed;
         sEditRemovedAt = [NSDate date];
+        bindEditUndoSnackbar();
+        for (NSNumber *delay in @[@0.05, @0.2]) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if (!sEditUndoButton) bindEditUndoSnackbar();
+            });
+        }
         [sPicked removeAllObjects];
         sSignature = nil;
         refreshReaders();
     }
-    if ([name isEqualToString:@"SPTSnackbarTextButton"] && sEditRemoved.count && sEditRemovedAt && -sEditRemovedAt.timeIntervalSinceNow < 10) {
+    if (self == sEditUndoButton && sEditRemoved.count && sEditRemovedAt && -sEditRemovedAt.timeIntervalSinceNow < 10) {
         if (!sPicked) sPicked = [NSMutableOrderedSet orderedSet];
         for (SPTPlayerTrack *row in sEditRemoved) {
             [sHidden removeObject:baseUID(row.UID)];
@@ -2247,6 +2302,8 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
         }
         SGLog(@"queue: Undo puts back %lu of the DJ's rows removed in Edit", (unsigned long)sEditRemoved.count);
         sEditRemoved = nil;
+        sEditUndoButton = nil;
+        sButtonsBeforeRemove = nil;
         sSignature = nil;
         refreshReaders();
     }
