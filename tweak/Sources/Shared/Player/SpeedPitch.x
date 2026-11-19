@@ -495,12 +495,34 @@ static const double kGainSlew = 0.5;
 static atomic_uint sg_gainBits;
 static float sg_gainNow = 1;
 static atomic_bool sg_djTransitionMuted;
+static atomic_uint_fast64_t sg_djMuteDeadline;
 static atomic_uint_fast64_t sg_djMutedBuffers;
-void SGPlayerSetDJTransitionMuted(BOOL muted) { atomic_store(&sg_djTransitionMuted, muted); }
-BOOL SGPlayerDJTransitionMuted(void) { return atomic_load(&sg_djTransitionMuted); }
+// Bound the gate on the render thread itself: main can be suspended or stalled
+// while a Spotify skip is awaiting an acknowledgement. This uses continuous
+// mach time so the deadline also ages through device sleep.
+static const double kDJMuteMaxSeconds = 12;
+void SGPlayerSetDJTransitionMuted(BOOL muted) {
+    if (muted) {
+        mach_timebase_info_data_t timebase;
+        mach_timebase_info(&timebase);
+        uint64_t ticks = (uint64_t)(kDJMuteMaxSeconds * 1e9 * timebase.denom / timebase.numer);
+        atomic_store_explicit(&sg_djMuteDeadline, mach_continuous_time() + ticks, memory_order_relaxed);
+        atomic_store_explicit(&sg_djTransitionMuted, true, memory_order_release);
+    } else {
+        atomic_store_explicit(&sg_djTransitionMuted, false, memory_order_release);
+    }
+}
+static BOOL djMuteActive(void) {
+    if (!atomic_load_explicit(&sg_djTransitionMuted, memory_order_acquire)) return NO;
+    uint64_t deadline = atomic_load_explicit(&sg_djMuteDeadline, memory_order_relaxed);
+    if (mach_continuous_time() < deadline) return YES;
+    atomic_store_explicit(&sg_djTransitionMuted, false, memory_order_release);
+    return NO;
+}
+BOOL SGPlayerDJTransitionMuted(void) { return djMuteActive(); }
 uint64_t SGPlayerDJTransitionMutedBuffers(void) { return atomic_load(&sg_djMutedBuffers); }
 static void muteDJTransition(AudioUnitRenderActionFlags *flags, AudioBufferList *data) {
-    if (!atomic_load(&sg_djTransitionMuted)) return;
+    if (!djMuteActive()) return;
     atomic_fetch_add_explicit(&sg_djMutedBuffers, 1, memory_order_relaxed);
     for (UInt32 b = 0; b < data->mNumberBuffers; b++) {
         AudioBuffer *buffer = &data->mBuffers[b];

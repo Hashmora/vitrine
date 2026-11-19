@@ -147,9 +147,12 @@ typedef uint32_t AudioUnitRenderActionFlags;
 typedef struct { uint32_t mNumberChannels, mDataByteSize; void *mData; } AudioBuffer;
 typedef struct { uint32_t mNumberBuffers; AudioBuffer mBuffers[2]; } AudioBufferList;
 #define kAudioUnitRenderAction_OutputIsSilence 1
+#import <mach/mach_time.h>
 static atomic_bool sg_djTransitionMuted;
+static atomic_uint_fast64_t sg_djMuteDeadline;
 static atomic_uint_fast64_t sg_djMutedBuffers;
-''' + function('muteDJTransition') + function('SGPlayerSetDJTransitionMuted')
+static const double kDJMuteMaxSeconds = 12;
+''' + function('SGPlayerSetDJTransitionMuted') + function('djMuteActive') + function('SGPlayerDJTransitionMuted') + function('muteDJTransition')
     source = saved_source
     handover = mute_code + r'''
 @protocol SPTPlayer <NSObject>
@@ -162,6 +165,9 @@ static SPTPlayerTrack *nextPhysicalSong, *prefetchedNext;
 static NSUInteger queueCalls;
 static NSMutableArray *commands;
 static double skipAcknowledgementDelay = .08;
+static NSUInteger sUserPauseRevision, sLandingPauseRevision;
+static BOOL sInternalDJPause;
+static void pauseForDJTransition(id<SPTPlayer> player) { sInternalDJPause = YES; [player pause:nil]; sInternalDJPause = NO; }
 static NSString *sHandOverAnchorUID;
 static SPTPlayerTrack *sHandOverDisplayTrack;
 static SPTPlayerState *sHandOverDisplayState;
@@ -187,6 +193,7 @@ static NSString *trackKey(SPTPlayerTrack *t) { return t.UID; }
 }
 @end
 static id queuePlayer(void) { static TestPlayer *p; if (!p) p = [TestPlayer new]; return p; }
+static BOOL canMuteDJLocally(void) { return YES; }
 static BOOL queueInCore(id t) { queueCalls++; return YES; }
 static void hideTrack(id t, id reason) {}
 static void refreshReaders(void) {}
@@ -212,6 +219,11 @@ static id skipForward(SPTPlayerTrack *t) {
     for (int i=0;i<8;i++) assert(left[i]==0 && right[i]==0);
     SGPlayerSetDJTransitionMuted(NO); left[0]=.25; flags=0;
     muteDJTransition(&flags,&buffers); assert(left[0]==.25 && flags==0);
+    // An interrupted main thread cannot leave the render output silent.
+    SGPlayerSetDJTransitionMuted(YES);
+    atomic_store(&sg_djMuteDeadline, mach_continuous_time() - 1);
+    left[0]=.25; flags=0; muteDJTransition(&flags,&buffers);
+    assert(!SGPlayerDJTransitionMuted() && left[0]==.25 && flags==0);
     testState = state; state.track = five; state.contextURI = @"DJ";
     state.future = @[three]; state.isPaused = NO;
     landingTarget = song(@"new-segment"); commands = [NSMutableArray array];
