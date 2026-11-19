@@ -366,7 +366,6 @@ static char kNavDimKey, kCircleDimKey;
     CGRect bounds = self.bounds;
     // A true circle: the circular corner curve, not the continuous one the capsule's ends and the now playing
     // card have, which on a square draws a squircle.
-    CGFloat radius = MIN(bounds.size.width, bounds.size.height) / 2;
     // Native compact platter is 62pt, its quiet glass inset 4pt: 54pt.
     CGRect quiet = CGRectInset(bounds, 4, 4);
     if (!CGRectEqualToRect(_pane.frame, quiet)) _pane.frame = quiet;
