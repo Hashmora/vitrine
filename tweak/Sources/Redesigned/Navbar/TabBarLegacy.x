@@ -1736,7 +1736,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     SGShapeGlass(navGlass, glassFrame.size.height / 2, NO);
     // iOS 26's platter is distinctly darker than its clear moving lens.
     // Scope this tint to the Legacy Tab Bar, not the player's glass.
-    SGRDarkenGlass(navGlass, &kNavDimKey, glassFrame.size.height / 2, 0.57);
+    SGRDarkenGlass(navGlass, &kNavDimKey, glassFrame.size.height / 2, 0.63);
 
     UIView *navTint = SGRGlassFilm(host, &kNavTintKey, navGlass, glassFrame.size.height / 2);
     navTint.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];

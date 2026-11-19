@@ -3,18 +3,24 @@
 #import "Redesigned/Kit/SGRGlass.h"
 #import "Redesigned/Kit/SGRTokens.h"
 
-static char kLensPaneKey, kLensFilmKey, kLensFilmMaskKey;
+static char kLensPaneKey, kLensFilmKey;
 
 // The raised lens differs from the capsule: almost no blur or colour lift in
 // the middle, slightly reduced backdrop scale, and most of the refraction in
 // the specular rim. The icons stay legible in the centre like on iOS 26.
-static const CGFloat kLensMagnification = 0.975;
+// Apple keeps the content subtly smaller behind the lifted lens. The custom
+// mesh supports 0.96 as its minimum; 0.975 looked nearly unchanged at 3x.
+static const CGFloat kLensMagnification = 0.96;
 static const CGFloat kLensHeldBlur = 0.08, kLensRestBlur = 2;
 static const CGFloat kLensHeldBend = 0.90;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
 static const CGFloat kLensGrow = 16, kLensOverscroll = 8;
+// Only the accent reveal grows slightly during a hold. Its edge reaches the
+// adjacent glyph before the optical rim does, allowing two complete green
+// glyphs while the glass passes between tabs without enlarging the bubble.
+static const CGFloat kHeldAccentReveal = 16;
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
 // The softer magnification and the closer item centers keep glyphs visible through it.
 // Signed deformation: rightward motion spreads the bubble and lowers its height;
@@ -63,29 +69,6 @@ static CGFloat rubber(CGFloat x, CGFloat lo, CGFloat hi) {
 - (void)tick:(CADisplayLink *)link;
 @end
 
-static void SGSetSideRimMask(UIView *film, CGRect bounds) {
-    if (!film) return;
-    CAGradientLayer *mask = objc_getAssociatedObject(film, &kLensFilmMaskKey);
-    if (!mask) {
-        mask = [CAGradientLayer layer];
-        objc_setAssociatedObject(film, &kLensFilmMaskKey, mask, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        film.layer.mask = mask;
-    }
-    mask.frame = bounds;
-    mask.startPoint = CGPointMake(0, 0.5);
-    mask.endPoint = CGPointMake(1, 0.5);
-    mask.colors = @[
-        (id)[UIColor colorWithWhite:1 alpha:1].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.82].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.12].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.12].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:0.82].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:1].CGColor
-    ];
-    mask.locations = @[@0, @0.10, @0.18, @0.30, @0.70, @0.82, @0.90, @1];
-}
 
 @implementation SGRLensLink
 - (void)tick:(CADisplayLink *)link {
@@ -101,8 +84,12 @@ static const CGFloat kPlayStep = 1.0 / 120;
     UIView *_rest;
     UIView *_pane;
     UIView *_film;
-    // The pane already draws a directional specular rim; do not double it
-    // with a uniformly white UIKit border.
+    // The backdrop handles optical distortion; two independent layers handle
+    // a neutral side shade and narrow specular arcs. A broad white film made
+    // the refracted crescents look milky on iOS 18.
+    CAGradientLayer *_sideShade;
+    CAShapeLayer *_edgeGlow;
+    // Separate optical layers: mesh below, faint side shading and specular arcs above.
     __weak UIView *_restAbove;
     CADisplayLink *_link;
     // The two edges: where they are, how fast they go and where they are going.
@@ -141,9 +128,36 @@ static const CGFloat kPlayStep = 1.0 / 120;
     [UIView performWithoutAnimation:^{ SGRShowGlass(self->_pane, NO); }];
     _film = SGRGlassFilm(self, &kLensFilmKey, _pane, 0);
     _film.alpha = 0;
-    // The pane's own mesh and specular highlight provide the outline.
-    _film.backgroundColor = UIColor.whiteColor;
+    // No large white overlay: glass highlights are limited to thin curves.
+    _film.backgroundColor = UIColor.clearColor;
     _film.userInteractionEnabled = NO;
+    _sideShade = [CAGradientLayer layer];
+    _sideShade.name = @"Vitrine.LegacyLensNeutralSides";
+    _sideShade.startPoint = CGPointMake(0, 0.5);
+    _sideShade.endPoint = CGPointMake(1, 0.5);
+    _sideShade.colors = @[
+        (id)[UIColor colorWithWhite:0 alpha:0.18].CGColor,
+        (id)[UIColor colorWithWhite:0 alpha:0.05].CGColor,
+        (id)UIColor.clearColor.CGColor,
+        (id)UIColor.clearColor.CGColor,
+        (id)[UIColor colorWithWhite:0 alpha:0.05].CGColor,
+        (id)[UIColor colorWithWhite:0 alpha:0.18].CGColor
+    ];
+    _sideShade.locations = @[@0, @0.16, @0.31, @0.69, @0.84, @1];
+    _sideShade.masksToBounds = YES;
+    _sideShade.opacity = 0;
+    [self.layer addSublayer:_sideShade];
+    _edgeGlow = [CAShapeLayer layer];
+    _edgeGlow.name = @"Vitrine.LegacyLensEdgeGlow";
+    _edgeGlow.fillColor = nil;
+    _edgeGlow.strokeColor = [UIColor colorWithWhite:1 alpha:0.58].CGColor;
+    _edgeGlow.lineWidth = 0.9;
+    _edgeGlow.shadowColor = UIColor.whiteColor.CGColor;
+    _edgeGlow.shadowOpacity = 0.38;
+    _edgeGlow.shadowRadius = 2.2;
+    _edgeGlow.shadowOffset = CGSizeZero;
+    _edgeGlow.opacity = 0;
+    [self.layer addSublayer:_edgeGlow];
     return self;
 }
 
@@ -162,9 +176,22 @@ static const CGFloat kPlayStep = 1.0 / 120;
     if (!CGRectEqualToRect(_pane.frame, bounds)) _pane.frame = bounds;
     SGShapeGlass(_pane, radius, YES);
     SGRGlassFilm(self, &kLensFilmKey, _pane, radius);
-    SGSetSideRimMask(_film, _film.bounds);
-    // The lens rim reads on the sides, not as a bright ring above and below.
-    _film.alpha = _glassOn ? 0.17 : 0;
+    // Preserve the capsule's real size. Only the optical content shrinks;
+    // no relayout of the UITabBarButtons happens when the finger presses.
+    _film.alpha = 0;
+    _sideShade.frame = bounds;
+    _sideShade.cornerRadius = radius;
+    _edgeGlow.frame = bounds;
+    CGFloat h = CGRectGetHeight(bounds), w = CGRectGetWidth(bounds);
+    CGFloat x = MIN(radius * 0.76, w / 4);
+    CGMutablePathRef sides = CGPathCreateMutable();
+    // Two side crescents: nothing is drawn across the top/bottom of the lens.
+    CGPathMoveToPoint(sides, NULL, x, 2);
+    CGPathAddCurveToPoint(sides, NULL, 0.5, h * 0.30, 0.5, h * 0.70, x, h - 2);
+    CGPathMoveToPoint(sides, NULL, w - x, 2);
+    CGPathAddCurveToPoint(sides, NULL, w - 0.5, h * 0.30, w - 0.5, h * 0.70, w - x, h - 2);
+    _edgeGlow.path = sides;
+    CGPathRelease(sides);
 }
 
 - (void)didMoveToWindow {
@@ -246,6 +273,11 @@ static BOOL bubbles(void) {
     [self updateOuterEdgeGuard];
 }
 
+- (CGFloat)tintScaleXForState:(SGLensSample)st opticalScaleX:(CGFloat)sx {
+    CGFloat lift = MAX(0, MIN(1, st.lift));
+    return sx + kHeldAccentReveal * lift / MAX(1, self.bounds.size.width);
+}
+
 - (CGPathRef)newNormalCutoutPathAt:(CGPoint)center sx:(CGFloat)sx sy:(CGFloat)sy {
     UIView *bar = _normalContent;
     if (!bar || !self.superview) return nil;
@@ -312,8 +344,10 @@ static BOOL bubbles(void) {
     if (bar.layer.mask && bar.layer.mask != _normalCutout) return;
     CGPoint center;
     CGFloat sx, sy;
-    [self getPose:[self state] center:&center sx:&sx sy:&sy];
-    CGPathRef path = [self newNormalCutoutPathAt:center sx:sx sy:sy];
+    SGLensSample st = [self state];
+    [self getPose:st center:&center sx:&sx sy:&sy];
+    CGPathRef path = [self newNormalCutoutPathAt:center
+                                               sx:[self tintScaleXForState:st opticalScaleX:sx] sy:sy];
     if (!path) return;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -407,8 +441,12 @@ static BOOL bubbles(void) {
     }
     void (^change)(void) = ^{
         SGRShowGlass(self->_pane, on);
-        self->_film.alpha = on ? 0.17 : 0;
-        self->_rest.alpha = on ? 0.15 : 1;
+        self->_film.alpha = 0;
+        // Dark, nearly clear center against the darker tab platter; unlike
+        // a white film, the side shading never washes out the green glyphs.
+        self->_rest.alpha = on ? 0.38 : 1;
+        self->_sideShade.opacity = on ? 1 : 0;
+        self->_edgeGlow.opacity = on ? 1 : 0;
     };
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
@@ -484,7 +522,8 @@ static BOOL bubbles(void) {
         _tintMask.bounds = (CGRect){CGPointZero, self.bounds.size};
         _tintMask.cornerRadius = self.bounds.size.height / 2;
         _tintMask.position = [self tintPointForHostPoint:center];
-        _tintMask.transform = CATransform3DMakeScale(sx, sy, 1);
+        _tintMask.transform = CATransform3DMakeScale(
+            [self tintScaleXForState:[self state] opticalScaleX:sx], sy, 1);
         [CATransaction commit];
     }
     [self updateNormalCutout];
@@ -640,12 +679,14 @@ static BOOL bubbles(void) {
     NSMutableArray<NSNumber *> *sxs = [NSMutableArray arrayWithCapacity:count];
     NSMutableArray<NSNumber *> *sys = [NSMutableArray arrayWithCapacity:count];
     NSMutableArray<NSNumber *> *maskXs = [NSMutableArray arrayWithCapacity:count];
+    NSMutableArray<NSNumber *> *maskSxs = [NSMutableArray arrayWithCapacity:count];
     for (NSUInteger i = 0; i < count; i++) {
         CGPoint center;
         CGFloat sx, sy;
         [self getPose:all[i] center:&center sx:&sx sy:&sy];
         [xs addObject:@(center.x)];
         [maskXs addObject:@([self tintPointForHostPoint:center].x)];
+        [maskSxs addObject:@([self tintScaleXForState:all[i] opticalScaleX:sx])];
         [sxs addObject:@(sx)];
         [sys addObject:@(sy)];
     }
@@ -674,7 +715,7 @@ static BOOL bubbles(void) {
             [_tintMask addAnimation:a forKey:key];
         };
         maskRun(@"lens.x", @"position.x", maskXs);
-        maskRun(@"lens.sx", @"transform.scale.x", sxs);
+        maskRun(@"lens.sx", @"transform.scale.x", maskSxs);
         maskRun(@"lens.sy", @"transform.scale.y", sys);
     }
     // Keep the white cutout on the same render-server path as the green
@@ -684,7 +725,8 @@ static BOOL bubbles(void) {
         for (NSUInteger i = 0; i < count; i++) {
             CGPoint center; CGFloat sx, sy;
             [self getPose:all[i] center:&center sx:&sx sy:&sy];
-            CGPathRef path = [self newNormalCutoutPathAt:center sx:sx sy:sy];
+            CGPathRef path = [self newNormalCutoutPathAt:center
+                                                     sx:[self tintScaleXForState:all[i] opticalScaleX:sx] sy:sy];
             if (path) [paths addObject:CFBridgingRelease(path)];
         }
         if (paths.count == count) {
