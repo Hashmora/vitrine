@@ -622,6 +622,7 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
     UIView *selected = objc_getAssociatedObject(host, &kAccentCopyKey);
     if (!tintedTabs() || sg_minimized || !lens || lens.hidden) {
         lens.tintOverlay = nil;
+        lens.protectedContent = nil;
         lens.normalContent = nil;
         selected.hidden = YES;
         return;
@@ -642,7 +643,7 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
     if (!CGRectEqualToRect(selected.frame, host.bounds)) selected.frame = host.bounds;
     selected.hidden = NO;
     NSArray<UIView *> *buttons = tabButtons(bar);
-    if (buttons.count != bar.items.count) { lens.tintOverlay = nil; lens.normalContent = nil; selected.hidden = YES; return; }
+    if (buttons.count != bar.items.count) { lens.tintOverlay = nil; lens.protectedContent = nil; lens.normalContent = nil; selected.hidden = YES; return; }
     NSMutableSet<UIView *> *used = [NSMutableSet setWithCapacity:buttons.count * 2];
     UIColor *accent = SGRAccent();
     for (NSUInteger i = 0; i < buttons.count; i++) {
@@ -708,13 +709,27 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
             [used addObject:coloredTitle];
         }
     }
-    for (UIView *view in [selected.subviews copy]) if (![used containsObject:view]) [view removeFromSuperview];
+    // Keep the lens's optical crescent view inside SelectedContentView. Only
+    // stale glyph/label mirrors belong to this cleanup pass.
+    for (UIView *view in [selected.subviews copy]) {
+        if (([view isKindOfClass:UIImageView.class] || [view isKindOfClass:UILabel.class]) &&
+            ![used containsObject:view]) [view removeFromSuperview];
+    }
     // Create rotates its *real* plus/disc. Keep that source unmasked while
     // its modal is up, so the colour copy cannot freeze its animation.
     NSUInteger current = [bar.items indexOfObject:bar.selectedItem];
     BOOL createOpen = bar.awaitingCreateClose ||
         (current < bar.sources.count && isCreateSource(bar.sources[current]));
-    lens.normalContent = createOpen ? nil : bar;
+    // Keep the white-group inverse cutout active while dragging from Create:
+    // only Create's own animated plus is restored inside the cutout.
+    UIView *createButton = nil;
+    if (createOpen) {
+        for (NSUInteger i = 0; i < bar.sources.count && i < buttons.count; i++) {
+            if (isCreateSource(bar.sources[i])) { createButton = buttons[i]; break; }
+        }
+    }
+    lens.protectedContent = createButton;
+    lens.normalContent = bar;
     lens.tintOverlay = selected;
 }
 
