@@ -2,9 +2,8 @@
 #import <objc/runtime.h>
 #import "Core/SGCore.h"
 #import "Shared/Player/DJQueueHeader.h"
-#import "Redesigned/Kit/SGRKit.h"
 
-static char kButtonKey, kConfigKey, kGlassKey;
+static char kButtonKey, kConfigKey;
 
 static UILabel *editLabel(UIView *root) {
     if (!root) return nil;
@@ -39,14 +38,14 @@ void SGRDJQueueDrawNextSet(UIView *page, UIView *edit, BOOL visible, BOOL enable
         ? ((UIButton *)edit).titleLabel.font.pointSize : [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote].pointSize);
     NSString *signature = [NSString stringWithFormat:@"%@/%d/%.2f", title, requestMode, fontSize];
     if (![objc_getAssociatedObject(button, &kConfigKey) isEqualToString:signature]) {
-        UIButtonConfiguration *config;
-        if (@available(iOS 26.0, *)) {
-            // Matches the system glass Edit pill beside it, including its press interaction.
-            config = [UIButtonConfiguration glassButtonConfiguration];
-        } else {
-            config = [UIButtonConfiguration plainButtonConfiguration];
-            config.background.backgroundColor = UIColor.clearColor;
-        }
+        // Spotify's QueueHeader Edit pill is a 32pt, 10%-white capsule in
+        // this screen. A system glass configuration adds a different
+        // live material and makes the adjacent controls look inconsistent.
+        // Keep the redesigned implementation independent, but match Edit's
+        // actual background rather than applying a different button style.
+        UIButtonConfiguration *config = [UIButtonConfiguration plainButtonConfiguration];
+        config.background.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
+        config.background.backgroundInsets = NSDirectionalEdgeInsetsMake(6, 0, 6, 0);
         config.title = title;
         config.image = [UIImage systemImageNamed:@"forward.end.fill"];
         config.imagePadding = 6;
@@ -80,9 +79,4 @@ void SGRDJQueueDrawNextSet(UIView *page, UIView *edit, BOOL visible, BOOL enable
     if (button.superview != page) [page addSubview:button];
     [page bringSubviewToFront:button];
     button.hidden = NO;
-    if (@available(iOS 26.0, *)) {
-        // System glass is supplied by UIButtonConfiguration, no flat capsule underneath.
-    } else {
-        SGRGlassFlatBox(button, &kGlassKey, NO);
-    }
 }
