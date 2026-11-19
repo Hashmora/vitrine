@@ -16,7 +16,8 @@ assert 'SGDJQueueNextSetTapped' in main
 assert 'SGDJNativeDrawNextSet' in main and 'SGRDJQueueDrawNextSet' in main
 code = '\n'.join([main]+[(player/p).read_text() for p in parts])
 assert len(re.findall(r'^static void sampleDJCapCost\(.*\) \{',code,re.M)) == 1
-assert 'if (uri.length && ![uri isEqualToString:kDJContext])' in code
+assert 'if (uri.length && ![uri isEqualToString:kDJContext])' not in code
+assert 'DJ future tracks when the user switches' in code
 assert 'state.future.count > 2' in code and 'state.reverse.count > 2' in code
 assert '@"nonDJExtraNextPeak"' in code
 assert 'playerStateDidReport:' in code

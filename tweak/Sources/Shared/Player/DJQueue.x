@@ -501,12 +501,9 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
 - (void)getState:(id)request onResponse:(id)onResponse {
     Class requestClass = NSClassFromString(@"ESPGetStateRequest"), optional = NSClassFromString(@"ESPOptionalInt64");
     if (requestClass && optional && [request isKindOfClass:requestClass]) {
-        // Some callers may supply a specific playback context. Only those
-        // requests can safely retain Spotify's original caps outside DJ.
-        // The persistent getState subscription normally has NO context here.
-        id context = [request respondsToSelector:@selector(contextURI)] ? [request valueForKey:@"contextURI"] : nil;
-        NSString *uri = SGURIString(context);
-        if (uri.length && ![uri isEqualToString:kDJContext]) { %orig; return; }
+        // The player retains this subscription when the context changes. Do
+        // not gate it on today's context: Spotify would not request the missing
+        // DJ future tracks when the user switches into DJ later.
         // A message field the request does not have reads as an empty one (value 0): no cap, which is left alone.
         BOOL has = ![request respondsToSelector:NSSelectorFromString(@"hasNextTracksCap")] || [[request valueForKey:@"hasNextTracksCap"] boolValue];
         long long was = has ? [[[request valueForKey:@"nextTracksCap"] valueForKey:@"value"] longLongValue] : 0;
