@@ -105,6 +105,8 @@ static BOOL isNewSegmentItem(SPTPlayerTrack *track) {
 static void endNextSegmentSkip(BOOL changed, NSString *problem, BOOL contextChanged) {
     SGDJ_TRACE(@"segment.skip.end", (@{@"changed": @(changed), @"error": @(problem.length > 0),
                                      @"contextChanged": @(contextChanged),
+                                     @"elapsedMs": @((NSInteger)((CACurrentMediaTime() - sNextSegmentStarted) * 1000)),
+                                     @"physicalAdvances": @(sNextSegmentPhysicalAdvances),
                                      @"userPaused": @(sUserPauseRevision != sLandingPauseRevision)}));
     [sNextSegmentTimer invalidate];
     sNextSegmentTimer = nil;
@@ -157,6 +159,7 @@ static void pollNextSegmentSkip(NSTimer *timer) {
             return;
         }
         sNextSegmentAnchorSent = YES;
+        SGDJ_TRACE(@"segment.skip.pauseAck", (@{@"elapsedMs": @((NSInteger)(elapsed * 1000))}));
         SPTPlayerTrack *anchor = sNextSegmentAnchor;
         if (anchor && !sameGroup(state.track, anchor)) {
             SGLog(@"queue: skipping silently to the segment's last song %@ [%@]", SGURIString(anchor.URI), anchor.UID);
@@ -174,6 +177,7 @@ static void pollNextSegmentSkip(NSTimer *timer) {
     // A prefetched new page can become the current track before we see it in
     // future. Conversely, an old voice after the anchor is not a new page.
     if (isNewSegmentItem(state.track)) {
+        SGDJ_TRACE(@"segment.skip.newPage", (@{@"elapsedMs": @((NSInteger)(elapsed * 1000))}));
         SGLog(@"queue: skipped to the next DJ segment at %@ [%@]", SGURIString(state.track.URI), state.track.UID);
         endNextSegmentSkip(YES, nil, NO);
         return;
@@ -190,6 +194,7 @@ static void pollNextSegmentSkip(NSTimer *timer) {
         if ([SGURIString(next.URI) isEqualToString:@"spotify:delimiter"]) break;
         if (!isNewSegmentItem(next)) continue;
         sNextSegmentJumpSent = YES; // one targeted jump, never a run of Next presses
+        SGDJ_TRACE(@"segment.skip.jump", (@{@"elapsedMs": @((NSInteger)(elapsed * 1000))}));
         SGLog(@"queue: the next DJ segment arrived; jumping to %@ [%@]", SGURIString(next.URI), next.UID);
         skipForward(next);
         return;
@@ -202,6 +207,8 @@ static void pollNextSegmentSkip(NSTimer *timer) {
         CACurrentMediaTime() - sNextSegmentLastProgress < 2.5) return;
     for (SPTPlayerTrack *next in state.future) if (isCoreQueued(next)) return;
     sNextSegmentPhysicalAdvances++;
+    SGDJ_TRACE(@"segment.skip.physical", (@{@"elapsedMs": @((NSInteger)(elapsed * 1000)),
+                                            @"count": @(sNextSegmentPhysicalAdvances)}));
     sNextSegmentLastProgress = CACurrentMediaTime();
     SGLog(@"queue: next DJ page still absent; advancing one physical item (%lu/2), on %@ [%@]",
           (unsigned long)sNextSegmentPhysicalAdvances, SGURIString(state.track.URI), state.track.UID);
@@ -213,6 +220,9 @@ static void skipToNextDJSegment(void) {
     SPTPlayerState *state = SGPlayerState();
     if (!sDJActive || !isDJSession(state)) return;
     if (!canMuteDJLocally()) {
+        // Diagnostic-only: distinguish Connect/no local output from a genuinely unavailable DJ segment.
+        SGDJ_TRACE(@"segment.skip.blocked", (@{@"localAudioReady": @(SGPlayerMusicOutput() != NULL),
+                                               @"speedAllowed": @(SGPlayerSpeedAllowed())}));
         [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Next DJ Set unavailable"
                             detail:@"Switch playback to this iPhone before skipping a DJ set."
                             symbol:@"airplayaudio"];

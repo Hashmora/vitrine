@@ -29,7 +29,7 @@ import zipfile
 DJ_CONTEXT = "spotify:playlist:37i9dQZF1EYkqdzj48dyYq"
 FIELDS = (
     "active", "sessionDetected", "ordered", "handover", "muted", "mutedBuffers", "paused",
-    "duplicateBeforeOutro", "queueRows", "injectedRows", "aheadRows", "hiddenCount",
+    "duplicateBeforeOutro", "localAudioReady", "speedAllowed", "queueRows", "injectedRows", "aheadRows", "hiddenCount",
     "playedCount", "orderCount", "copyCount", "waiting", "picking", "pageVisible",
     "editMode", "sessionGeneration", "position", "duration", "displayPosition",
     "nonDJCapSamples", "nonDJExtraNextTotal", "nonDJExtraPrevTotal",
@@ -99,7 +99,8 @@ def scrub_trace(reply):
         "button.tap", "button.render", "pick.begin", "pick.finish", "player.state",
         "previous.refused", "previous.target", "previous.fallback",
         "skip.internal", "segment.skip.begin", "segment.skip.end", "segment.hold.begin",
-        "segment.land.begin", "segment.outro.begin",
+        "segment.land.begin", "segment.outro.begin", "segment.skip.blocked",
+        "segment.skip.pauseAck", "segment.skip.newPage", "segment.skip.jump", "segment.skip.physical",
     }
     allowed_strings = {"track", "target", "current", "direction"}
     events = []
@@ -179,6 +180,8 @@ def interpret(samples, events, errors, artwork=None):
     if any(s.get("controls", {}).get("nativeArt", {}).get("shown", 0) and
            s.get("controls", {}).get("redesignedArt", {}).get("shown", 0) for s in samples):
         flag("both_artworks", "warning", "Native and Redesigned DJ artwork overlays visible at the same time")
+    if any(e["event"] == "segment.skip.blocked" for e in events):
+        flag("next_set_local_guard", "warning", "Next DJ Set was blocked by the local-audio guard (typical on Spotify Connect)")
     if any(e["event"] == "previous.fallback" for e in events):
         flag("previous_fallback", "info", "Previous navigation required fallback; inspect nearby samples")
     if any(e["event"] == "queue.set" and e["data"].get("sent", 0) > 0 and
