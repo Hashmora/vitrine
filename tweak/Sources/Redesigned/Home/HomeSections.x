@@ -35,7 +35,7 @@ typedef NS_ENUM(NSInteger, SGRHomeKind) {
     SGRHomeKindDrop,
 };
 
-static char kCollapsedKey, kDroppedKey;
+static char kCollapsedKey, kDroppedKey, kDJRootKey, kDJShapeKey, kDJResultKey, kDJCheckedAtKey;
 
 #pragma mark - the dropped sections' gap
 
@@ -157,6 +157,42 @@ static BOOL containsDJCard(UIView *view) {
     return NO;
 }
 
+// Cache at the *section cell* instead of searching through the DJ subtree on
+// every self-sizing pass. A shallow signature notices new LazyElementView
+// children without paying for a full recursive walk. Negative results are
+// short-lived because Spotify can populate deeper wrappers asynchronously.
+static NSUInteger djRootShape(UIView *root) {
+    NSUInteger shape = root.subviews.count * 131u + (uintptr_t)root.class;
+    for (UIView *child in root.subviews) {
+        shape = (shape * 33u) ^ (uintptr_t)child;
+        shape = (shape * 33u) ^ child.subviews.count;
+    }
+    return shape;
+}
+static void invalidateDJSectionCache(UICollectionViewCell *cell) {
+    objc_setAssociatedObject(cell, &kDJRootKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(cell, &kDJResultKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(cell, &kDJShapeKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(cell, &kDJCheckedAtKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+static BOOL sectionContainsDJ(UICollectionViewCell *cell, UIView *root) {
+    if (!root) { invalidateDJSectionCache(cell); return NO; }
+    NSUInteger shape = djRootShape(root);
+    NSValue *cachedRoot = objc_getAssociatedObject(cell, &kDJRootKey);
+    NSNumber *cachedShape = objc_getAssociatedObject(cell, &kDJShapeKey);
+    NSNumber *cachedResult = objc_getAssociatedObject(cell, &kDJResultKey);
+    NSNumber *checkedAt = objc_getAssociatedObject(cell, &kDJCheckedAtKey);
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (cachedResult && cachedRoot.nonretainedObjectValue == root && cachedShape.unsignedIntegerValue == shape &&
+        (cachedResult.boolValue || (checkedAt && now - checkedAt.doubleValue < 0.25))) return cachedResult.boolValue;
+    BOOL found = containsDJCard(root);
+    objc_setAssociatedObject(cell, &kDJRootKey, [NSValue valueWithNonretainedObject:root], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(cell, &kDJShapeKey, @(shape), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(cell, &kDJResultKey, @(found), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(cell, &kDJCheckedAtKey, @(now), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return found;
+}
+
 // The DJ subtree is recognized by the caller once for this sizing pass.
 // This helper only classifies the other optional stack contents.
 static SGRHomeKind stackKind(UIStackView *stack) {
@@ -258,7 +294,7 @@ static void expand(UICollectionViewCell *cell) {
     if (!isSection(content)) return %orig;
     CFTimeInterval began = SGRHomeProbeBegin();
     UIView *rootBefore = content.subviews.firstObject.subviews.firstObject;
-    BOOL isDJ = rootBefore && containsDJCard(rootBefore);
+    BOOL isDJ = sectionContainsDJ(cell, rootBefore);
     dropDJHeading(content, isDJ);
     UICollectionViewLayoutAttributes *result = %orig;
 
@@ -266,7 +302,7 @@ static void expand(UICollectionViewCell *cell) {
     // A lazy section can install a different root during Spotify's sizing call;
     // only then must the new root be classified afresh.
     UIView *rootAfter = content.subviews.firstObject.subviews.firstObject;
-    if (rootAfter != rootBefore) isDJ = rootAfter && containsDJCard(rootAfter);
+    if (rootAfter != rootBefore) isDJ = sectionContainsDJ(cell, rootAfter);
     NSString *rootName = nil;
     SGRHomeKind kind = kindOf(content, &rootName, isDJ);
     BOOL collapsed = objc_getAssociatedObject(cell, &kCollapsedKey) != nil;
@@ -299,6 +335,7 @@ static void expand(UICollectionViewCell *cell) {
 
 - (void)prepareForReuse {
     %orig;
+    invalidateDJSectionCache((UICollectionViewCell *)self);
     if (objc_getAssociatedObject(self, &kCollapsedKey)) expand((UICollectionViewCell *)self);
 }
 %end
