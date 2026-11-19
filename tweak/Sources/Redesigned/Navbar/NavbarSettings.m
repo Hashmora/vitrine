@@ -402,7 +402,7 @@ static char kPreviewMainGlassKey, kPreviewApartGlassKey, kPreviewMainDimKey, kPr
         _apartPlate = SGGlassFor(self, &kPreviewApartGlassKey);
         _selectedPlate = [UIView new];
         _selectedPlate.userInteractionEnabled = NO;
-        _selectedPlate.backgroundColor = [UIColor colorWithWhite:0 alpha:0.38];
+        _selectedPlate.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
         _selectedPlate.layer.cornerCurve = kCACornerCurveCircular;
         [self addSubview:_selectedPlate];
     }
@@ -475,9 +475,8 @@ static NSArray<UITabBarItem *> *itemsFor(NSArray<NSDictionary *> *entries, BOOL 
         CGFloat apartRoom = _apart.hidden ? 0 : circle + kPlatterGap;
         CGFloat available = MAX(0, bounds.size.width - 2 * kPlatterInset - apartRoom);
         NSUInteger count = _main.items.count;
-        CGFloat natural = count > 0 && count <= 4
-            ? 100.3333333333 + 8 + (count - 1) * 83.8888888889
-            : 90 * count;
+        CGFloat fixedSpan = 100.3333333333 + 8 + 3 * 83.8888888889;
+        CGFloat natural = count > 0 && count <= 4 ? fixedSpan : 90 * count;
         CGFloat mainWidth = MIN(available, natural);
         CGFloat left = floor((bounds.size.width - mainWidth - apartRoom) / 2);
         main = CGRectMake(left, 0, mainWidth, circle);

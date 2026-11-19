@@ -596,7 +596,8 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
         BOOL createOpen = create && (bar.awaitingCreateClose || createDisc.layer.animationKeys.count > 0 ||
                           [objc_getAssociatedObject(createDisc, &kCreateTargetKey) boolValue]);
         UIImageView *nativeIcon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
-        UIImage *glyph = nativeIcon.image ?: ((i < bar.items.count) ? bar.items[i].image : nil);
+        UITabBarItem *item = i < bar.items.count ? bar.items[i] : nil;
+        UIImage *glyph = item.selectedImage ?: item.image ?: nativeIcon.image;
         if (glyph && !createOpen) {
             UIImageView *coloredIcon = objc_getAssociatedObject(button, &kAccentIconKey);
             if (!coloredIcon) {
@@ -613,12 +614,12 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
                 coloredIcon.bounds = nativeIcon.bounds;
                 coloredIcon.center = [nativeIcon.superview convertPoint:nativeIcon.center toView:selected];
                 coloredIcon.transform = nativeIcon.transform;
-                coloredIcon.alpha = nativeIcon.alpha * button.alpha;
+                coloredIcon.alpha = nativeIcon.alpha;
             } else {
                 coloredIcon.bounds = CGRectMake(0, 0, 24, 24);
                 coloredIcon.center = [button convertPoint:CGPointMake(CGRectGetMidX(button.bounds), 20) toView:selected];
                 coloredIcon.transform = CGAffineTransformIdentity;
-                coloredIcon.alpha = button.alpha;
+                coloredIcon.alpha = 1;
             }
             coloredIcon.hidden = NO;
             [used addObject:coloredIcon];
@@ -646,7 +647,7 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
             coloredTitle.numberOfLines = nativeTitle.numberOfLines;
             coloredTitle.bounds = nativeTitle.bounds;
             coloredTitle.center = [nativeTitle.superview convertPoint:nativeTitle.center toView:selected];
-            coloredTitle.alpha = nativeTitle.alpha * button.alpha;
+            coloredTitle.alpha = nativeTitle.alpha;
             coloredTitle.hidden = NO;
             [used addObject:coloredTitle];
         }

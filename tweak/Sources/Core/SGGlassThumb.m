@@ -11,7 +11,7 @@ static const CGFloat kLiftWidth = 58.0 / 37, kLiftHeight = 38.333 / 24;
 static const NSTimeInterval kLiftDuration = 0.4, kDropDuration = 0.6;
 static const CGFloat kLiftDamping = 0.6, kDropDamping = 0.7;
 // How much of the measured lens the held glass takes: the bend of the band at the rim, round the switch's lens's middle.
-static const CGFloat kHeldLensScale = 0.6;
+static const CGFloat kHeldLensScale = 0.68;
 // iOS 26's held switch thumb (its own Settings in the dark) shrinks what is under it: inside the drop the track shows
 // smaller than it is, a green (or grey) pill about the drop's middle on the card's dark, and the drop reaches past the
 // track's end. There is no white outline: the rim is the glass's bend and its light, with a soft shadow under it. The
