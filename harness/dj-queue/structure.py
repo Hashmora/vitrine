@@ -24,10 +24,15 @@ assert '@"nonDJExtraNextPeak"' in code
 assert 'playerStateDidReport:' in code
 print('DJ Queue split, cap accounting and hook ownership: PASS')
 
-# The Undo handler must bind a newly shown *queue removal* toast, not just any
-# SPTSnackbarTextButton that appears within ten seconds of pressing Remove.
-assert 'static BOOL isDJRemoveUndo(UIControl *button)' in main
-assert '[message containsString:@"queue"] && [message containsString:@"remov"]' in main
-assert 'snackbarRootForButton(self) == sEditUndoSnackbar && isDJRemoveUndo(self)' in main
-assert 'BOOL invokingDJUndo = ' in main
-print('DJ Undo toast identity and reused-button guard: PASS')
+# Spotify 9.1.90 never emits a snackbar for synthetic DJ Edit/Remove rows.
+# Hooking every UIControl to "undo" that hidden state can hijack a different
+# snackbar, so this path is intentionally fail-closed. Native Spotify Undo
+# remains untouched for normal queue rows.
+assert 'isDJRemoveUndo(' not in main
+assert 'sEditUndoButton' not in code
+assert 'sEditUndoSnackbar' not in code
+assert 'findSnackbarButtons(' not in main
+assert 'snackbarRootForButton(' not in main
+assert 'invokingDJUndo' not in main
+assert 'queue-edit-toolbar-remove' in main and 'hideTrack(row, @"removed in Edit")' in main
+print('DJ Edit removal leaves unrelated Spotify snackbar actions untouched: PASS')
