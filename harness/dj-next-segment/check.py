@@ -60,7 +60,12 @@ for symbol, implementation in (('SGDJNativeDrawNextSet', native), ('SGRDJQueueDr
     assert re.search(pattern, implementation, re.M), f'missing {symbol} implementation'
     assert re.search(r'\b' + re.escape(symbol) + r'\s*\(', queue), f'missing {symbol} call'
 assert 'button.accessibilityLabel = @"Next DJ Set"' in native and 'button.accessibilityLabel = @"Next DJ Set"' in redesigned
-assert 'glassButtonConfiguration' in redesigned and 'glassButtonConfiguration' not in native
+# The adjacent QueueHeader Edit is a flat 10%-white capsule in this screen.
+# Different UIButtonConfiguration glass material changes the visual weight.
+assert 'glassButtonConfiguration' not in redesigned and 'glassButtonConfiguration' not in native
+assert 'plainButtonConfiguration' in redesigned
+assert 'colorWithWhite:1 alpha:0.10' in redesigned
+assert 'background.backgroundInsets = NSDirectionalEdgeInsetsMake(6, 0, 6, 0)' in redesigned
 print('Next DJ Set settings and request isolation: PASS')
 
 if sys.platform != 'darwin':
