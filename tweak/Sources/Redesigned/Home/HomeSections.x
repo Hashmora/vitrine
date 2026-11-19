@@ -157,11 +157,11 @@ static BOOL containsDJCard(UIView *view) {
     return NO;
 }
 
-// A LazyElementView names the element it will hold before it holds it.
+// The DJ subtree is recognized by the caller once for this sizing pass.
+// This helper only classifies the other optional stack contents.
 static SGRHomeKind stackKind(UIStackView *stack) {
     for (UIView *part in stack.arrangedSubviews) {
         NSString *name = NSStringFromClass(part.class);
-        if (containsDJCard(part)) return SGHidden(SGRKeyHomeHideDJ) ? SGRHomeKindDrop : SGRHomeKindKeep;
         SGRHomeKind optional = optionalKind(name);
         if (optional == SGRHomeKindKeep) return optional;
     }
@@ -178,9 +178,10 @@ static SGRHomeKind shelfKind(UIView *shelf) {
 }
 
 // Before the cell is measured, so the height it reports is without the heading.
-static void dropDJHeading(UIView *content) {
+static void dropDJHeading(UIView *content, BOOL isDJ) {
+    if (!isDJ) return;
     UIStackView *stack = (UIStackView *)content.subviews.firstObject.subviews.firstObject;
-    if (![stack isKindOfClass:UIStackView.class] || stackKind(stack) != SGRHomeKindKeep) return;
+    if (![stack isKindOfClass:UIStackView.class]) return;
     for (UIView *part in stack.arrangedSubviews) {
         if (part.hidden || ![NSStringFromClass(part.class) containsString:@"Home_HeadingElementKit"]) continue;
         part.hidden = YES;
@@ -188,11 +189,11 @@ static void dropDJHeading(UIView *content) {
     }
 }
 
-static SGRHomeKind kindOf(UIView *content, NSString **rootName) {
+static SGRHomeKind kindOf(UIView *content, NSString **rootName, BOOL isDJ) {
     UIView *root = content.subviews.firstObject.subviews.firstObject;
     if (!root) return SGRHomeKindPending;
     *rootName = NSStringFromClass(root.class);
-    if (containsDJCard(root)) return SGHidden(SGRKeyHomeHideDJ) ? SGRHomeKindDrop : SGRHomeKindKeep;
+    if (isDJ) return SGHidden(SGRKeyHomeHideDJ) ? SGRHomeKindDrop : SGRHomeKindKeep;
     static Class shelf;
     if (!shelf) shelf = NSClassFromString(@"_TtC16Home_CarouselKit29TouchCancellingCollectionView");
     if (shelf && [root isKindOfClass:shelf]) return shelfKind(root);
@@ -256,11 +257,18 @@ static void expand(UICollectionViewCell *cell) {
     UIView *content = cell.contentView;
     if (!isSection(content)) return %orig;
     CFTimeInterval began = SGRHomeProbeBegin();
-    dropDJHeading(content);
+    UIView *rootBefore = content.subviews.firstObject.subviews.firstObject;
+    BOOL isDJ = rootBefore && containsDJCard(rootBefore);
+    dropDJHeading(content, isDJ);
     UICollectionViewLayoutAttributes *result = %orig;
 
+    // Reuse the subtree classification rather than rescanning every stack child.
+    // A lazy section can install a different root during Spotify's sizing call;
+    // only then must the new root be classified afresh.
+    UIView *rootAfter = content.subviews.firstObject.subviews.firstObject;
+    if (rootAfter != rootBefore) isDJ = rootAfter && containsDJCard(rootAfter);
     NSString *rootName = nil;
-    SGRHomeKind kind = kindOf(content, &rootName);
+    SGRHomeKind kind = kindOf(content, &rootName, isDJ);
     BOOL collapsed = objc_getAssociatedObject(cell, &kCollapsedKey) != nil;
     if (kind == SGRHomeKindDrop) {
         collapse(cell, MAX(1, result.size.height));
