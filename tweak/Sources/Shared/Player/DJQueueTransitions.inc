@@ -103,6 +103,9 @@ static BOOL isNewSegmentItem(SPTPlayerTrack *track) {
 }
 
 static void endNextSegmentSkip(BOOL changed, NSString *problem, BOOL contextChanged) {
+    SGDJ_TRACE(@"segment.skip.end", (@{@"changed": @(changed), @"error": @(problem.length > 0),
+                                     @"contextChanged": @(contextChanged),
+                                     @"userPaused": @(sUserPauseRevision != sLandingPauseRevision)}));
     [sNextSegmentTimer invalidate];
     sNextSegmentTimer = nil;
     sNextSegmentContext = nil;
@@ -256,6 +259,8 @@ static void skipToNextDJSegment(void) {
     sHandOverDisplayTrack = asDJTrack(state.track) ?: state.track;
     sHandOverAnchorUID = anchor ? historyUID(anchor) : historyUID(state.track);
     sHandingOver = YES; // disable the automatic end-of-segment bridge
+    SGDJ_TRACE(@"segment.skip.begin", (@{@"paused": @(state.isPaused),
+                                        @"oldCount": @(old.count), @"hasAnchor": @(anchor != nil)}));
     SGPlayerSetDJTransitionMuted(YES);
     SGLog(@"queue: Next DJ Set in skip mode: moving across the segment without sending a request");
     if (!state.isPaused) pauseForDJTransition((id<SPTPlayer>)queuePlayer());
@@ -436,6 +441,7 @@ static id landAtSegmentEnd(SPTPlayerTrack *play) {
     sHandingOver = YES;
     sLandingPauseRevision = sUserPauseRevision;
     sHandOverAnchorUID = historyUID(last);
+    SGDJ_TRACE(@"segment.land.begin", (@{@"queuedNext": @(play != nil), @"paused": @(state.isPaused)}));
     SGPlayerSetDJTransitionMuted(YES);
     if (play) {
         SPTPlayerTrack *existing = queuedCopyOf(play, state, NULL);
@@ -523,6 +529,7 @@ static void holdAtEnd(void) {
     sHandingOver = YES;
     sLandingPauseRevision = sUserPauseRevision;
     sHandOverAnchorUID = historyUID(state.track);
+    SGDJ_TRACE(@"segment.hold.begin", (@{@"paused": @(state.isPaused)}));
     SGPlayerSetDJTransitionMuted(YES);
     id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
     NSString *from = trackKey(state.track);
@@ -631,6 +638,7 @@ static void skipRepeatedCurrentIntoOutro(SPTPlayerTrack *voice) {
     sHandingOver = YES;
     sLandingPauseRevision = sUserPauseRevision;
     sHandOverAnchorUID = historyUID(voice);
+    SGDJ_TRACE(@"segment.outro.begin", (@{}));
     SGPlayerSetDJTransitionMuted(YES);
     id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
     NSString *from = trackKey(SGPlayerState().track);

@@ -665,6 +665,8 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward);
 // Out of the DJ's session: nothing of it is left for the page, its cells or the player to act on.
 static void leaveDJ(void) {
     if (!sDJActive) return;
+    SGDJ_TRACE(@"queue.leave", (@{@"injected": @(sInjected.count), @"hidden": @(sHidden.count),
+                                 @"copies": @(sCopyOf.count)}));
     if (sAheadQueued) dropQueued(sAheadQueued, @"the DJ's session ended");
     sAheadQueued = nil;
     sDJActive = NO;
@@ -722,6 +724,7 @@ static BOOL lineUpTheFuture(id reader, id player, id queue, id *forward) {
     }
     BOOL becameActive = !sDJActive;
     sDJActive = YES;
+    if (becameActive) SGDJ_TRACE(@"queue.enter", (@{@"future": @(SGPlayerState().future.count)}));
     if (becameActive) drawNewSegmentButtonSoon(sQueuePageView);
     restoreSession(SGPlayerState());
     if (queue && queue == sForwardFor && sForward && [signatureOf(SGPlayerState(), [queue valueForKey:@"nextTracks"]) isEqualToString:sSignature]) {
@@ -876,6 +879,15 @@ static BOOL lineUpTheFutureFor(id reader, id player, id queue, id *forward) {
         }
         if (-sGapSince.timeIntervalSinceNow < kGapSeconds) return YES;
     }
+#if SG_DRIVER
+    static NSUInteger lastRenderedRows = NSNotFound, lastInjectedRows = NSNotFound;
+    if (lastRenderedRows != merged.count || lastInjectedRows != injected.count) {
+        lastRenderedRows = merged.count;
+        lastInjectedRows = injected.count;
+        SGDJ_TRACE(@"queue.rows", (@{@"shown": @(merged.count), @"injected": @(injected.count),
+                                   @"future": @(state.future.count), @"core": @(next.count)}));
+    }
+#endif
     sQueue = merged;
     sInjected = injected;
     if (injected.count) {
