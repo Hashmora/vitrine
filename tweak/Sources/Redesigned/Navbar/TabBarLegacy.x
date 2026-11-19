@@ -1805,17 +1805,21 @@ static void itemDidLayOut(UIView *item) {
 // on the *same* measured iOS 26 baseline, including late UIKit passes.
 %hook UITabBarButtonLabel
 - (void)setFrame:(CGRect)frame {
-    UIView *button = self.superview;
+    // Logos only forward-declares UITabBarButtonLabel. Treat it as the
+    // UIView we actually see in UIKit rather than accessing unknown ivars.
+    UIView *label = (UIView *)self;
+    UIView *button = label.superview;
     if ([NSStringFromClass(button.class) isEqualToString:@"UITabBarButton"] &&
         [button.superview isKindOfClass:SGRLegacyTabBar.class] && nativeTabLayout((UITabBar *)button.superview))
         frame.origin.y = kNativeTitleY;
     %orig(frame);
 }
 - (void)setCenter:(CGPoint)center {
-    UIView *button = self.superview;
+    UIView *label = (UIView *)self;
+    UIView *button = label.superview;
     if ([NSStringFromClass(button.class) isEqualToString:@"UITabBarButton"] &&
         [button.superview isKindOfClass:SGRLegacyTabBar.class] && nativeTabLayout((UITabBar *)button.superview))
-        center.y = kNativeTitleY + self.bounds.size.height / 2;
+        center.y = kNativeTitleY + label.bounds.size.height / 2;
     %orig(center);
 }
 %end
