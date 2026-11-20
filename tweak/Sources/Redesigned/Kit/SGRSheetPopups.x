@@ -320,8 +320,11 @@ static BOOL inNativeShareSection(UIView *view, BOOL onPlatform) {
 }
 
 static BOOL isShareActionRow(UIView *row) {
+    // Stage 38 native Share tree: the first (on-platform) action row is
+    // 1141x100, while the second off-platform row is only 328x116. The old
+    // >390 guard silently discarded the entire second row, including More.
     return [NSStringFromClass(row.class) containsString:@"PlatformGroupContainer"] &&
-           row.bounds.size.width > 390 && row.bounds.size.height >= 90 && row.bounds.size.height < 130;
+           row.bounds.size.width >= 300 && row.bounds.size.height >= 90 && row.bounds.size.height < 130;
 }
 
 static UIView *backingInShareRow(UIView *row, const void *key, CGRect frame) {
@@ -343,21 +346,21 @@ static UIView *backingInShareRow(UIView *row, const void *key, CGRect frame) {
     return backing;
 }
 
-// SwiftUI draws the last lower-row More/DJ action as a graphics image at
-// x=336, not as a tappable UIKit or _UIShapeHitTestingView. Its own image is
-// added after the action row's first layout. Attach one backdrop directly
-// BELOW that image, not at the bottom of the entire (1171pt) carousel.
+// On the native Share sheet's second row the four graphics occupy x=16,
+// 96, 176, 256. The last one is More, NOT x=336 (that coordinate belongs to
+// a graphics item in the *first* row). Attach glass directly below its bitmap
+// when SwiftUI creates it, without disturbing the interactive image.
 static void shareMoreGraphicsGlass(UIView *image) {
     UIView *row = image.superview;
     if (!isShareActionRow(row) || !inNativeShareSection(row, NO) ||
         ![NSStringFromClass(image.class) containsString:@"_UIGraphicsView"] ||
-        fabs(CGRectGetMinX(image.frame) - 336) > 3 ||
+        fabs(CGRectGetMinX(image.frame) - 256) > 3 ||
         fabs(CGRectGetMinY(image.frame) - 8) > 3 ||
         fabs(image.bounds.size.width - 56) > 3 ||
         fabs(image.bounds.size.height - 56) > 3) return;
-    // x334..390 stays entirely inside the visible 390pt viewport. The
-    // drawing at x336 remains in front, so its glyph is never blurred.
-    UIView *backing = backingInShareRow(row, &kShareMore, CGRectMake(334, 8, 56, 56));
+    // x256..312 stays inside the actual 328pt row. Preserve the original
+    // SwiftUI drawing in front of the glass and do not change its hit test.
+    UIView *backing = backingInShareRow(row, &kShareMore, CGRectMake(256, 8, 56, 56));
     if (backing && backing.superview == row) {
         NSUInteger backingIndex = [row.subviews indexOfObject:backing];
         NSUInteger imageIndex = [row.subviews indexOfObject:image];
@@ -396,9 +399,9 @@ static void shareRowChrome(UIView *row) {
         // UIShapeHitTestingView. Keep a single 56pt backing under its image.
         backingInShareRow(row, &kShareThirdAction, CGRectMake(176, 0, 56, 56));
     } else if (inNativeShareSection(row, NO)) {
-        // The off-platform row is horizontally scrollable and the 'More'
-        // shortcut is the last visible item at x336, not the second at x96.
-        // Both underlays stay inside the 390pt visible viewport.
+        // The off-platform row is 328pt wide and its fourth, last graphic
+        // (More) begins at x256. Only the real action-row ancestor may own
+        // these backings; other SwiftUI graphics remain untouched.
         backingInShareRow(row, &kShareCopyLink, CGRectMake(16, 8, 56, 56));
         // The graphics for More can be installed after the first row pass.
         // When present, put the backdrop immediately below that glyph.
@@ -406,14 +409,14 @@ static void shareRowChrome(UIView *row) {
         // Reordering the lens changes row.subviews; iterate a snapshot.
         for (UIView *sub in [row.subviews copy]) {
             if ([NSStringFromClass(sub.class) containsString:@"_UIGraphicsView"] &&
-                fabs(CGRectGetMinX(sub.frame) - 336) < 3 &&
+                fabs(CGRectGetMinX(sub.frame) - 256) < 3 &&
                 fabs(CGRectGetMinY(sub.frame) - 8) < 3) {
                 shareMoreGraphicsGlass(sub);
                 foundMore = YES;
                 break;
             }
         }
-        if (!foundMore) backingInShareRow(row, &kShareMore, CGRectMake(334, 8, 56, 56));
+        if (!foundMore) backingInShareRow(row, &kShareMore, CGRectMake(256, 8, 56, 56));
     }
 }
 
