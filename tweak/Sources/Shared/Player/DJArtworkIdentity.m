@@ -103,32 +103,40 @@ static char kMissingArtCardKey, kMissingArtSinceKey;
 #if SG_DRIVER
 static char kArtworkProbeSignature, kMissingArtProbeKey;
 #endif
-// Spotify's official DJ can be exposed as a plain "DJ, Playlist" card in
-// Recents with no URI, publisher or DJ component reachable from UIKit. Avoid
-// restoring the old title-only override: a user playlist named DJ has the
-// same title, but its loaded UIImageView must never be covered by our art.
-// Only the empty Encore placeholder can use this compatibility path.
+
+// A 9.1.90 DJ entry may have the exact same accessible title as a playlist.
+// Spotify sometimes draws its empty tile without an Encore PlaceholderView or
+// UIImageView at the level we expected. Neither is a reliable prerequisite.
+// Preserve loaded covers whenever the placeholder is gone. A visible
+// PlaceholderView means Spotify still considers the artwork unresolved even
+// if the image slot contains a temporary bitmap. Explicit DJ identity is
+// handled separately in IsConfirmedCard.
+static void sgScanArt(UIView *view, NSUInteger depth, BOOL *loaded, BOOL *placeholder) {
+    if (!view || depth > 4) return;
+    if ([view.accessibilityIdentifier hasPrefix:@"SG.DJArtwork"] ||
+        [view.accessibilityIdentifier hasPrefix:@"SGR.DJArtwork"]) return;
+    NSString *name = NSStringFromClass(view.class);
+    if ([name containsString:@"Placeholder"] && !view.hidden && view.alpha > 0.01)
+        *placeholder = YES;
+    if ([view isKindOfClass:UIImageView.class] && ((UIImageView *)view).image &&
+        !view.hidden && view.alpha > 0.01) *loaded = YES;
+    for (UIView *sub in view.subviews) sgScanArt(sub, depth + 1, loaded, placeholder);
+}
+
+// Compatibility fallback: show DJ cover only for known Spotify tile kinds,
+// when their native art is still missing or an active placeholder is visible.
+// Never require a particular PlaceholderView hierarchy: it differs between
+// Home tiles and Recents rows. A user playlist DJ whose artwork is genuinely
+// missing is visually ambiguous; a model URI is needed to distinguish it.
 BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
     if (retry) *retry = NO;
     BOOL candidate = card && holder && djTitle(card.accessibilityLabel) &&
-        playlistLabel(card.accessibilityLabel) &&
         ([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"] ||
          [card.accessibilityIdentifier isEqualToString:@"Components.UI.HomeCard"] ||
          [card.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"]);
-    BOOL nativeArtwork = NO, foundBitmapSlot = NO, placeholder = NO;
-    if (candidate) {
-        for (UIView *sub in holder.subviews) {
-            if ([sub.accessibilityIdentifier hasPrefix:@"SG.DJArtwork"] ||
-                [sub.accessibilityIdentifier hasPrefix:@"SGR.DJArtwork"]) continue;
-            if ([sub isKindOfClass:UIImageView.class]) {
-                foundBitmapSlot = YES;
-                if (((UIImageView *)sub).image) nativeArtwork = YES;
-            }
-            if ([NSStringFromClass(sub.class) containsString:@"Placeholder"] && !sub.hidden && sub.alpha > 0.01)
-                placeholder = YES;
-        }
-    }
-    BOOL missing = candidate && foundBitmapSlot && !nativeArtwork && placeholder;
+    BOOL nativeArtwork = NO, placeholder = NO;
+    if (candidate) sgScanArt(holder, 0, &nativeArtwork, &placeholder);
+    BOOL missing = candidate && (!nativeArtwork || placeholder);
     if (!missing) {
         objc_setAssociatedObject(holder, &kMissingArtCardKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(holder, &kMissingArtSinceKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -144,12 +152,13 @@ BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
     }
     BOOL useFallback = missing && firstSeen && now - firstSeen.doubleValue >= 0.8;
 #if SG_DRIVER
-    NSString *signature = [NSString stringWithFormat:@"%d-%d-%d-%d-%d", candidate, foundBitmapSlot,
+    NSString *signature = [NSString stringWithFormat:@"%d-%d-%d-%d", candidate,
                            nativeArtwork, placeholder, useFallback];
     if (![objc_getAssociatedObject(holder, &kMissingArtProbeKey) isEqualToString:signature]) {
         objc_setAssociatedObject(holder, &kMissingArtProbeKey, signature, OBJC_ASSOCIATION_COPY_NONATOMIC);
-        SGDJ_TRACE(@"artwork.placeholder", (@{@"candidate": @(candidate), @"bitmapSlot": @(foundBitmapSlot),
-             @"nativeArtwork": @(nativeArtwork), @"placeholder": @(placeholder), @"fallback": @(useFallback),
+        SGDJ_TRACE(@"artwork.placeholder", (@{ @"candidate": @(candidate),
+             @"nativeArtwork": @(nativeArtwork), @"placeholder": @(placeholder),
+             @"fallback": @(useFallback),
              @"history": @([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"])}));
     }
 #endif
