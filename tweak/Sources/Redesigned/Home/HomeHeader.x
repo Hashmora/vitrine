@@ -409,7 +409,7 @@ static UIView *homePageNear(UIView *view, NSUInteger depth) {
 // The gradient at the back of the page's view (HomePageView, which holds the feed), the feed's own black cleared so
 // it shows through behind the title and the first shelf; the shelves clear theirs (HomeSections.x).
 static void layoutTint(UIView *view) {
-    UIView *page = nil;
+    __block UIView *page = nil;
     if (SGBelowiOS26() && SGUseLegacyGlass()) page = homePageNear(view, 7);
     if (!page) page = sg_tintView.superview;
     if (!page) SGForEachView(view, ^(UIView *v) {
