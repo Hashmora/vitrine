@@ -367,10 +367,28 @@ void SGRHomeSetPageTint(UIColor *color) {
     if (sg_tintView) paintTint(sg_tintView, YES);
 }
 
+// The filter's HomePageView is replaced by Spotify when entering Music; the
+// header controller survives. Find the *current* page under this controller,
+// not the superview of our last (weak) tint, which belongs to the old filter.
+// Restrict the walk to the shallow container/header levels: a Home feed can
+// contain thousands of descendants and must never be scanned each layout.
+static UIView *homePageNear(UIView *view, NSUInteger depth) {
+    if (!view) return nil;
+    if ([view.accessibilityIdentifier hasPrefix:@"HomePageView-"]) return view;
+    if (!depth) return nil;
+    for (UIView *sub in view.subviews) {
+        UIView *found = homePageNear(sub, depth - 1);
+        if (found) return found;
+    }
+    return nil;
+}
+
 // The gradient at the back of the page's view (HomePageView, which holds the feed), the feed's own black cleared so
 // it shows through behind the title and the first shelf; the shelves clear theirs (HomeSections.x).
 static void layoutTint(UIView *view) {
-    __block UIView *page = sg_tintView.superview;
+    UIView *page = nil;
+    if (SGBelowiOS26() && SGUseLegacyGlass()) page = homePageNear(view, 7);
+    if (!page) page = sg_tintView.superview;
     if (!page) SGForEachView(view, ^(UIView *v) {
         if (!page && [v.accessibilityIdentifier hasPrefix:@"HomePageView"]) page = v;
     });
@@ -380,9 +398,11 @@ static void layoutTint(UIView *view) {
         tint = [SGRHomeTintView new];
         tint.userInteractionEnabled = NO;
         objc_setAssociatedObject(page, &kTintKey, tint, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        sg_tintView = tint;
-        paintTint(tint, NO);
     }
+    // Both pointers must follow the new HomePageView; before Stage 59 the
+    // stale pointer stopped the gradient being created for Music and Home.
+    sg_tintView = tint;
+    paintTint(tint, NO);
     if (tint.superview != page) [page insertSubview:tint atIndex:0];
     CGRect frame = CGRectMake(0, 0, page.bounds.size.width, kTintHeight);
     if (!CGRectEqualToRect(tint.frame, frame)) tint.frame = frame;
@@ -581,44 +601,60 @@ static void keepHeaderClear(UIView *element) {
     if (SGIsVisibleColor(element.layer.backgroundColor)) element.layer.backgroundColor = NULL;
 }
 
+static char kFeedLiftConstraintKey;
 static void liftFeed(UIView *element) {
     UIView *page = element.superview;
     if (!SGBelowiOS26() || !page) return;
     if ([NSStringFromClass(element.class) containsString:@"HomeHeaderElement"]) keepHeaderClear(element);
-    if (objc_getAssociatedObject(element, &kLiftedKey)) {
-        insetFeed(sg_feed);
+
+    // Stage 55 captured y=0 before selecting Friday Music but y=112 for
+    // Music AND the returning Home, with the header still at y=62. Spotify
+    // replaces the feed container while retaining the same header element.
+    // The old `kLiftedKey` short-circuit therefore skipped the new container.
+    UIView *home = homePageNear(page, 7);
+    UIView *container = home;
+    while (container && container.superview && container.superview != page) container = container.superview;
+    if (!container || container.superview != page) return;
+    UIScrollView *feed = nil;
+    for (UIView *sub in home.subviews) {
+        if ([sub isKindOfClass:UIScrollView.class] && sub.bounds.size.height > 200) {
+            feed = (UIScrollView *)sub;
+            break;
+        }
+    }
+    if (!feed) return;
+    if (feed != sg_feed) sg_feed = feed;
+
+    NSLayoutConstraint *below = nil, *activeTop = nil;
+    for (NSLayoutConstraint *c in page.constraints) {
+        if (!c.active || c.firstItem != container || c.firstAttribute != NSLayoutAttributeTop) continue;
+        if (c.secondItem == page && c.secondAttribute == NSLayoutAttributeTop) activeTop = c;
+        if (c.secondItem == element && c.secondAttribute == NSLayoutAttributeBottom) below = c;
+    }
+    if (activeTop) {
+        // The previous constraint is still correct. Recompute the inset as
+        // the feed's safe area may have changed when the filter was rebuilt.
+        insetFeed(feed);
         return;
     }
-    NSLayoutConstraint *below = nil;
-    for (NSLayoutConstraint *c in page.constraints) {
-        if (c.active && c.secondItem == element && c.secondAttribute == NSLayoutAttributeBottom
-            && c.firstAttribute == NSLayoutAttributeTop && [c.firstItem isKindOfClass:UIView.class]) below = c;
-    }
-    UIView *container = below.firstItem;
-    if (!container || container.bounds.size.height < 1) return;
-    // Not before the feed is known: worked out without its safe area, the first content stood 8pt high.
-    UIScrollView *feed = sg_feed;
-    if (!feed) return;
-    // A header element Spotify makes again ties the same container to it: that tie goes, and the container keeps the one
-    // tie of ours to the page's top, never a second.
-    static __weak NSLayoutConstraint *sg_lift;
-    NSLayoutConstraint *lift = sg_lift;
-    BOOL lifted = lift.active && lift.firstItem == container && lift.secondItem == page;
-    if (!lifted) {
+    // Never move an unrelated SwiftUI page. A Spotify header-to-feed tie or
+    // a container we previously lifted is the evidence required to intervene.
+    BOOL previouslyLifted = objc_getAssociatedObject(element, &kLiftedKey) != nil;
+    if (!below && !previouslyLifted) return;
+    if (sg_firstTop <= 0) {
         CGFloat before = CGRectGetMinY(container.frame);
-        sg_firstTop = before + ([feed isDescendantOfView:container] ? feed.safeAreaInsets.top : 0);
+        sg_firstTop = before + feed.safeAreaInsets.top;
     }
-    below.active = NO;
-    if (!lifted) {
-        lift = [container.topAnchor constraintEqualToAnchor:page.topAnchor];
-        lift.active = YES;
-        sg_lift = lift;
-    }
+    if (below) below.active = NO;
+    NSLayoutConstraint *lift = [container.topAnchor constraintEqualToAnchor:page.topAnchor];
+    lift.active = YES;
+    objc_setAssociatedObject(container, &kFeedLiftConstraintKey, lift, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(element, &kLiftedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [page layoutIfNeeded];
     if (container.clipsToBounds) container.clipsToBounds = NO;
     insetFeed(feed);
-    SGLog(@"redesign home: the feed runs under the header, its first content kept %.0fpt down%@", sg_firstTop, lifted ? @", the header made again" : @"");
+    SGLog(@"redesign home: %@ feed container to y=0 after Home/Music transition; first content %.0fpt",
+          previouslyLifted ? @"re-lifted" : @"lifted", sg_firstTop);
 }
 
 // The page's own pass can run before Spotify has sized its header at all (the header's view 0 by 0, its stack still
