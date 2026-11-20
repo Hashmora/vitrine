@@ -394,28 +394,38 @@ static BOOL bubbles(void);
     [CATransaction setDisableActions:YES];
     _glare.frame = bounds;
     _glareMask.frame = _glare.bounds;
-    CGRect pathBounds = CGRectInset(_glare.bounds, 0.5, 0.5);
+    // The selected-bar mask is above this view and cuts exactly at the
+    // lens outline. An edge-centred stroke loses its inner antialiasing to
+    // that mask and is visible mainly beyond the platter. Put the rim just
+    // INSIDE the lens so its light is visible over the full capsule.
+    CGRect pathBounds = CGRectInset(_glare.bounds, 1.8, 1.8);
     CGPathRef outline = [UIBezierPath bezierPathWithRoundedRect:pathBounds
                                            cornerRadius:CGRectGetHeight(pathBounds) / 2].CGPath;
     _glareMask.path = outline;
     _perimeter.frame = bounds;
     _perimeter.path = outline;
-    CGRect arc = CGRectInset(bounds, 0.6, 0.6);
+    CGRect arc = CGRectInset(bounds, 2.3, 2.3);
     UIBezierPath *specular = [UIBezierPath bezierPath];
-    // The system's specular is a thin, crisp curve on opposite diagonal
-    // shoulders, NOT a horizontal top rail and bottom rail. Draw only the
-    // curved portions; the very faint full perimeter is independent.
-    CGFloat x0 = arc.origin.x + 0.5, y0 = arc.origin.y + 0.5;
-    CGFloat x1 = CGRectGetMaxX(arc) - 0.5, y1 = CGRectGetMaxY(arc) - 0.5;
-    CGFloat cr = MAX(1, (y1 - y0) / 2);
-    [specular moveToPoint:CGPointMake(x0 + 0.14 * cr, y0 + 0.49 * cr)];
-    [specular addCurveToPoint:CGPointMake(x0 + 1.04 * cr, y0 + 0.01 * cr)
-               controlPoint1:CGPointMake(x0 + 0.31 * cr, y0 + 0.17 * cr)
-               controlPoint2:CGPointMake(x0 + 0.64 * cr, y0 + 0.01 * cr)];
-    [specular moveToPoint:CGPointMake(x1 - 1.04 * cr, y1 - 0.01 * cr)];
-    [specular addCurveToPoint:CGPointMake(x1 - 0.14 * cr, y1 - 0.49 * cr)
-               controlPoint1:CGPointMake(x1 - 0.64 * cr, y1 - 0.01 * cr)
-               controlPoint2:CGPointMake(x1 - 0.31 * cr, y1 - 0.17 * cr)];
+    // Follow most of each diagonal shoulder, then continue far onto the
+    // horizontal segment (unlike Stage 90's tiny quarter-corner marks).
+    // The opposite rails stay faint: these are still two directional glints,
+    // not a bright uninterrupted top/bottom outline.
+    CGFloat x0 = CGRectGetMinX(arc), y0 = CGRectGetMinY(arc);
+    CGFloat x1 = CGRectGetMaxX(arc), y1 = CGRectGetMaxY(arc);
+    CGFloat cr = MAX(1, CGRectGetHeight(arc) / 2);
+    CGFloat straight = MAX(0, CGRectGetWidth(arc) - 2 * cr);
+    CGFloat run = straight * 0.68;
+    CGFloat cy = (y0 + y1) / 2;
+    [specular moveToPoint:CGPointMake(x0 + 0.06 * cr, cy + 0.22 * cr)];
+    [specular addCurveToPoint:CGPointMake(x0 + cr, y0)
+               controlPoint1:CGPointMake(x0 + 0.13 * cr, y0 + 0.14 * cr)
+               controlPoint2:CGPointMake(x0 + 0.52 * cr, y0)];
+    [specular addLineToPoint:CGPointMake(x0 + cr + run, y0)];
+    [specular moveToPoint:CGPointMake(x1 - cr - run, y1)];
+    [specular addLineToPoint:CGPointMake(x1 - cr, y1)];
+    [specular addCurveToPoint:CGPointMake(x1 - 0.06 * cr, cy - 0.22 * cr)
+               controlPoint1:CGPointMake(x1 - 0.52 * cr, y1)
+               controlPoint2:CGPointMake(x1 - 0.13 * cr, y1 - 0.14 * cr)];
     _longSpecular.frame = bounds;
     _longSpecular.path = specular.CGPath;
     _fingerHighlight.frame = bounds;
@@ -897,26 +907,18 @@ static BOOL bubbles(void) {
     *sx = width * (1 + d) / baseWidth;
     *sy = held * (1 - kLensVolume * d);
     CGPoint pose = CGPointMake((st.L + st.R) / 2, CGRectGetMidY(_restFrame));
-    // At Home/Create the system lens already leans outside the capsule as
-    // soon as it lifts; it does not require an outward finger drag first.
-    // Set its outward tip to 8pt beyond the platter at full lift, even when
-    // directional squash changes the visible width. Never reach 16pt.
+    // The Stage 91 pose used to *push* the lens to the full 8pt overhang
+    // on touch-down, even when the finger had not moved. That makes a static
+    // hold look as though the glass has jumped out of the capsule. Keep the
+    // spring's natural center and only CAP its outer edge at 8pt; an outward
+    // drag may still reach that limit through rubber().
     if (st.lift > 0.001 && _minCenter > 0 && _maxCenter > _minCenter &&
         _normalContent && self.superview) {
         CGRect platter = [_normalContent convertRect:_normalContent.bounds toView:self.superview];
         CGFloat half = baseWidth * *sx / 2;
         CGFloat minX = CGRectGetMinX(platter) - kLensOverscroll + half;
         CGFloat maxX = CGRectGetMaxX(platter) + kLensOverscroll - half;
-        if (maxX >= minX) {
-            CGFloat lift = MIN(1, MAX(0, st.lift));
-            CGFloat nearLeft = MIN(1, MAX(0, (_minCenter + 14 - pose.x) / 14));
-            CGFloat nearRight = MIN(1, MAX(0, (pose.x - (_maxCenter - 14)) / 14));
-            if (nearLeft > 0 && pose.x < _minCenter + 14)
-                pose.x += (minX - pose.x) * lift * nearLeft;
-            else if (nearRight > 0 && pose.x > _maxCenter - 14)
-                pose.x += (maxX - pose.x) * lift * nearRight;
-            pose.x = MAX(minX, MIN(maxX, pose.x));
-        }
+        if (maxX >= minX) pose.x = MAX(minX, MIN(maxX, pose.x));
     }
     *center = pose;
 }
