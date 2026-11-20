@@ -204,10 +204,26 @@ static void dropDJHeading(UIView *content) {
     }
 }
 
+// Stage 38's Friday Music tree identified a distinct banner, NOT a preview:
+// Discovery_BannerKit.FullBleedBannerElementView contained an UIImageView with
+// accessibilityLabel "New Music Friday". Keep that one banner on Legacy Glass,
+// while leaving all other full-bleed banners and video previews filtered out.
+static BOOL isNewMusicFridayBanner(UIView *root) {
+    if (!root || !SGBelowiOS26() || !SGUseLegacyGlass()) return NO;
+    __block BOOL found = NO;
+    SGForEachView(root, ^(UIView *view) {
+        if (!found && [view isKindOfClass:UIImageView.class] &&
+            [view.accessibilityLabel isEqualToString:@"New Music Friday"]) found = YES;
+    });
+    return found;
+}
+
 static SGRHomeKind kindOf(UIView *content, NSString **rootName) {
     UIView *root = content.subviews.firstObject.subviews.firstObject;
     if (!root) return SGRHomeKindPending;
     *rootName = NSStringFromClass(root.class);
+    if ([*rootName containsString:@"Discovery_BannerKit.FullBleedBannerElementView"] &&
+        isNewMusicFridayBanner(root)) return SGRHomeKindKeep;
     static Class shelf;
     if (!shelf) shelf = NSClassFromString(@"_TtC16Home_CarouselKit29TouchCancellingCollectionView");
     if (shelf && [root isKindOfClass:shelf]) return shelfKind(root);
