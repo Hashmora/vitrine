@@ -259,7 +259,7 @@ class Capture:
         except Exception as e:self.warnings.append('Frame metrics unavailable: '+repr(e))
 
     def capture(self,phase,fresh=False):
-        tag='cold' if fresh else 'warm'
+        tag='cold' if fresh else ('first-after-launch' if phase=='share-first-after-launch' else 'warm')
         print(f'\n[{tag}] Close Share and leave the song context menu with the Share action visible.',flush=True)
         input('Press Enter after the song menu is open, BEFORE tapping Share: ')
         before=self.snapshot(phase,'before')
@@ -330,6 +330,7 @@ def self_test():
     assert share_visible({'top':SHARE_CLASS,'ok':True})
     assert not share_visible({'top':SHARE_CLASS,'ok':False})
     assert urllib.parse.urlencode({'label':'Lyric stickers'},quote_via=urllib.parse.quote)=='label=Lyric%20stickers'
+    assert 'INCOMPLETE_FIRST_AFTER_LAUNCH_NOT_CONFIRMED'.startswith('INCOMPLETE')
     print('Self-test: PASSED — row parsing, transition gate, URL encoding')
 
 
@@ -339,19 +340,32 @@ def main():
     ap.add_argument('--output',default='')
     ap.add_argument('--fresh-install',action='store_true',help='Confirm Share has NOT been opened at all since reinstall')
     ap.add_argument('--warm-only',action='store_true',help='Only collect the already-warmed sheet and the More button')
+    ap.add_argument('--first-after-launch',action='store_true',help='Record the FIRST Share opening after a full app relaunch, then the warm repeat; do not claim a fresh install')
     ap.add_argument('--self-test',action='store_true')
     args=ap.parse_args()
     if args.self_test:self_test();return 0
+    if args.first_after_launch and (args.warm_only or args.fresh_install):
+        ap.error('--first-after-launch is exclusive with --warm-only / --fresh-install')
     if not args.output:
-        args.output='out/stage50-share-cold-more-'+dt.datetime.now().strftime('%Y%m%d-%H%M%S')
+        prefix='stage61-share-first-launch-' if args.first_after_launch else 'stage50-share-cold-more-'
+        args.output='out/'+prefix+dt.datetime.now().strftime('%Y%m%d-%H%M%S')
     cap=Capture(args)
     save(cap.root/'environment.json',{'head':run(['git','rev-parse','HEAD']),
          'branch':run(['git','branch','--show-current']),
          'time':dt.datetime.now().astimezone().isoformat(),'port':args.port,'udid':args.udid})
     try:
+        if args.first_after_launch:
+            print('Verify that you COMPLETELY QUIT and restarted Spotify, and have NOT opened Share since then.')
+            answer=input('Type FIRST (not Enter) to certify this is the first opening after launch: ').strip()
+            if answer != 'FIRST':
+                cap.issues.append('INCOMPLETE_FIRST_AFTER_LAUNCH_NOT_CONFIRMED')
+                return 0 if cap.finish() else 1
+            save(cap.root/'launch-claim.json', {'kind':'first Share after app restart',
+                 'confirmedByOperator':True, 'note':'This cannot independently certify a fresh install.'})
         state=cap.driver.call('state')
         if state.get('ok') is False:raise RuntimeError('SG_DRIVER /state returned failure')
-        if not args.warm_only:cap.capture('share-cold',fresh=True)
+        if args.first_after_launch: cap.capture('share-first-after-launch',fresh=False)
+        elif not args.warm_only: cap.capture('share-cold',fresh=True)
         cap.capture('share-warm',fresh=False)
     except (KeyboardInterrupt,EOFError):cap.issues.append('Cancelled before completing all phases')
     except Exception as e:
