@@ -4,6 +4,7 @@
 #import "Core/SGCore.h"
 #import "Settings/SGModPage.h"
 #import "Home.h"
+#import "Redesigned/Search/Search.h"
 
 static NSString *const kFirstShelf = @"First shelf";
 
@@ -37,6 +38,9 @@ UIViewController *SGRHomeSettingsPage(void) {
             SGOptionRow(@"Title stays on scroll", @"The title, the avatar and the pill stay at the top as Home scrolls under them", SGRKeyHomeKeepTitle),
             SGOptionRow(@"Song suggestions", @"Spotify's carousel of songs to try, when Home offers one", SGRKeyHomeSongSuggestions),
             SGOptionRow(@"Video and playlist previews", @"The cards that play as Home scrolls", SGRKeyHomePreviews),
+            // The Search camera is configured here, immediately above Shelves,
+            // rather than occupying its own page or a root-level settings row.
+            SGRSearchCodesRow(),
         ]),
         SGNotedSection(@"Shelves", rows, @"The shelves Home has shown in the last 30 days. A shelf is known by its heading, so one "
                                          @"Spotify names differently in another language is listed again."),
