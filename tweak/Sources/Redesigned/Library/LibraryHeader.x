@@ -97,15 +97,17 @@ void SGRLibraryClearScrim(UIView *header) {
         fade.accessibilityElementsHidden = YES;
         fade.backgroundColor = UIColor.clearColor;
         CAGradientLayer *gradient = [CAGradientLayer layer];
-        // Start fading immediately across the title row, not only near its
-        // bottom. The header's fade still ends exactly where the chips begin.
-        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0.96].CGColor,
+        // The title starts around y=62 in Spotify's header and the chips
+        // start around y=110. The old fade had already lost much of its
+        // opacity where "Your Library" was drawn. Keep the top dark through
+        // the beginning of the title, then dissolve across its lower half.
+        // The fade's frame is still clipped at the REAL chip-row origin.
+        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0.98].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.96].CGColor,
                             (id)[UIColor colorWithWhite:0 alpha:0.77].CGColor,
-                            (id)[UIColor colorWithWhite:0 alpha:0.43].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.35].CGColor,
                             (id)[UIColor colorWithWhite:0 alpha:0].CGColor];
-        // Reach full black behind the title itself, then ease away before
-        // the filter chips begin.
-        gradient.locations = @[@0, @0.34, @0.72, @1];
+        gradient.locations = @[@0, @0.50, @0.68, @0.84, @1];
         gradient.startPoint = CGPointMake(0.5, 0);
         gradient.endPoint = CGPointMake(0.5, 1);
         [fade.layer addSublayer:gradient];
