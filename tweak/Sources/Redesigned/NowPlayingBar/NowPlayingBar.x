@@ -721,6 +721,24 @@ static void styleNowPlayingBar(UIViewController *container) {
     });
 }
 
+// The interactive opening may hold Spotify's transition snapshot over the
+// real inline NPV for several frames. Once the cancel lands, explicitly
+// restore the real Legacy Glass pane even if Spotify doesn't schedule another
+// layout pass (which otherwise leaves the artwork on an empty background).
+void SGRNowPlayingBarRestoreLegacyCard(void) {
+    UIViewController *container = sg_container;
+    if (!SGUseLegacyGlass() || !container.isViewLoaded || !container.view.window) return;
+    [UIView performWithoutAnimation:^{
+        styleNowPlayingBar(container);
+        UIView *glass = sg_cardGlass;
+        if (!glass || glass.superview != container.view) return;
+        glass.hidden = NO;
+        glass.alpha = 1;
+        glass.layer.opacity = 1;
+        SGRShowGlass(glass, YES);
+    }];
+}
+
 %hook _TtC18NowPlaying_BarImpl36NowPlayingBarContainerViewController
 - (void)viewDidLayoutSubviews {
     %orig;
