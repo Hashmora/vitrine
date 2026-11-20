@@ -99,18 +99,31 @@ class Collector(stage72.Collector):
         if state.get('player'):
             self.strict('npv-close-before', 'player.close')
             time.sleep(.8)
-        self.strict('npv-dismiss-settings','settings.dismiss')
+        self.strict('npv-dismiss-settings', 'settings.dismiss')
         self.strict('npv-home', 'tab', arg='Home')
-        time.sleep(.8)
-        state = self.strict('npv-rest-state', 'state')
-        if state.get('player'):
-            raise RuntimeError('NPV baseline still full-screen after driver close')
-        found = self.strict('npv-bar-candidates', 'find', id='SPTNowPlayingBar')
-        candidates = [suitable_point(v) for v in found.get('views', [])]
-        candidates = [c for c in candidates if c]
-        if len(candidates) != 1:
-            raise RuntimeError('Expected one visible SPTNowPlayingBar, got '+repr(found))
-        return candidates[0]
+        time.sleep(.65)
+        # This test is specifically for the *minimized* player between
+        # compact tab circles. Never accept the full-width bar as baseline.
+        self.strict('npv-expand-reset', 'navbar.minimize', on=0, animated=0)
+        self.strict('npv-force-minimized', 'navbar.minimize', on=1, animated=0)
+        time.sleep(.65)
+        layout = self.strict('npv-minimized-baseline', 'navbar.mini-state')
+        stage72.dump(self.root/'npv/minimized-baseline.json',layout)
+        if not layout.get('legacy') or not layout.get('minimized'):
+            raise RuntimeError('Cannot enter actual Legacy minimized tab bar: '+repr(layout))
+        card=layout.get('cardFrame')
+        slot=layout.get('inlineSlot')
+        if not isinstance(card,list) or len(card)!=4 or card[2]<70 or card[3]<24:
+            raise RuntimeError('Mini NPV is not visible at valid size: '+repr(layout))
+        if not isinstance(slot,list) or len(slot)!=4:
+            raise RuntimeError('Mini-player inline slot is absent: '+repr(layout))
+        cx,cy=card[0]+card[2]/2,card[1]+card[3]/2
+        if not(slot[0]-12<=cx<=slot[0]+slot[2]+12 and abs(cy-(slot[1]+slot[3]/2))<24):
+            raise RuntimeError('Mini-player card is not docked in minimized row: '+repr(layout))
+        rest=self.strict('npv-rest-state','state')
+        if rest.get('player'):
+            raise RuntimeError('Full NPV is already open before reverse gesture')
+        return [cx,cy]
 
     def record_gesture(self, tag, hold):
         folder = self.root / tag
@@ -173,10 +186,12 @@ class Collector(stage72.Collector):
         after = self.snapshot(tag+'/after',deep=True)
         time.sleep(1.1)
         settled = self.snapshot(tag+'/settled',deep=True)
-        # A player left open is an observation, not a valid reproduced mini-tab-bar stall.
-        # This state is retained; the scenario is INCOMPLETE unless the UI returned.
-        if settled.get('player'):
-            raise RuntimeError('reverse gesture left full player open: cannot identify minimized-bar stall')
+        mini=self.strict(tag.replace('/', '-')+'-final-mini-state', 'navbar.mini-state')
+        stage72.dump(folder/'final-mini-state.json', mini)
+        # A player left open or an expanded bar cannot prove a minimized-bar
+        # defect. Keep the evidence, but do not label such runs CAPTURED.
+        if settled.get('player') or not mini.get('minimized'):
+            raise RuntimeError('reverse gesture did not return to minimized bar: '+repr(mini))
         return True
 
     def npv(self):
@@ -289,6 +304,8 @@ def self_test():
     if driver_source.is_file():
         source = driver_source.read_text(encoding='utf-8')
         assert 'legacyGlassTabItems(titles)' in source
+        assert '@"navbar.minimize"' in source
+        assert '@"navbar.mini-state"' in source
         assert 'UITabBarButton' in source
         assert 'Legacy tab bar is visible but has' in source
     print('SELF-TEST: OK')

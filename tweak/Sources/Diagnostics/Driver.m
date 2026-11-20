@@ -23,6 +23,15 @@
 #import "Core/SGCore.h"
 #import "Diagnostics.h"
 #import "Headers/SPTPlayer.h"
+// Driver stays independent of feature layers (check-layers.sh). These are
+// diagnostic calls into the linked feature code, not imported headers.
+extern BOOL SGRLegacyTabBarOn(void);
+extern BOOL SGRTabBarMinimized(void);
+extern BOOL SGRLegacyNowPlayingHeld(void);
+extern void SGRSetTabBarMinimized(BOOL minimized, BOOL animated);
+extern CGRect SGRTabBarInlineSlot(UIView *host, CGFloat height);
+extern CGRect SGRNowPlayingCardFrameIn(UIView *host, CGFloat *radius);
+extern CGRect SGRNowPlayingArtworkFrameIn(UIView *host);
 #import <dlfcn.h>
 #import <mach/mach_time.h>
 #import <objc/message.h>
@@ -914,6 +923,35 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
                     }
                     return @{ @"popped": @(popped),
                               @"top": NSStringFromClass(nav.topViewController.class) ?: @"nil" };
+                });
+            },
+            // Force the *minimized* Legacy tab row for an NPV reverse-gesture
+            // reproduction. The old test started from the expanded bar, so it
+            // exercised an unrelated touch on UIStackView and falsely passed.
+            @"navbar.minimize" : ^NSDictionary *(NSDictionary *p) {
+                return onMain(^id {
+                    if (!SGRLegacyTabBarOn()) fail(@"not the Legacy tab bar");
+                    SGRSetTabBarMinimized([p[@"on"] boolValue], [p[@"animated"] boolValue]);
+                    [keyWindow() layoutIfNeeded];
+                    return @{ @"minimized": @(SGRTabBarMinimized()) };
+                });
+            },
+            @"navbar.mini-state" : ^NSDictionary *(NSDictionary *p) {
+                return onMain(^id {
+                    UIWindow *window = keyWindow();
+                    CGRect card = SGRNowPlayingCardFrameIn(window, NULL);
+                    CGRect slot = SGRTabBarInlineSlot(window, 54);
+                    CGRect artwork = SGRNowPlayingArtworkFrameIn(window);
+                    id (^coordinates)(CGRect) = ^id(CGRect frame) {
+                        return CGRectIsNull(frame) || CGRectIsEmpty(frame) ? (id)[NSNull null] :
+                            (id)@[@(frame.origin.x), @(frame.origin.y), @(frame.size.width), @(frame.size.height)];
+                    };
+                    return @{ @"minimized": @(SGRTabBarMinimized()),
+                              @"legacy": @(SGRLegacyTabBarOn()),
+                              @"held": @(SGRLegacyNowPlayingHeld()),
+                              @"cardFrame": coordinates(card),
+                              @"inlineSlot": coordinates(slot),
+                              @"artworkFrame": coordinates(artwork) };
                 });
             },
             @"navbar.refresh" : ^NSDictionary *(NSDictionary *p) {
