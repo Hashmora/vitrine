@@ -302,7 +302,8 @@ static void layoutFriday(UIView *holder, CGSize size) {
         outline.lineWidth = kFridayRing;
         ring.mask = outline;
         ring.zPosition = 101;
-        ring.opacity = sg_glassShown ? 1 : 0;
+        UILabel *title = sg_header ? objc_getAssociatedObject(sg_header, &kTitleKey) : nil;
+        ring.opacity = title ? title.alpha : 1;
         objc_setAssociatedObject(holder, &kFridayKey, ring, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     colors = (CAGradientLayer *)ring.sublayers.firstObject;
@@ -342,7 +343,7 @@ static void layoutFriday(UIView *holder, CGSize size) {
         outline.path = [UIBezierPath bezierPathWithRoundedRect:line cornerRadius:line.size.height / 2].CGPath;
         [CATransaction commit];
     }
-    turnRing(ring, sg_glassShown);
+    turnRing(ring, ring.opacity > 0.01f);
 }
 
 static CGFloat layoutPill(UIView *header, UIStackView *stack, UIView *face) {
@@ -628,17 +629,8 @@ static void riseGlass(UIView *glass, CGAffineTransform transform, CGFloat alpha)
     sg_glassShown = shown;
     sg_glassFadeEnds = CACurrentMediaTime() + kGlassFade;
     [UIView animateWithDuration:kGlassFade animations:^{ SGRShowGlass(shape, shown); }];
-    // The Friday ring goes and comes back with the material, over the same time.
-    CALayer *ring = objc_getAssociatedObject(glass, &kFridayKey);
-    if (ring) {
-        if (shown) turnRing(ring, YES);
-        [CATransaction begin];
-        [CATransaction setAnimationDuration:kGlassFade];
-        // Faded out, it stops turning (turnRing), unless it has come back meanwhile.
-        if (!shown) [CATransaction setCompletionBlock:^{ if (!sg_glassShown) turnRing(ring, NO); }];
-        ring.opacity = shown ? 1 : 0;
-        [CATransaction commit];
-    }
+    // Only the glass material uses this 0.5 cutoff. The Friday rim is part of
+    // the header artwork and must fade with its title/buttons instead.
 }
 
 static void insetFeed(UIScrollView *feed);
@@ -654,7 +646,19 @@ static void followScroll(UIScrollView *scroll) {
     CGAffineTransform up = CGAffineTransformMakeTranslation(0, -MIN(scrolled, faded));
     BOOL glassFading = CACurrentMediaTime() < sg_glassFadeEnds || (alpha > 0.5) != sg_glassShown;
     rise(title, up, alpha);
-    riseGlass(objc_getAssociatedObject(sg_header, &kGlassKey), glassFading ? CGAffineTransformMakeTranslation(0, -scrolled) : up, alpha);
+    UIView *glass = objc_getAssociatedObject(sg_header, &kGlassKey);
+    riseGlass(glass, glassFading ? CGAffineTransformMakeTranslation(0, -scrolled) : up, alpha);
+    CALayer *ring = objc_getAssociatedObject(glass, &kFridayKey);
+    if (ring && !ring.hidden) {
+        // Same exact scroll alpha as the Home title and the filter/avatar
+        // buttons. Disable implicit CA fading: scrolling is already sampled
+        // per frame; an additional layer animation would lag or finish early.
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        ring.opacity = alpha;
+        [CATransaction commit];
+        turnRing(ring, alpha > 0.01f);
+    }
     rise(objc_getAssociatedObject(sg_header, &kButtonsKey), up, alpha);
     if ([sg_face isDescendantOfView:sg_header]) rise(sg_face, up, alpha);
 }
