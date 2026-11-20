@@ -75,6 +75,9 @@ static CGFloat screenRadius(void) {
 @property (nonatomic, readonly) CGFloat restY;
 @property (nonatomic, readonly) CGRect card;
 @property (nonatomic, readonly) BOOL masksStrip;
+#if SG_DRIVER
+- (NSDictionary *)diagnosticSurface;
+#endif
 @end
 
 @implementation SGRPlayerMorph {
@@ -314,6 +317,32 @@ static CGFloat screenRadius(void) {
     [CATransaction commit];
 }
 
+#if SG_DRIVER
+// Native per-frame evidence for the early interactive NPV reveal. HTTP /get
+// cannot reliably sample a live UITouch: it may run only after finger-up.
+// The existing nav.trace CADisplayLink reads this instead, on the render tick.
+- (NSDictionary *)diagnosticSurface {
+    CALayer *mask = _mask.presentationLayer ?: _mask;
+    CALayer *sheet = _sheet.layer.presentationLayer ?: _sheet.layer;
+    CALayer *overlay = _overlay.layer.presentationLayer ?: _overlay.layer;
+    CALayer *cover = _cover.layer.presentationLayer ?: _cover.layer;
+    return @{ @"follows": @(_follows), @"tornDown": @(_tornDown),
+              @"maskAttached": @(_overlay.layer.mask == _mask),
+              @"maskOpacity": @(mask.opacity),
+              @"maskModelOpacity": @(_mask.opacity),
+              @"sheetOpacity": @(sheet.opacity),
+              @"sheetAlpha": @(_sheet.alpha),
+              @"sheetInWindow": @(_sheet.window != nil),
+              @"overlayOpacity": @(overlay.opacity),
+              @"overlayAlpha": @(_overlay.alpha),
+              @"coverOpacity": @(cover.opacity),
+              @"coverHidden": @(_cover == nil || _cover.hidden),
+              @"overlayMaskName": NSStringFromClass(_overlay.layer.mask.class) ?: @"nil",
+              @"sheetY": @(sheet.frame.origin.y),
+              @"maskHeight": @(mask.bounds.size.height) };
+}
+#endif
+
 - (void)tearDown {
     _tornDown = YES;
     UIView *overlay = _overlay;
@@ -416,6 +445,7 @@ NSDictionary *SGRDiagnosticsPlayerMorph(void) {
               @"lastProgress": @(f.lastT), @"stillFrames": @(f.still),
               @"overlayY": @(f.lastY), @"sped": @(f.sped),
               @"overlayInWindow": @(f.overlay.window != nil),
+              @"surface": f.morph ? [f.morph diagnosticSurface] : @{},
               @"containerFrame": f.container ? NSStringFromCGRect(f.container.frame) : @"nil",
               @"overlayFrame": f.overlay ? NSStringFromCGRect(f.overlay.frame) : @"nil" };
 }
