@@ -50,6 +50,10 @@ static __weak UIViewController *sg_container;
 // The container's view while it stands in the minimized tab bar's row, below the page that holds it.
 static __weak UIView *sg_inline;
 
+UIView *SGRNowPlayingBarGlassPane(void) {
+    return sg_cardGlass.window ? sg_cardGlass : nil;
+}
+
 CGRect SGRNowPlayingCardFrameIn(UIView *host, CGFloat *radius) {
     UIView *glass = sg_cardGlass;
     if (!glass.superview || !glass.window || !host) return CGRectNull;

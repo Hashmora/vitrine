@@ -22,6 +22,8 @@ NSArray<SGModRow *> *SGRNowPlayingBarRows(void);
 // been styled or while it is out of a window (NowPlayingBar.x). The bar keeps its geometry while
 // Spotify hides it for the player's open and close.
 CGRect SGRNowPlayingCardFrameIn(UIView *host, CGFloat *radius);
+// Live glass pane owned by the real mini-card. Never reparent it during Spotify's interactive transition.
+UIView *SGRNowPlayingBarGlassPane(void);
 // The round artwork on that card in `host`'s coordinates; CGRectNull when none was found.
 CGRect SGRNowPlayingArtworkFrameIn(UIView *host);
 // Lays the bar out again at once, into the minimized tab bar's slot or back above the bar
