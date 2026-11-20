@@ -188,7 +188,7 @@ BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
         SGDJ_TRACE(@"artwork.placeholder", (@{ @"candidate": @(candidate),
              @"nativeArtwork": @(!!nativeImage), @"placeholder": @(placeholder),
              @"fallback": @(useFallback), @"held": @(held),
-             @"holder": SGDJProbeTag([NSString stringWithFormat:@"%p", holder]),
+             @"holderSlot": @((unsigned long)(SGDJProbeTag([NSString stringWithFormat:@"%p", holder]).hash % 100000)),
              @"history": @([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"])}));
     }
 #endif
@@ -224,3 +224,43 @@ BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
 #endif
     return confirmed;
 }
+
+#if SG_DRIVER
+static char kArtworkPaintProbeKey;
+void SGDJArtworkTracePaint(UIView *holder, UIImageView *overlay, UIView *card,
+                           BOOL requested, BOOL coverReady, BOOL redesigned) {
+    // Trace only DJ-titled rows, without titles or Spotify URI values.
+    if (!holder || !card || !djTitle(card.accessibilityLabel)) return;
+    BOOL attached = overlay && overlay.superview == holder;
+    BOOL drawn = attached && overlay.image && !overlay.hidden && overlay.alpha > 0.01;
+    BOOL front = attached && holder.subviews.lastObject == overlay;
+    BOOL onWindow = !!holder.window;
+    BOOL visible = drawn && front && onWindow;
+    if (visible) {
+        for (UIView *view = holder; view; view = view.superview) {
+            if (view.hidden || view.alpha <= 0.01) { visible = NO; break; }
+        }
+        if (visible) {
+            CGRect boundsInWindow = [holder convertRect:holder.bounds toView:holder.window];
+            visible = boundsInWindow.size.width >= 4 && boundsInWindow.size.height >= 4 &&
+                CGRectIntersectsRect(boundsInWindow, holder.window.bounds);
+        }
+    }
+    NSUInteger width = (NSUInteger)MAX(0, holder.bounds.size.width);
+    NSUInteger height = (NSUInteger)MAX(0, holder.bounds.size.height);
+    NSString *signature = [NSString stringWithFormat:@"%p-%d-%d-%d-%d-%d-%d-%lu-%lu",
+        card, requested, coverReady, drawn, front, onWindow, visible,
+        (unsigned long)width, (unsigned long)height];
+    if ([objc_getAssociatedObject(holder, &kArtworkPaintProbeKey) isEqualToString:signature]) return;
+    objc_setAssociatedObject(holder, &kArtworkPaintProbeKey, signature, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    SGDJ_TRACE(@"artwork.draw", (@{
+        @"outcome": @YES,
+        @"holderSlot": @((unsigned long)(SGDJProbeTag([NSString stringWithFormat:@"%p", holder]).hash % 100000)),
+        @"requested": @(requested), @"coverReady": @(coverReady),
+        @"drawn": @(drawn), @"front": @(front), @"onWindow": @(onWindow),
+        @"visible": @(visible), @"width": @(width), @"height": @(height),
+        @"history": @([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"]),
+        @"redesigned": @(redesigned)
+    }));
+}
+#endif

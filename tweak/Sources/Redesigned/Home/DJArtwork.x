@@ -68,11 +68,19 @@ static void SGRDJDraw(UIView *holder) {
                  @"redesigned": @(1) }));
     }
 #endif
-    if (!confirmed && !placeholderFallback) { [overlay removeFromSuperview]; return; }
+    if (!confirmed && !placeholderFallback) {
+        [overlay removeFromSuperview];
+        SGDJArtworkTracePaint(holder, overlay, row, NO, !!SGRDJCover, YES);
+        return;
+    }
     if (!SGRDJHolders) SGRDJHolders = [NSHashTable weakObjectsHashTable];
     [SGRDJHolders addObject:holder];
     if (!SGRDJCover) SGRDJCover = [UIImage imageWithContentsOfFile:SGRDJCoverPath()];
-    if (!SGRDJCover) { SGRDJLoad(); return; }
+    if (!SGRDJCover) {
+        SGRDJLoad();
+        SGDJArtworkTracePaint(holder, overlay, row, YES, NO, YES);
+        return;
+    }
     if (!overlay) {
         overlay = [UIImageView new];
         overlay.tag = SGRDJCoverTag;
@@ -96,6 +104,7 @@ static void SGRDJDraw(UIView *holder) {
     overlay.layer.cornerRadius = MAX(radius, holder.layer.cornerRadius);
     overlay.layer.cornerCurve = kCACornerCurveContinuous;
     [holder bringSubviewToFront:overlay];
+    SGDJArtworkTracePaint(holder, overlay, row, YES, YES, YES);
 }
 %hook SGRDJCardImage
 - (void)didMoveToWindow {
