@@ -20,6 +20,9 @@ static const CGFloat kLensHeldBend = 1.14;
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
 static const CGFloat kLensGrow = 20, kLensOverscroll = 8;
+// The leftmost gesture should be able to pull the raised bubble farther out
+// than the capsule edge. Keep the right bound unchanged.
+static const CGFloat kLensLeftOverscroll = 16;
 // Optical glass, black base, selected-colour mask and inverse white cutout
 // must share precisely one outline even when two adjacent icons fit inside it.
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
@@ -55,7 +58,7 @@ static void stepEdge(CGFloat *x, CGFloat *v, CGFloat target, SGRSpring s, CGFloa
 
 static CGFloat rubber(CGFloat x, CGFloat lo, CGFloat hi) {
     if (hi < lo) return x;
-    if (x < lo) return lo - MIN(kLensOverscroll, (lo - x) * 0.3);
+    if (x < lo) return lo - MIN(kLensLeftOverscroll, (lo - x) * 0.40);
     if (x > hi) return hi + MIN(kLensOverscroll, (x - hi) * 0.3);
     return x;
 }
@@ -640,8 +643,12 @@ static BOOL bubbles(void) {
     // appeared completely unbent at Home and Create.
     // Only the OUTWARD ends are protected. Do not disable refraction at
     // internal tab boundaries: they must still bend the scaled platter.
-    CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance + 3) / 18));
-    CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance + 3) / 18));
+    // Fade out sampling BEFORE the optical crescent reaches either outer
+    // platter rail. The old +3pt tolerance let the refraction sample a sliver
+    // of the tabbar's own dark/light boundary (a visible duplicate line).
+    // The central 56% of the lens and internal tab boundaries stay clear.
+    CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance - 9) / 24));
+    CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance - 9) / 24));
     // Both the 0.92x platter lens and the 1x icon-edge lens obey the same
     // outer-edge guard at Home / Create.
     [self updateGlyphEdgeMaskLeft:leftAlpha right:rightAlpha];
