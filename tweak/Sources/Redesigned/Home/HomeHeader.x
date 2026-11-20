@@ -260,6 +260,7 @@ static char kFridayPaletteKey;
 // real colored Music chip from the header tree instead of relying on the menu's
 // UIControl-only selection helper.
 static UIColor *selectedMusicAccent(void);
+static UIColor *nativeMusicStrokeAccent(void);
 static BOOL musicFilterSelected(void);
 
 static BOOL isFriday(void) {
@@ -313,14 +314,20 @@ static void layoutFriday(UIView *holder, CGSize size) {
         objc_setAssociatedObject(holder, &kFridayKey, ring, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     colors = (CAGradientLayer *)ring.sublayers.firstObject;
-    // No fixed Friday palette: use the same sampled banner accent as Music's
-    // background. Until the banner is loaded use Home's first-card tint.
-    // The selected Spotify Music pill already carries NMF's live accent
-    // (for example #A2D0FA). Read it directly even before artwork sampling
-    // finishes, so the ring never briefly falls back to white.
-    UIColor *nativeAccent = selectedMusicAccent();
-    UIColor *base = nativeAccent ?: (sg_fridayAccent ?: sg_pageTint);
-    if (!base) base = UIColor.whiteColor;
+    // Spotify gives even its inactive Music pill a native colored StrokeView.
+    // The pill's background is neutral until selected, but its gradient rim
+    // is populated at Home layout. Prefer the selected fill on Music, and
+    // the original stroke on Home before any filter has been tapped.
+    UIColor *base = selectedMusicAccent() ?: nativeMusicStrokeAccent();
+    if (!base) base = sg_fridayAccent; // asynchronous NMF cover, if available
+    // Never substitute white (or Home's unrelated card color) for Friday.
+    // The next Home/pill layout can reveal the native stroke once Spotify
+    // finishes assigning its colors.
+    if (!base) {
+        ring.hidden = YES;
+        turnRing(ring, NO);
+        return;
+    }
     UIColor *previous = objc_getAssociatedObject(ring, &kFridayPaletteKey);
     if (![previous isEqual:base]) {
         CGFloat hue = 0, saturation = 0, brightness = 0, alpha = 0;
@@ -427,6 +434,39 @@ static UIColor *selectedMusicAccent(void) {
             accent = color;
     });
     return accent;
+}
+
+// Spotify's *unselected* Music chip already contains its branded rim on
+// initial Home layout: Home_PillUIKit.PillView > ...StrokeView (CAGradientLayer).
+// Do not infer the accent from PillView.backgroundColor: that is #333333
+// before Music is selected. Read the existing stroke colors instead, without
+// opening Music, triggering the hidden chip, persisting state or inventing a
+// constant blue. Prefer a visible chromatic stop over neutral/white stops.
+static UIColor *nativeMusicStrokeAccent(void) {
+    if (!sg_stack) return nil;
+    __block UIColor *best = nil;
+    __block CGFloat bestScore = 0;
+    SGForEachView(sg_stack, ^(UIView *view) {
+        if (![view.accessibilityIdentifier isEqualToString:@"home-feed-music-chip"]) return;
+        SGForEachView(view, ^(UIView *part) {
+            if (![NSStringFromClass(part.class) containsString:@"StrokeView"]) return;
+            if (![part.layer isKindOfClass:CAGradientLayer.class]) return;
+            for (id raw in ((CAGradientLayer *)part.layer).colors) {
+                CGColorRef cg = (__bridge CGColorRef)raw;
+                if (!cg || CFGetTypeID(cg) != CGColorGetTypeID()) continue;
+                UIColor *candidate = [UIColor colorWithCGColor:cg];
+                CGFloat hue = 0, saturation = 0, brightness = 0, alpha = 0;
+                if (![candidate getHue:&hue saturation:&saturation brightness:&brightness alpha:&alpha]) continue;
+                if (alpha < 0.1 || saturation < 0.14 || brightness < 0.25) continue;
+                CGFloat score = saturation * brightness * alpha;
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = candidate;
+                }
+            }
+        });
+    });
+    return best;
 }
 
 static BOOL musicFilterSelected(void) {
