@@ -453,7 +453,7 @@ static void clearBacking(UIView *header) {
 // compensate the moved viewport with the same amount of content inset and
 // content offset. Do not move the sort row independently of its list.
 static char kUnderHeaderKey, kListKey;
-static void showListBehindHeader(UIView *page) {
+static void showListBehindHeader(UIView *page, UIView *header) {
     UIView *content = childNamed(page, @"YourLibraryContentView");
     if (!content || ![NSStringFromClass(content.class) hasSuffix:@"YourLibraryContentView"]) return;
     UIView *candidate = SGRFindByIdentifier(content, SGRLibraryListIdentifier, &kListKey);
@@ -463,13 +463,26 @@ static void showListBehindHeader(UIView *page) {
     CGFloat shift = raised ? raised.doubleValue : content.frame.origin.y;
     if (shift < 1 || shift > 200) return;
     if (!raised) {
-        // Measure BEFORE the frame change, and adjust only once per list.
+        // The content begins at the filter-row ORIGIN (110pt in Stage 38),
+        // not its BOTTOM (162pt). Compensating by `shift` alone leaves the
+        // 40pt Recents/sort supplementary row behind the filter chips.
+        // The collection viewport may go behind the header for scrolling,
+        // but its first content row must begin below the entire chip strip.
+        CGFloat reserve = shift;
+        UIView *filters = childNamed(header, @"YourLibraryHeaderContentFiltersView");
+        if (filters && filters.bounds.size.height > 1) {
+            CGRect filtersInPage = [filters convertRect:filters.bounds toView:page];
+            CGFloat chipBottom = CGRectGetMaxY(filtersInPage);
+            if (chipBottom > shift && chipBottom < 260) reserve = chipBottom;
+        }
+        // Measure BEFORE the frame change and adjust only once per list,
+        // keeping the original scroll position relative to the first row.
         CGFloat oldOffset = list.contentOffset.y;
         UIEdgeInsets inset = list.contentInset;
-        inset.top += shift;
+        inset.top += reserve;
         [UIView performWithoutAnimation:^{
             list.contentInset = inset;
-            list.contentOffset = CGPointMake(list.contentOffset.x, oldOffset - shift);
+            list.contentOffset = CGPointMake(list.contentOffset.x, oldOffset - reserve);
         }];
         objc_setAssociatedObject(list, &kUnderHeaderKey, @(shift), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
@@ -516,7 +529,7 @@ static void layoutRoot(UIView *page) {
         if (filters && header.bounds.size.height > 1) {
             clearBacking(header);
             clearFilterStripe(header);
-            showListBehindHeader(page);
+            showListBehindHeader(page, header);
         }
     }
 
@@ -572,7 +585,7 @@ static void layoutFolder(UIView *page) {
         if (filters && header.bounds.size.height > 1) {
             clearBacking(header);
             clearFilterStripe(header);
-            showListBehindHeader(page);
+            showListBehindHeader(page, header);
         }
     }
 
