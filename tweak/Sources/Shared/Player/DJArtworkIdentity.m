@@ -100,19 +100,25 @@ UIView *SGDJArtworkEnclosingCard(UIView *holder) {
     return card;
 }
 
-static char kMissingArtCardKey, kMissingArtSinceKey;
+// This is a short-lived state of one Encore image holder, never a global
+// decision that every playlist called DJ is Spotify's DJ.
+@interface SGDJArtworkPlaceholderState : NSObject
+@property (nonatomic, weak) UIView *card;
+@property (nonatomic, weak) UIImage *nativeImage;
+@property (nonatomic) CFAbsoluteTime firstMissing;
+@property (nonatomic) BOOL fallbackActive;
+@end
+@implementation SGDJArtworkPlaceholderState
+@end
+static char kMissingArtStateKey;
 #if SG_DRIVER
 static char kArtworkProbeSignature, kMissingArtProbeKey;
 #endif
 
-// A 9.1.90 DJ entry may have the exact same accessible title as a playlist.
-// Spotify sometimes draws its empty tile without an Encore PlaceholderView or
-// UIImageView at the level we expected. Neither is a reliable prerequisite.
-// Preserve loaded covers whenever the placeholder is gone. A visible
-// PlaceholderView means Spotify still considers the artwork unresolved even
-// if the image slot contains a temporary bitmap. Explicit DJ identity is
-// handled separately in IsConfirmedCard.
-static void sgScanArt(UIView *view, NSUInteger depth, BOOL *loaded, BOOL *placeholder) {
+// Keep the source bitmap's identity, not just the fact that UIImageView.image
+// is non-nil: Encore can hide its placeholder view while leaving the same
+// temporary bitmap in the image slot. This must not erase our overlay.
+static void sgScanArt(UIView *view, NSUInteger depth, UIImage **image, BOOL *placeholder) {
     if (!view || depth > 4) return;
     if ([view.accessibilityIdentifier hasPrefix:@"SG.DJArtwork"] ||
         [view.accessibilityIdentifier hasPrefix:@"SGR.DJArtwork"]) return;
@@ -120,46 +126,69 @@ static void sgScanArt(UIView *view, NSUInteger depth, BOOL *loaded, BOOL *placeh
     if ([name containsString:@"Placeholder"] && !view.hidden && view.alpha > 0.01)
         *placeholder = YES;
     if ([view isKindOfClass:UIImageView.class] && ((UIImageView *)view).image &&
-        !view.hidden && view.alpha > 0.01) *loaded = YES;
-    for (UIView *sub in view.subviews) sgScanArt(sub, depth + 1, loaded, placeholder);
+        !view.hidden && view.alpha > 0.01 && !*image) *image = ((UIImageView *)view).image;
+    for (UIView *sub in view.subviews) sgScanArt(sub, depth + 1, image, placeholder);
 }
 
-// Compatibility fallback: show DJ cover only for known Spotify tile kinds,
-// when their native art is still missing or an active placeholder is visible.
-// Never require a particular PlaceholderView hierarchy: it differs between
-// Home tiles and Recents rows. A user playlist DJ whose artwork is genuinely
-// missing is visually ambiguous; a model URI is needed to distinguish it.
+// Spotify 9.1.90 presents some DJ cards with an accessible "DJ, Playlist"
+// label and no exposed model URI. For that ambiguous case, fall back only if
+// the native art was actually unresolved for 0.8 s. If Encore then removes
+// its PlaceholderView but keeps the *same* temporary UIImage, retain the
+// overlay. Drop it when a different source image arrives (or the card is
+// reused), so a user playlist's eventual cover takes precedence.
+// A playlist named DJ with permanently absent artwork remains ambiguous.
 BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
     if (retry) *retry = NO;
-    BOOL candidate = card && holder && djTitle(card.accessibilityLabel) &&
+    if (!holder) return NO;
+    BOOL candidate = card && djTitle(card.accessibilityLabel) &&
         ([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"] ||
          [card.accessibilityIdentifier isEqualToString:@"Components.UI.HomeCard"] ||
          [card.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"]);
-    BOOL nativeArtwork = NO, placeholder = NO;
-    if (candidate) sgScanArt(holder, 0, &nativeArtwork, &placeholder);
-    BOOL missing = candidate && (!nativeArtwork || placeholder);
-    if (!missing) {
-        objc_setAssociatedObject(holder, &kMissingArtCardKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(holder, &kMissingArtSinceKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    SGDJArtworkPlaceholderState *state = objc_getAssociatedObject(holder, &kMissingArtStateKey);
+    if (!candidate) {
+        if (state) objc_setAssociatedObject(holder, &kMissingArtStateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return NO;
     }
+    if (!state || state.card != card) {
+        state = [SGDJArtworkPlaceholderState new];
+        state.card = card;
+        objc_setAssociatedObject(holder, &kMissingArtStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    UIImage *nativeImage = nil;
+    BOOL placeholder = NO;
+    sgScanArt(holder, 0, &nativeImage, &placeholder);
+    BOOL missing = !nativeImage || placeholder;
+    // The image pointer is weakly observed: Spotify owns its lifecycle.
+    // A different bitmap without PlaceholderView means Spotify resolved art.
+    BOOL unchangedTemporary = !missing && state.firstMissing > 0 &&
+        nativeImage == state.nativeImage && nativeImage != nil;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    NSValue *previousCard = objc_getAssociatedObject(holder, &kMissingArtCardKey);
-    NSNumber *firstSeen = objc_getAssociatedObject(holder, &kMissingArtSinceKey);
-    if (missing && (!previousCard || previousCard.nonretainedObjectValue != card || !firstSeen)) {
-        objc_setAssociatedObject(holder, &kMissingArtCardKey, [NSValue valueWithNonretainedObject:card], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(holder, &kMissingArtSinceKey, @(now), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        firstSeen = @(now);
-        if (retry) *retry = YES;
+    if (missing) {
+        if (state.firstMissing <= 0) {
+            state.firstMissing = now;
+            state.nativeImage = nativeImage;
+            if (retry) *retry = YES;
+        }
+    } else if (!unchangedTemporary) {
+        state.firstMissing = 0;
+        state.fallbackActive = NO;
+        state.nativeImage = nil;
     }
-    BOOL useFallback = missing && firstSeen && now - firstSeen.doubleValue >= 0.8;
+    // The 0.8 s grace period continues if Encore hides its placeholder but
+    // leaves the same bitmap in place. Do not reset it on that transient swap.
+    if (state.firstMissing > 0 && now - state.firstMissing >= 0.8 &&
+        (missing || unchangedTemporary)) state.fallbackActive = YES;
+    BOOL held = unchangedTemporary && state.fallbackActive;
+    BOOL useFallback = state.fallbackActive && (missing || unchangedTemporary);
 #if SG_DRIVER
-    NSString *signature = [NSString stringWithFormat:@"%d-%d-%d-%d", candidate,
-                           nativeArtwork, placeholder, useFallback];
+    NSString *signature = [NSString stringWithFormat:@"%d-%d-%d-%d-%d", candidate,
+                           !!nativeImage, placeholder, useFallback, held];
     if (![objc_getAssociatedObject(holder, &kMissingArtProbeKey) isEqualToString:signature]) {
         objc_setAssociatedObject(holder, &kMissingArtProbeKey, signature, OBJC_ASSOCIATION_COPY_NONATOMIC);
         SGDJ_TRACE(@"artwork.placeholder", (@{ @"candidate": @(candidate),
-             @"nativeArtwork": @(nativeArtwork), @"placeholder": @(placeholder),
-             @"fallback": @(useFallback),
+             @"nativeArtwork": @(!!nativeImage), @"placeholder": @(placeholder),
+             @"fallback": @(useFallback), @"held": @(held),
+             @"holder": SGDJProbeTag([NSString stringWithFormat:@"%p", holder]),
              @"history": @([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"])}));
     }
 #endif
