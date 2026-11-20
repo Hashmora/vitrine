@@ -19,7 +19,7 @@ static const CGFloat kLensHeldBend = 1.14;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
-static const CGFloat kLensGrow = 16, kLensOverscroll = 8;
+static const CGFloat kLensGrow = 20, kLensOverscroll = 8;
 // Optical glass, black base, selected-colour mask and inverse white cutout
 // must share precisely one outline even when two adjacent icons fit inside it.
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
@@ -91,6 +91,9 @@ static const CGFloat kPlayStep = 1.0 / 120;
     CAGradientLayer *_glare;
     CAShapeLayer *_glareMask;
     CAShapeLayer *_perimeter;
+    CAShapeLayer *_longSpecular;
+    CAGradientLayer *_fingerHighlight;
+    CGFloat _touchStartX, _touchAnchorX, _touchLastX;
     __weak UIView *_restAbove;
     CADisplayLink *_link;
     // The two edges: where they are, how fast they go and where they are going.
@@ -173,6 +176,28 @@ static const CGFloat kPlayStep = 1.0 / 120;
     [self.layer addSublayer:_perimeter];
     _glare.zPosition = 3;
     [self.layer addSublayer:_glare];
+    // Long, diagonal native-style arcs on top-left and bottom-right. The
+    // fine 0.85pt perimeter remains independent of these directional lines.
+    _longSpecular = [CAShapeLayer layer];
+    _longSpecular.name = @"Vitrine.LegacyLensLongSpecular";
+    _longSpecular.fillColor = nil;
+    _longSpecular.strokeColor = [UIColor colorWithWhite:1 alpha:0.48].CGColor;
+    _longSpecular.lineWidth = 0.78;
+    _longSpecular.opacity = 0;
+    _longSpecular.zPosition = 4;
+    [self.layer addSublayer:_longSpecular];
+    // A very subtle brightened glass patch under the finger, not a flat white
+    // overlay over the entire selected capsule. It disappears on release.
+    _fingerHighlight = [CAGradientLayer layer];
+    _fingerHighlight.name = @"Vitrine.LegacyLensFingerHighlight";
+    _fingerHighlight.type = kCAGradientLayerRadial;
+    _fingerHighlight.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.13].CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.05].CGColor,
+                                 (id)UIColor.clearColor.CGColor];
+    _fingerHighlight.locations = @[@0, @0.46, @1];
+    _fingerHighlight.opacity = 0;
+    _fingerHighlight.zPosition = 1;
+    [self.layer addSublayer:_fingerHighlight];
     return self;
 }
 
@@ -343,6 +368,20 @@ static BOOL bubbles(void);
     _glareMask.path = outline;
     _perimeter.frame = bounds;
     _perimeter.path = outline;
+    CGRect arc = CGRectInset(bounds, 0.6, 0.6);
+    CGFloat w = CGRectGetWidth(arc), h = CGRectGetHeight(arc), r = h / 2;
+    UIBezierPath *specular = [UIBezierPath bezierPath];
+    [specular moveToPoint:CGPointMake(arc.origin.x, arc.origin.y + r)];
+    [specular addQuadCurveToPoint:CGPointMake(arc.origin.x + r, arc.origin.y)
+                  controlPoint:CGPointMake(arc.origin.x, arc.origin.y)];
+    [specular addLineToPoint:CGPointMake(arc.origin.x + w * 0.58, arc.origin.y)];
+    [specular moveToPoint:CGPointMake(arc.origin.x + w * 0.42, arc.origin.y + h)];
+    [specular addLineToPoint:CGPointMake(arc.origin.x + w - r, arc.origin.y + h)];
+    [specular addQuadCurveToPoint:CGPointMake(arc.origin.x + w, arc.origin.y + r)
+                  controlPoint:CGPointMake(arc.origin.x + w, arc.origin.y + h)];
+    _longSpecular.frame = bounds;
+    _longSpecular.path = specular.CGPath;
+    _fingerHighlight.frame = bounds;
     if (_platterEdgePane) {
         if (!CGRectEqualToRect(_platterEdgePane.bounds, bounds)) _platterEdgePane.bounds = bounds;
         _platterEdgePane.layer.cornerRadius = radius;
@@ -577,6 +616,11 @@ static BOOL bubbles(void) {
     _touching = YES;
     _minCenter = minCenter;
     _maxCenter = maxCenter;
+    // The first lifted frame is over the ICON CENTER, not the off-center
+    // landing position. Only the subsequent horizontal finger delta moves it.
+    _touchStartX = x;
+    _touchLastX = x;
+    _touchAnchorX = CGRectGetMidX(_restFrame);
     if (bubbles()) {
         _liftTarget = 1;
         _vSq -= kLensPoke;
@@ -587,7 +631,9 @@ static BOOL bubbles(void) {
 
 - (void)moveTouchToX:(CGFloat)x {
     if (!_touching) return;
-    CGFloat center = rubber(x, _minCenter, _maxCenter);
+    _touchLastX = x;
+    CGFloat anchoredX = _touchAnchorX + (x - _touchStartX);
+    CGFloat center = rubber(anchoredX, _minCenter, _maxCenter);
     CGFloat width = _restFrame.size.width + (bubbles() ? kLensGrow : 0);
     _tL = center - width / 2;
     _tR = center + width / 2;
@@ -651,6 +697,7 @@ static BOOL bubbles(void) {
         self->_rest.alpha = on ? 0.12 : 1;
         self->_glare.opacity = on ? 1 : 0;
         self->_perimeter.opacity = on ? 1 : 0;
+        self->_longSpecular.opacity = on ? 1 : 0;
         // Do not refract white artwork again when Tabs in the accent is off.
         self->_glyphEdgePane.alpha = (on && self->_tintOverlay) ? 1 : 0;
         self->_platterEdgePane.alpha = on ? 1 : 0;
@@ -738,6 +785,15 @@ static BOOL bubbles(void) {
     _glare.startPoint = CGPointMake(MAX(0, MIN(1, 0.10 + motion * 0.18)), 0);
     _glare.endPoint = CGPointMake(MAX(0, MIN(1, 0.90 + motion * 0.18)), 1);
     [CATransaction commit];
+    // The patch follows the actual finger rather than the lens's lagged
+    // spring center. Its brightness is local and never persists at rest.
+    if (_touching) {
+        CGFloat localX = self.bounds.size.width / 2 + (_touchLastX - center.x) / MAX(0.1, sx);
+        CGFloat unitX = MAX(0.15, MIN(0.85, localX / MAX(1, self.bounds.size.width)));
+        _fingerHighlight.startPoint = CGPointMake(unitX, 0.5);
+        _fingerHighlight.endPoint = CGPointMake(unitX + 0.35, 0.5);
+    }
+    _fingerHighlight.opacity = _touching ? MIN(1, MAX(0, _lift)) : 0;
     [self updateGlyphSourceMasksAt:center sx:sx];
     if (_tintMask) {
         [CATransaction begin];

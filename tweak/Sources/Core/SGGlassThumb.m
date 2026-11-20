@@ -59,6 +59,8 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     CAGradientLayer *_glare;
     CAShapeLayer *_glareRing;
     CAGradientLayer *_sideRefractionMask;
+    CAGradientLayer *_sideAccent;
+    CAShapeLayer *_sideAccentClip;
     CAGradientLayer *_miniEdgeFade;
     CGRect _track;
     BOOL _hasTrack;
@@ -170,6 +172,17 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     _rim = [UIView new];
     _rim.userInteractionEnabled = NO;
     _rim.alpha = _pane.alpha;
+    // Tint ONLY the two optically bent crescents with the switch's track
+    // colour. Stage 31 made the blur wider but still exposed the dark card
+    // underneath; this translucent wash removes the grey/black lobes.
+    _sideAccent = [CAGradientLayer layer];
+    _sideAccent.startPoint = CGPointMake(0, 0.5);
+    _sideAccent.endPoint = CGPointMake(1, 0.5);
+    _sideAccent.locations = @[@0, @0.10, @0.30, @0.43, @0.57, @0.70, @0.90, @1];
+    _sideAccentClip = [CAShapeLayer layer];
+    _sideAccentClip.fillColor = UIColor.whiteColor.CGColor;
+    _sideAccent.mask = _sideAccentClip;
+    [_rim.layer addSublayer:_sideAccent];
     [_rim.layer addSublayer:_ring];
     _glare = [CAGradientLayer layer];
     _glare.startPoint = CGPointMake(0, 0);
@@ -216,7 +229,20 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     // A thin accent-coloured perimeter belongs to the held glass; the dark
     // shadow from earlier stages did not. Keep the white specular streak as
     // a separate highlight (it is not a filled green glow).
-    UIColor *rimColor = [color colorWithAlphaComponent:0.78];
+    UIColor *tint = color ?: UIColor.whiteColor;
+    NSArray *sideColors = @[(id)[tint colorWithAlphaComponent:0.54].CGColor,
+                            (id)[tint colorWithAlphaComponent:0.47].CGColor,
+                            (id)[tint colorWithAlphaComponent:0.16].CGColor,
+                            (id)UIColor.clearColor.CGColor,
+                            (id)UIColor.clearColor.CGColor,
+                            (id)[tint colorWithAlphaComponent:0.16].CGColor,
+                            (id)[tint colorWithAlphaComponent:0.47].CGColor,
+                            (id)[tint colorWithAlphaComponent:0.54].CGColor];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _sideAccent.colors = sideColors;
+    [CATransaction commit];
+    UIColor *rimColor = [tint colorWithAlphaComponent:0.78];
     if (!CGColorEqualToColor(_ring.strokeColor, rimColor.CGColor))
         [self setLayer:_ring value:(__bridge id)rimColor.CGColor forKey:@"strokeColor"];
     CGColorRef fill = color.CGColor;
@@ -325,6 +351,9 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     CGFloat heldRadius = held.size.height / 2;
     _ring.frame = held;
     _ring.path = [UIBezierPath bezierPathWithRoundedRect:held cornerRadius:heldRadius].CGPath;
+    _sideAccent.frame = held;
+    _sideAccentClip.frame = held;
+    _sideAccentClip.path = [UIBezierPath bezierPathWithRoundedRect:held cornerRadius:heldRadius].CGPath;
     _glare.frame = held;
     _glareRing.frame = _glare.bounds;
     CGRect line = CGRectInset(held, kGlareWidth / 2, kGlareWidth / 2);
