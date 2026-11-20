@@ -80,6 +80,58 @@ def analyze_more(tree):
     return result
 
 
+def mp4_container_check(path):
+    """Strict read-only MP4 atom and H.264 sample-description fallback.
+
+    macOS may not have ffprobe. This confirms only that an MP4 with a
+    nonempty mdat and an avc1/avc3 track description was recorded; visual
+    smoothness still requires reviewing the video. A truncated atom is
+    INCOMPLETE, not a successful capture.
+    """
+    result = {'ok': False, 'verification': 'MP4 atom structure (no decoder)'}
+    try:
+        path = Path(path)
+        size = path.stat().st_size
+        if size < 4096:
+            raise ValueError('MP4 is too small')
+        found = {}
+        offset = 0
+        with path.open('rb') as f:
+            while offset + 8 <= size:
+                f.seek(offset)
+                size32, kind = struct.unpack('>I4s', f.read(8))
+                length = size32
+                minimum = 8
+                if size32 == 1:
+                    length = struct.unpack('>Q', f.read(8))[0]
+                    minimum = 16
+                elif size32 == 0:
+                    length = size - offset
+                if length < minimum or length > size - offset:
+                    raise ValueError('Truncated/invalid MP4 atom at offset %d' % offset)
+                if kind in (b'ftyp', b'moov', b'mdat'):
+                    found[kind.decode()] = (offset, length)
+                offset += length
+            if offset != size:
+                raise ValueError('Trailing invalid MP4 bytes')
+            if not {'ftyp', 'moov', 'mdat'} <= set(found):
+                raise ValueError('Missing required MP4 atoms')
+            if found['mdat'][1] < 4096:
+                raise ValueError('No usable encoded frames in mdat')
+            moov_offset, moov_size = found['moov']
+            if moov_size > 32 * 1024 * 1024:
+                raise ValueError('Excessively large moov atom')
+            f.seek(moov_offset)
+            moov = f.read(moov_size)
+            if b'avc1' not in moov and b'avc3' not in moov:
+                raise ValueError('No H.264 sample description in moov')
+        result.update({'ok': True, 'atoms': sorted(found), 'bytes': size,
+                       'note': 'Structural verification only; motion and image quality not certified'})
+    except Exception as error:
+        result['reason'] = repr(error)
+    return result
+
+
 class Driver:
     def __init__(self,port):self.url=f'http://127.0.0.1:{port}'
     def call(self,cmd,**kwargs):
@@ -171,8 +223,12 @@ class Capture:
                     result['ok']=result['codec']=='h264' and result['duration']>=1
                 except (ValueError,KeyError,TypeError) as e:result['ok']=False;result['reason']=repr(e)
             else:
-                # Do not claim the video was verified without a decoder.
-                result['ok']=False;result['reason']='ffprobe unavailable or failed'
+                # ffprobe is not bundled with macOS. Validate the MP4 atoms
+                # structurally and record that no visual decode was performed.
+                structural = mp4_container_check(video)
+                result.update(structural)
+                if structural.get('ok'):
+                    self.warnings.append('ffprobe missing: H.264 container structurally valid, visual review required')
         save(video.with_suffix('.verified.json'),result)
         if not result.get('ok'):self.issues.append('Video cannot be verified: '+str(result))
         return result
@@ -256,6 +312,7 @@ class Capture:
 
 
 def self_test():
+    assert mp4_container_check(Path('/not/a/real/video.mp4'))['ok'] is False
     sample='''Root {{0, 0}, {402, 874}}
   WrappingSwiftUIViewVV27Share_ShareMenuElementsImpl25OffPlatformSectionElement5State {{0, 0}, {402, 116}}
     _TtCC7SwiftUI17HostingScrollView22PlatformGroupContainer {{0, 0}, {328, 116}}
