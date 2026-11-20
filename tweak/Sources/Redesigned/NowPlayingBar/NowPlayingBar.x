@@ -31,6 +31,7 @@
 #import "NowPlayingBar.h"
 #import "Redesigned/Navbar/Navbar.h"
 #import "Redesigned/Pages/Pages.h"
+#import "Redesigned/Player/Player.h"
 
 static const CGFloat kCardRadius = 24;
 // The strip's pane is this much smaller than the strip at each end, so a gap parts it from the card's glass.
@@ -679,6 +680,9 @@ static void styleNowPlayingBar(UIViewController *container) {
     // frame stands for it, as before, since that box is padded.
     sg_trackFrame = card || strip ? trackFrame(bar, card, strip, stripFrame, container.view, &stripAbove) : CGRectNull;
     placeInline(container);
+    // Styling is scoped to the actual compact bar, never Spotify's identical
+    // controls at the top of a DJ request sheet (inPresented/inSheet above).
+    SGRPlayerAppleMiniConnectIn(bar);
     CGRect frame = trackFrame(bar, card, strip, stripFrame, container.view, &stripAbove);
     if (CGRectIsNull(frame)) return;
 
