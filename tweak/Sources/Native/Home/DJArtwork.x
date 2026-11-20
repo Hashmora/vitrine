@@ -4,10 +4,15 @@
 #import "Core/SGCore.h"
 #import "Shared/Player/DJQueue.h"
 #import "Shared/Player/DJArtworkIdentity.h"
+#import "Core/SGDJProbe.h"
+#import <objc/runtime.h>
 
 static UIImage *SGDJCover;
 static NSHashTable<UIView *> *SGDJHolders;
 static NSInteger const SGDJCoverTag = 0x444a43;
+#if SG_DRIVER
+static char SGDJDrawProbeKey;
+#endif
 static NSString *SGDJCoverPath(void) {
     return [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject
         stringByAppendingPathComponent:@"SG-DJ-cover-v2.png"];
@@ -22,7 +27,11 @@ static void SGDJLoad(void) {
     NSURL *url = [NSURL URLWithString:@"https://lexicon-assets.spotifycdn.com/Your-DJ-Cover-Art-300.png"];
     [[NSURLSession.sharedSession dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         UIImage *cover = data.length && data.length < 8 * 1024 * 1024 ? [UIImage imageWithData:data] : nil;
-        if (!cover) return;
+        if (!cover) {
+            SGDJ_TRACE(@"artwork.cover", (@{ @"loaded": @NO, @"redesigned": @(0) }));
+            return;
+        }
+        SGDJ_TRACE(@"artwork.cover", (@{ @"loaded": @YES, @"redesigned": @(0) }));
         dispatch_async(dispatch_get_main_queue(), ^{
             if (SGDJCover) return;
             SGDJCover = cover;
@@ -47,6 +56,16 @@ static void SGDJDraw(UIView *holder) {
             if (current.window) SGDJDraw(current);
         });
     }
+#if SG_DRIVER
+    NSString *drawing = [NSString stringWithFormat:@"%d-%d-%d-%d", !!row, confirmed,
+                          placeholderFallback, !!SGDJCover];
+    if (![objc_getAssociatedObject(holder, &SGDJDrawProbeKey) isEqualToString:drawing]) {
+        objc_setAssociatedObject(holder, &SGDJDrawProbeKey, drawing, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        SGDJ_TRACE(@"artwork.draw", (@{ @"card": @(!!row), @"confirmed": @(confirmed),
+                 @"fallback": @(placeholderFallback), @"coverReady": @(!!SGDJCover),
+                 @"redesigned": @(0) }));
+    }
+#endif
     if (!confirmed && !placeholderFallback) { [overlay removeFromSuperview]; return; }
     if (!SGDJHolders) SGDJHolders = [NSHashTable weakObjectsHashTable];
     [SGDJHolders addObject:holder];

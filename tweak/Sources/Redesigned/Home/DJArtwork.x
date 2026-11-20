@@ -4,12 +4,17 @@
 #import "Core/SGCore.h"
 #import "Shared/Player/DJQueue.h"
 #import "Shared/Player/DJArtworkIdentity.h"
+#import "Core/SGDJProbe.h"
+#import <objc/runtime.h>
 #import "Redesigned/Kit/SGRKit.h"
 #import "Home.h"
 
 static UIImage *SGRDJCover;
 static NSHashTable<UIView *> *SGRDJHolders;
 static NSInteger const SGRDJCoverTag = 0x444a43;
+#if SG_DRIVER
+static char SGRDJDrawProbeKey;
+#endif
 static NSString *SGRDJCoverPath(void) {
     return [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject
         stringByAppendingPathComponent:@"SGR-DJ-cover-v2.png"];
@@ -24,7 +29,11 @@ static void SGRDJLoad(void) {
     NSURL *url = [NSURL URLWithString:@"https://lexicon-assets.spotifycdn.com/Your-DJ-Cover-Art-300.png"];
     [[NSURLSession.sharedSession dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         UIImage *cover = data.length && data.length < 8 * 1024 * 1024 ? [UIImage imageWithData:data] : nil;
-        if (!cover) return;
+        if (!cover) {
+            SGDJ_TRACE(@"artwork.cover", (@{ @"loaded": @NO, @"redesigned": @(1) }));
+            return;
+        }
+        SGDJ_TRACE(@"artwork.cover", (@{ @"loaded": @YES, @"redesigned": @(1) }));
         dispatch_async(dispatch_get_main_queue(), ^{
             if (SGRDJCover) return;
             SGRDJCover = cover;
@@ -49,6 +58,16 @@ static void SGRDJDraw(UIView *holder) {
             if (current.window) SGRDJDraw(current);
         });
     }
+#if SG_DRIVER
+    NSString *drawing = [NSString stringWithFormat:@"%d-%d-%d-%d", !!row, confirmed,
+                          placeholderFallback, !!SGRDJCover];
+    if (![objc_getAssociatedObject(holder, &SGRDJDrawProbeKey) isEqualToString:drawing]) {
+        objc_setAssociatedObject(holder, &SGRDJDrawProbeKey, drawing, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        SGDJ_TRACE(@"artwork.draw", (@{ @"card": @(!!row), @"confirmed": @(confirmed),
+                 @"fallback": @(placeholderFallback), @"coverReady": @(!!SGRDJCover),
+                 @"redesigned": @(1) }));
+    }
+#endif
     if (!confirmed && !placeholderFallback) { [overlay removeFromSuperview]; return; }
     if (!SGRDJHolders) SGRDJHolders = [NSHashTable weakObjectsHashTable];
     [SGRDJHolders addObject:holder];
