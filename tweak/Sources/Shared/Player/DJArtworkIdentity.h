@@ -2,10 +2,9 @@
 #import <UIKit/UIKit.h>
 BOOL SGDJArtworkIsConfirmedCard(UIView *card);
 
-// Conservative fallback for an unresolved Spotify DJ cover: never override
-// an existing native bitmap (UIImageView or layer contents), even while Encore
-// keeps PlaceholderView mounted. An artless user playlist called DJ remains
-// ambiguous until its model URI is available. *retry requests one redraw.
+// Conservative fallback for a Spotify-published DJ card: refuse user playlist
+// publishers even when their title is DJ and their bitmap is missing. Native
+// artwork (UIImageView or layer contents) still wins. *retry schedules redraw.
 BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry);
 
 // Cache the nearest Home/Recents card, invalidating it when the image holder
