@@ -210,12 +210,16 @@ static void dropDJHeading(UIView *content) {
 // while leaving all other full-bleed banners and video previews filtered out.
 static BOOL isNewMusicFridayBanner(UIView *root) {
     if (!root || !SGBelowiOS26() || !SGUseLegacyGlass()) return NO;
-    __block BOOL found = NO;
+    __block UIImageView *original = nil;
     SGForEachView(root, ^(UIView *view) {
-        if (!found && [view isKindOfClass:UIImageView.class] &&
-            [view.accessibilityLabel isEqualToString:@"New Music Friday"]) found = YES;
+        if (!original && [view isKindOfClass:UIImageView.class] &&
+            [view.accessibilityLabel isEqualToString:@"New Music Friday"])
+            original = (UIImageView *)view;
     });
-    return found;
+    // The user-selected Friday filter has a banner rather than a large
+    // carousel. Keep its color local to this filter's HomePageView.
+    if (original.image) SGRHomeTintFridayBanner(root, original.image);
+    return original != nil;
 }
 
 static SGRHomeKind kindOf(UIView *content, NSString **rootName) {
