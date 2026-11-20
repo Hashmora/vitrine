@@ -725,6 +725,14 @@ static void paintGlyphs(UITabBar *bar) {
         }
         BOOL selected = item == bar.selectedItem;
         UIImage *want = (selected && item.selectedImage) ? item.selectedImage : item.image;
+        // Accent OFF is still a white *selection*, not an instruction to
+        // bypass the lens's SelectedContentView. Keep the plain bar's glyphs
+        // outlined/dimmer and let the clipped copy draw every filled glyph
+        // touched by the raised lens, even two neighbouring tabs at once.
+        // Without this the hovered tab became filled in the normal bar while
+        // its neighbour was filled only in the clipped copy.
+        BOOL whiteLensAccent = SGUseLegacyGlass() && !tintedTabs() && !sg_minimized;
+        if (whiteLensAccent && item.image) want = item.image;
         // Create is selected while its menu is up, but is no tab to open: turnCreate draws it then.
         BOOL create = [bar isKindOfClass:SGRLegacyTabBar.class] && i < ((SGRLegacyTabBar *)bar).sources.count
             && isCreateSource(((SGRLegacyTabBar *)bar).sources[i]);
@@ -760,6 +768,12 @@ static void paintGlyphs(UITabBar *bar) {
         BOOL createOpen = createAnimating || (create && !CGAffineTransformIsIdentity(overlay.transform));
         if (!createOpen && ![overlay.tintColor isEqual:tint]) overlay.tintColor = tint;
         overlay.hidden = NO;
+        // A dimmer white outline underneath makes the masked white filled
+        // copy actually light up, rather than being indistinguishable from
+        // the already-white normal icon. Restore full opacity when accent ON
+        // or when the legacy glass mode is disabled.
+        if (fabs(overlay.alpha - (whiteLensAccent ? 0.68 : 1.0)) > 0.01)
+            overlay.alpha = whiteLensAccent ? 0.68 : 1.0;
         // UIKit doesn't reliably refresh the name during an in-place selection change.
         for (UIView *v in button.subviews) {
             if (![v isKindOfClass:UILabel.class]) continue;
