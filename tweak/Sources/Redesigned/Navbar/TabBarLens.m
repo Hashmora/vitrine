@@ -401,26 +401,26 @@ static BOOL bubbles(void);
     CGRect arc = CGRectInset(bounds, 0.6, 0.6);
     CGFloat w = CGRectGetWidth(arc), h = CGRectGetHeight(arc);
     UIBezierPath *specular = [UIBezierPath bezierPath];
-    // Follow the OUTER contour: a long upper-left shoulder and top rail,
-    // then the lower rail and right shoulder. The previous Beziers ended at
-    // 22% / 78% of the bubble height, literally sending highlights inward.
-    // Cubic quarter-circles use the same 0.5522848 control factor as a circle.
+    // Concentrate the brightest speculars on opposite *rounded shoulders*.
+    // Long horizontal rails made the rim read as top/bottom stripes instead
+    // of the native upper-left / lower-right diagonal light.
     CGFloat x0 = arc.origin.x + 0.5, y0 = arc.origin.y + 0.5;
     CGFloat x1 = arc.origin.x + w - 0.5, y1 = arc.origin.y + h - 0.5;
     CGFloat cr = MAX(1, (y1 - y0) / 2);
     CGFloat k = cr * 0.55228475;
-    [specular moveToPoint:CGPointMake(x0, y0 + h * 0.83)];
+    CGFloat tail = MIN(10.0, w * 0.055);
+    [specular moveToPoint:CGPointMake(x0, y0 + h * 0.75)];
     [specular addLineToPoint:CGPointMake(x0, y0 + cr)];
     [specular addCurveToPoint:CGPointMake(x0 + cr, y0)
                controlPoint1:CGPointMake(x0, y0 + cr - k)
                controlPoint2:CGPointMake(x0 + cr - k, y0)];
-    [specular addLineToPoint:CGPointMake(arc.origin.x + w * 0.76, y0)];
-    [specular moveToPoint:CGPointMake(arc.origin.x + w * 0.24, y1)];
+    [specular addLineToPoint:CGPointMake(x0 + cr + tail, y0)];
+    [specular moveToPoint:CGPointMake(x1 - cr - tail, y1)];
     [specular addLineToPoint:CGPointMake(x1 - cr, y1)];
     [specular addCurveToPoint:CGPointMake(x1, y1 - cr)
                controlPoint1:CGPointMake(x1 - cr + k, y1)
                controlPoint2:CGPointMake(x1, y1 - cr + k)];
-    [specular addLineToPoint:CGPointMake(x1, y0 + h * 0.17)];
+    [specular addLineToPoint:CGPointMake(x1, y0 + h * 0.25)];
     _longSpecular.frame = bounds;
     _longSpecular.path = specular.CGPath;
     _fingerHighlight.frame = bounds;
@@ -455,41 +455,70 @@ static BOOL bubbles(void);
 
 #pragma mark - what the bar tells it
 
-// Glass material and the pale resting selection must NOT cross-fade while
-// the raised bubble is still in flight: this used to make a white flash on
-// release and could brighten with rapid taps. Use the same render-server
-// spring duration as the actual bubble, with a generation check for retaps.
+// The landing is a *pose* event, not the end of the spring's residual
+// velocity. In particular, the squash spring can keep ringing imperceptibly
+// after the glass is back over the resting tab. Hold until the post-peak pose
+// is in the slot, then schedule the material swap for that sample time.
 - (void)dropGlassAfterPlayback {
     if (!_glassOn || _touching || _liftTarget > 0.001) return;
     NSUInteger generation = _pulseGeneration;
     NSUInteger count = _playback.length / sizeof(SGLensSample);
-    NSTimeInterval duration = count > 1 ? (count - 1) * kPlayStep : 0.10;
-    // The final ~1 second of the calculated spring is visually imperceptible.
-    // On iOS 26 the raised material disappears once its *visible* travel is
-    // over, not after the last 0.003pt of simulation settles. Use the exact
-    // render-server samples to find that moment, including on long tab jumps.
-    // Never drop while the lens is still lifted or away from its final slot.
     const SGLensSample *samples = _playback.bytes;
-    BOOL sawRaisedGlass = count > 0 && fabs(samples[0].lift) > 0.72;
-    for (NSUInteger i = 1; i < count; i++) {
-        SGLensSample st = samples[i];
-        if (st.lift > 0.72) sawRaisedGlass = YES;
-        // Quick-tap playback starts below full height: never replace the
-        // glass while it is still on the way UP.
-        if (!sawRaisedGlass || fabs(st.lift) > 0.12 || fabs(st.vLift) > 2.3 ||
-            fabs(st.L - _tL) > 3.0 || fabs(st.R - _tR) > 3.0 ||
-            fabs(st.sq) > 0.080) continue;
-        duration = i * kPlayStep;
-        break;
+    NSTimeInterval duration = count > 1 ? (count - 1) * kPlayStep : 0.10;
+    if (count > 1) {
+        // Quick taps can still be ascending after touch-up. Never drop the
+        // lens until *after* its maximum height in the precomputed playback.
+        NSUInteger peak = 0;
+        for (NSUInteger i = 1; i < count; i++) {
+            if (samples[i].lift > samples[peak].lift) peak = i;
+        }
+        CGPoint finalCenter;
+        CGFloat finalSX, finalSY;
+        [self getPose:samples[count - 1] center:&finalCenter sx:&finalSX sy:&finalSY];
+        CGFloat baseWidth = MAX(1, CGRectGetWidth(self.bounds));
+        CGFloat baseHeight = MAX(1, CGRectGetHeight(self.bounds));
+        for (NSUInteger i = peak + 1; i < count; i++) {
+            CGPoint center;
+            CGFloat sx, sy;
+            [self getPose:samples[i] center:&center sx:&sx sy:&sy];
+            // Screen-visible position, width and height, not raw spring
+            // velocities. Ignore tiny oscillations after the visual landing.
+            if (fabs(center.x - finalCenter.x) > 1.5 ||
+                fabs(sx - finalSX) * baseWidth > 1.7 ||
+                fabs(sy - finalSY) * baseHeight > 1.5) continue;
+            // Confirm two subsequent frames also stay in the slot to avoid
+            // a premature swap during a transient overshoot.
+            BOOL staysDocked = YES;
+            for (NSUInteger j = i + 1; j < MIN(count, i + 3); j++) {
+                CGPoint nextCenter;
+                CGFloat nextSX, nextSY;
+                [self getPose:samples[j] center:&nextCenter sx:&nextSX sy:&nextSY];
+                if (fabs(nextCenter.x - finalCenter.x) > 1.5 ||
+                    fabs(nextSX - finalSX) * baseWidth > 1.7 ||
+                    fabs(nextSY - finalSY) * baseHeight > 1.5) {
+                    staysDocked = NO;
+                    break;
+                }
+            }
+            if (!staysDocked) continue;
+            duration = i * kPlayStep;
+            break;
+        }
     }
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         typeof(self) strongSelf = weakSelf;
         if (!strongSelf || strongSelf->_pulseGeneration != generation || strongSelf->_touching ||
             strongSelf->_liftTarget > 0.001) return;
-        // Do not run a second 0.35s material fade after the movement ends:
-        // that was the remaining visible "hanging" lens on ordinary taps.
+        // A single transaction ends the pose playback and replaces the
+        // material; otherwise the last glass-rim frame can overlap the pale
+        // resting capsule and look like a white flash.
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        [strongSelf dropPlayback];
+        [strongSelf applyPose];
         [strongSelf showGlass:NO animated:NO];
+        [CATransaction commit];
     });
 }
 
@@ -782,7 +811,11 @@ static BOOL bubbles(void) {
         glass.blurRadius = on ? kLensHeldBlur : kLensRestBlur;
         glass.lensScale = on ? kLensHeldBend : 1;
         glass.sharp = on;
-        glass.rimless = on;
+        // The raised lens draws its own directional rim. The resting pill
+        // uses _rest, not the default SGLegacyGlass specular. Re-enabling
+        // that extra rim while the pane is disappearing can expose a bright
+        // ring exactly during the glass-to-platter handoff.
+        glass.rimless = YES;
         glass.lateralRefraction = on;
         glass.lateralVerticalReach = on ? 0.24 : 0;
     }
