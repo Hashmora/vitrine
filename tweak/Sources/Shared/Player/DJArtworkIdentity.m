@@ -83,7 +83,8 @@ UIView *SGDJArtworkEnclosingCard(UIView *holder) {
     // If no card was found, allow the wrapper to finish mounting lazily.
     // Weak references prevent retaining recycled Spotify cells.
     if (cache && cache.parent == parent && cache.window == window &&
-        (cache.card || now - cache.checkedAt < 0.25)) return cache.card;
+        ((cache.card && [holder isDescendantOfView:cache.card]) ||
+         (!cache.card && now - cache.checkedAt < 0.25))) return cache.card;
     UIView *card = parent;
     while (card && ![card.accessibilityIdentifier isEqualToString:@"Components.UI.HomeCard"] &&
            ![card.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"] &&
