@@ -481,6 +481,10 @@ static BOOL bubbles(void);
             CGPoint center;
             CGFloat sx, sy;
             [self getPose:samples[i] center:&center sx:&sx sy:&sy];
+            // The substrate must already have reached its full opacity by
+            // the time we retire the glass. Do not cut away the material while
+            // it is still visibly raised, even if the X spring has arrived.
+            if (samples[i].lift > 0.08) continue;
             // Screen-visible position, width and height, not raw spring
             // velocities. Ignore tiny oscillations after the visual landing.
             if (fabs(center.x - finalCenter.x) > 1.5 ||
@@ -510,15 +514,24 @@ static BOOL bubbles(void);
         typeof(self) strongSelf = weakSelf;
         if (!strongSelf || strongSelf->_pulseGeneration != generation || strongSelf->_touching ||
             strongSelf->_liftTarget > 0.001) return;
-        // A single transaction ends the pose playback and replaces the
-        // material; otherwise the last glass-rim frame can overlap the pale
-        // resting capsule and look like a white flash.
+        // Retire only the glass material. Do NOT cancel the render-server
+        // spring: its remaining directional shape belongs to the pale
+        // underlay as well. Cancelling lens.x/sx/sy here was the visible snap
+        // from moving bubble to static selection; the model is already at rest
+        // and the playback finishes on its own.
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
-        [strongSelf dropPlayback];
-        [strongSelf applyPose];
         [strongSelf showGlass:NO animated:NO];
         [CATransaction commit];
+    });
+    // Let the substrate finish the *same* keyframed spring before removing
+    // animations. A new finger/selection increments generation and owns it.
+    NSTimeInterval finishAt = MAX(duration, (count > 1 ? (count - 1) * kPlayStep : duration));
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((finishAt + kPlayStep) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        typeof(self) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_pulseGeneration != generation || strongSelf->_touching) return;
+        [strongSelf dropPlayback];
+        [strongSelf applyPose];
     });
 }
 
@@ -1072,6 +1085,15 @@ static BOOL bubbles(void) {
     [_tintMask removeAnimationForKey:@"lens.sx"];
     [_tintMask removeAnimationForKey:@"lens.sy"];
     [_normalCutout removeAnimationForKey:@"lens.cutout"];
+    // Geometry and material are sampled from the same spring clock.
+    // Remove them together when a new finger takes over or the run ends.
+    [_rest.layer removeAnimationForKey:@"lens.material"];
+    [_pane.layer removeAnimationForKey:@"lens.material"];
+    [_glare removeAnimationForKey:@"lens.material"];
+    [_perimeter removeAnimationForKey:@"lens.material"];
+    [_longSpecular removeAnimationForKey:@"lens.material"];
+    [_platterEdgePane.layer removeAnimationForKey:@"lens.material"];
+    [_glyphEdgePane.layer removeAnimationForKey:@"lens.material"];
 }
 
 // A finger down, or a new place to go, while a run is playing: the springs carry on from where the run is now.
@@ -1084,6 +1106,21 @@ static BOOL bubbles(void) {
     _L = st.L; _R = st.R; _vL = st.vL; _vR = st.vR; _lift = st.lift; _vLift = st.vLift;
     _sq = st.sq; _vSq = st.vSq;
     _prevSpeed = (st.vL + st.vR) / 2;
+    // CA playback's model material is its end state. If another finger takes
+    // over mid-fade, return to live raised glass before drawing that finger's
+    // geometry, rather than briefly flashing the model's resting substrate.
+    if (_glassOn) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        _rest.layer.opacity = 0.12;
+        _pane.layer.opacity = 1;
+        _glare.opacity = 1;
+        _perimeter.opacity = 1;
+        _longSpecular.opacity = 1;
+        _platterEdgePane.layer.opacity = 1;
+        _glyphEdgePane.layer.opacity = _tintOverlay ? 1 : 0;
+        [CATransaction commit];
+    }
     [self applyPose];
 }
 
@@ -1203,6 +1240,55 @@ static BOOL bubbles(void) {
         maskRun(@"lens.x", @"position.x", maskXs);
         maskRun(@"lens.sx", @"transform.scale.x", maskSxs);
         maskRun(@"lens.sy", @"transform.scale.y", sys);
+    }
+    // Give the resting substrate the SAME position/squash keyframes as the
+    // raised bubble (it is a child of this lens), but cross-fade its material
+    // during the final portion of the lift. The old single-frame showGlass:NO
+    // jumped straight from a refracting lens to a flat, fully opaque pill.
+    // Short taps must first complete their upward spring before fading.
+    if (_glassOn && !SGRReduceMotion()) {
+        NSUInteger peak = 0;
+        for (NSUInteger i = 1; i < count; i++)
+            if (all[i].lift > all[peak].lift) peak = i;
+        NSMutableArray<NSNumber *> *substrate = [NSMutableArray arrayWithCapacity:count];
+        NSMutableArray<NSNumber *> *optical = [NSMutableArray arrayWithCapacity:count];
+        for (NSUInteger i = 0; i < count; i++) {
+            CGFloat blend = 0;
+            if (i > peak) {
+                CGFloat descent = MIN(1, MAX(0, (0.60 - MAX(0, all[i].lift)) / 0.52));
+                blend = descent * descent * (3 - 2 * descent);
+            }
+            [substrate addObject:@(0.12 + 0.88 * blend)];
+            [optical addObject:@(1 - blend)];
+        }
+        void (^material)(CALayer *, NSArray<NSNumber *> *) = ^(CALayer *layer, NSArray<NSNumber *> *values) {
+            if (!layer) return;
+            CAKeyframeAnimation *a = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+            a.values = values;
+            a.duration = duration;
+            a.calculationMode = kCAAnimationLinear;
+            [layer addAnimation:a forKey:@"lens.material"];
+        };
+        material(_rest.layer, substrate);
+        material(_pane.layer, optical);
+        material(_platterEdgePane.layer, optical);
+        material(_glyphEdgePane.layer, optical);
+        material(_glare, optical);
+        material(_perimeter, optical);
+        material(_longSpecular, optical);
+        // Model state MUST equal the last keyframe. If page loading stalls
+        // the main queue at touchdown/release, Core Animation still finishes
+        // on the settled substrate instead of snapping back to a glass rim.
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        _rest.layer.opacity = 1;
+        _pane.layer.opacity = 0;
+        _platterEdgePane.layer.opacity = 0;
+        _glyphEdgePane.layer.opacity = 0;
+        _glare.opacity = 0;
+        _perimeter.opacity = 0;
+        _longSpecular.opacity = 0;
+        [CATransaction commit];
     }
     // Keep the white cutout on the same render-server path as the green
     // selected group; otherwise a loading tab freezes the hole in the backdrop.
