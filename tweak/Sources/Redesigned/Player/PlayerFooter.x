@@ -155,7 +155,10 @@ SGRGlyphButton *SGRPlayerLyricsGlyphIn(UIView *host) {
         objc_setAssociatedObject(host, &kLyricsGlyphKey, glyph, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (glyph.superview != host) [host addSubview:glyph];
-    if (SGRPlayerSpotifyIcons()) SGRPlayerEncoreGlyphIn(glyph, @"lyrics");
+    // The Lyrics control always uses Spotify's Encore icon in Legacy Glass;
+    // the Spotify's icons preference still governs the *other* player glyphs.
+    if ((SGBelowiOS26() && SGUseLegacyGlass()) || SGRPlayerSpotifyIcons())
+        SGRPlayerEncoreGlyphIn(glyph, @"lyrics");
     sg_lyricsGlyph = glyph;
     return glyph;
 }
@@ -232,8 +235,8 @@ static void takeConnectImage(UIImageView *drawn) {
 // Spotify draws a new glyph when the device changes, with no layout pass of the footer to tell it, so its setImage:
 // tells the stand-in; the clear image set back in reports too, and stops there. Each pass looks too, at the cost of a
 // compare, for a view the image cannot be watched on.
-static void standInForConnect(UIImageView *drawn) {
-    if (SGRPlayerSpotifyIcons()) return;
+static void standInForConnect(UIImageView *drawn, BOOL forceApple) {
+    if (!forceApple && SGRPlayerSpotifyIcons()) return;
     BOOL made = objc_getAssociatedObject(drawn, &kStandInKey) != nil;
     if (!standIn(drawn, kConnectSymbol)) return;
     takeConnectImage(drawn);
@@ -292,6 +295,20 @@ static UIView *connectGlyphIn(UIView *holder) {
     return glyph;
 }
 
+// Compact now-playing bar only, on iOS 18 Legacy Glass: replace the drawing
+// within Spotify's original Connect button (not the button or its action).
+// Reuse the full player's image observer so a new output device / tint is
+// reflected without waiting for another mini-bar layout. This deliberately
+// overrides the "Spotify's icons" option for the mini bar alone.
+void SGRPlayerAppleMiniConnectIn(UIView *bar) {
+    if (!bar || !SGBelowiOS26() || !SGUseLegacyGlass()) return;
+    static char kMiniConnectKey;
+    UIView *connect = SGRFindByIdentifier(bar, @"Components.ConnectButtonOutputSwitcher", &kMiniConnectKey);
+    if (!connect) return;
+    UIImageView *image = (UIImageView *)connectGlyphIn(connect);
+    if ([image isKindOfClass:UIImageView.class]) standInForConnect(image, YES);
+}
+
 // Connect is Spotify's control as wide as the device's name, with the glyph near its leading edge. With the
 // name hidden and the glyph in the middle, its touches would reach far past the glyph, over the queue, and
 // hardly before it. So the row's view that holds it takes touches only in a square over the glyph, the size
@@ -344,7 +361,7 @@ UIView *SGRPlayerConnectGlyphIn(UIView *host, UIView *connect) {
     SGForEachView(connect, ^(UIView *view) {
         if ([view isKindOfClass:UILabel.class] || SGClassNamed(view.class, @"MarqueeLabel")) SGRPlayerVanish(view);
     });
-    if (glyph) standInForConnect((UIImageView *)glyph);
+    if (glyph) standInForConnect((UIImageView *)glyph, NO);
     return glyph;
 }
 

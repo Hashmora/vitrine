@@ -212,6 +212,8 @@ void SGRPlayerLowerRow(UIView *row);
 // Connect's glyph in `connect`, laid out and with the device name hidden; nil while it has no size yet, and `host`
 // then lays out again on the next turn of the run loop. Leave Connect where it is while it is nil.
 UIView *SGRPlayerConnectGlyphIn(UIView *host, UIView *connect);
+// Legacy Glass mini now-playing bar: Apple AirPlay glyph inside Spotify's original Connect button.
+void SGRPlayerAppleMiniConnectIn(UIView *bar);
 // Connect's touches only in a 44pt square over its glyph: `holder` is the view of the footer that holds Connect, whose
 // own view reaches far past the glyph (over Queue and the DJ button once the glyph is moved).
 void SGRPlayerCoverConnect(UIView *holder, UIView *glyph);
