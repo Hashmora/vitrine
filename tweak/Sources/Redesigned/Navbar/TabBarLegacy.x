@@ -145,6 +145,13 @@ static void updateBottomFade(UIView *stockBar) {
 
 @end
 
+// Exact visual target of the raised lens for an off-centre finger gesture.
+// Keeping selection and lens on one coordinate mapping prevents premature
+// filled/white glyph switches before the bubble reaches the next tab.
+@interface SGRLegacyLens (SGRLegacyTracking)
+- (CGFloat)trackingCenterForFingerX:(CGFloat)x;
+@end
+
 @interface SGRLegacyTabBar : UITabBar <UITabBarDelegate, UIGestureRecognizerDelegate>
 @property (nonatomic, weak) UIView *stockBar;
 @property (nonatomic, copy) NSArray<UIView *> *sources;
@@ -163,6 +170,8 @@ static void updateBottomFade(UIView *stockBar) {
 @property (nonatomic, weak) UILongPressGestureRecognizer *hold;
 @property (nonatomic, weak) UIGestureRecognizer *drag;
 @property (nonatomic) BOOL holding;
+// Extra counter-scale for glyphs seen through the 0.92x lifted lens.
+@property (nonatomic) BOOL heldGlyphCounterScale;
 // The last tab actually navigated to. Never Create, which opens a menu and no page, so the selection can
 // always go back to this.
 @property (nonatomic, weak) UITabBarItem *lastRealItem;
@@ -818,7 +827,13 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
             if (nativeIcon && nativeIcon.superview) {
                 coloredIcon.bounds = nativeIcon.bounds;
                 coloredIcon.center = [nativeIcon.superview convertPoint:nativeIcon.center toView:selected];
-                coloredIcon.transform = nativeIcon.transform;
+                // Compensate the lens's 0.92x backdrop reduction so the active
+            // glyph visibly grows with the pressed platter rather than
+            // appearing unchanged. The regular white icons still use the
+            // common host zoom, and there is only ONE green UIImageView.
+            coloredIcon.transform = bar.heldGlyphCounterScale
+                ? CGAffineTransformScale(nativeIcon.transform, 1.085, 1.085)
+                : nativeIcon.transform;
                 // UIKit can transiently fade the white source while the Create
             // menu is up. That must not fade the independently masked green
             // rendition of another tab being crossed by the lens.
@@ -826,7 +841,9 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
             } else {
                 coloredIcon.bounds = CGRectMake(0, 0, 24, 24);
                 coloredIcon.center = [button convertPoint:CGPointMake(CGRectGetMidX(button.bounds), 20) toView:selected];
-                coloredIcon.transform = CGAffineTransformIdentity;
+                coloredIcon.transform = bar.heldGlyphCounterScale
+                    ? CGAffineTransformMakeScale(1.085, 1.085)
+                    : CGAffineTransformIdentity;
                 coloredIcon.alpha = createOpen ? 0 : 1;
             }
             coloredIcon.hidden = NO;
@@ -960,6 +977,13 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
     UIView *host = bar.stockBar ? objc_getAssociatedObject(bar.stockBar, &kHostKey) : nil;
     if (!host) return;
     pressed &= SGUseLegacyGlass() && !SGRReduceMotion() && !sg_minimized;
+    if (bar.heldGlyphCounterScale != pressed) {
+        bar.heldGlyphCounterScale = pressed;
+        // UIKit may rebuild the accent copy while the finger is down. The
+        // same scaling is also applied in syncLensAccent on every layout.
+        SGRLegacyLens *lens = objc_getAssociatedObject(host, &kSelPillKey);
+        syncLensAccent(bar, host, lens);
+    }
     // The old Stage 31 transform is removed from the two surfaces: do not
     // enlarge them a second time under the common composition transform.
     const void *keys[] = { &kNavGlassKey, &kNavTintKey };
@@ -1242,10 +1266,19 @@ static void alignTabContent(UITabBar *bar) {
     }
 }
 
+// The lens provides its anchored (not raw-finger) horizontal target.
+// Declare the internal helper here instead of changing the public lens API.
+// The declaration itself sits above this implementation (see category below).
 // The selection is the nearest tab at every touch update; release switches Spotify's content like a plain tap.
 - (void)dragged:(SGRLegacyTabDragRecognizer *)g {
     UIView *stockBar = self.stockBar;
-    UITabBarItem *item = [self itemAt:g.currentLocation];
+    SGRLegacyLens *lens = [self lens];
+    CGFloat fingerX = self.frame.origin.x + g.currentLocation.x;
+    CGPoint selectedPoint = g.currentLocation;
+    if (g.state != UIGestureRecognizerStateBegan && lens.touching) {
+        selectedPoint.x = [lens trackingCenterForFingerX:fingerX] - self.frame.origin.x;
+    }
+    UITabBarItem *item = [self itemAt:selectedPoint];
     NSUInteger itemIndex = item ? [self.items indexOfObject:item] : NSNotFound;
     BOOL itemIsCreate = itemIndex != NSNotFound && itemIndex < self.sources.count && isCreateSource(self.sources[itemIndex]);
 
@@ -1262,8 +1295,7 @@ static void alignTabContent(UITabBar *bar) {
             if (stockBar) syncBar(stockBar);
         }
         // The bubble follows the finger from the first frame, over whatever tab it is on.
-        SGRLegacyLens *lens = [self lens];
-        CGFloat hostX = self.frame.origin.x + g.currentLocation.x;
+        CGFloat hostX = fingerX;
         if (g.state == UIGestureRecognizerStateBegan) {
             CGFloat lo, hi;
             [self trackBoundsMin:&lo max:&hi];
