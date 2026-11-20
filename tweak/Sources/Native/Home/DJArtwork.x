@@ -66,11 +66,19 @@ static void SGDJDraw(UIView *holder) {
                  @"redesigned": @(0) }));
     }
 #endif
-    if (!confirmed && !placeholderFallback) { [overlay removeFromSuperview]; return; }
+    if (!confirmed && !placeholderFallback) {
+        [overlay removeFromSuperview];
+        SGDJArtworkTracePaint(holder, overlay, row, NO, !!SGDJCover, NO);
+        return;
+    }
     if (!SGDJHolders) SGDJHolders = [NSHashTable weakObjectsHashTable];
     [SGDJHolders addObject:holder];
     if (!SGDJCover) SGDJCover = [UIImage imageWithContentsOfFile:SGDJCoverPath()];
-    if (!SGDJCover) { SGDJLoad(); return; }
+    if (!SGDJCover) {
+        SGDJLoad();
+        SGDJArtworkTracePaint(holder, overlay, row, YES, NO, NO);
+        return;
+    }
     if (!overlay) {
         overlay = [UIImageView new];
         overlay.tag = SGDJCoverTag;
@@ -89,6 +97,7 @@ static void SGDJDraw(UIView *holder) {
     // Keep the corner radius from Spotify when it is larger, but never draw a square DJ cover.
     overlay.layer.cornerRadius = MAX(4, holder.layer.cornerRadius);
     [holder bringSubviewToFront:overlay];
+    SGDJArtworkTracePaint(holder, overlay, row, YES, YES, NO);
 }
 %hook SGDJCardImage
 - (void)didMoveToWindow {

@@ -1,36 +1,35 @@
 #!/usr/bin/env python3
-"""Regression: art overrides need a positive DJ identity, not a name."""
+"""Static guards for DJ artwork identity, lifecycle and render probes.
+
+These checks do not replace a Spotify simulator test: a DJ card with no model
+URI in UIKit is still ambiguous with a user playlist of the same name.
+"""
 from pathlib import Path
 root = Path(__file__).resolve().parents[2]
-identity = (root/'tweak/Sources/Shared/Player/DJArtworkIdentity.m').read_text()
-assert 'kSpotifyDJURI' in identity
-assert 'playlistLabel(card.accessibilityLabel)' in identity
-assert 'containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0)' in identity
+identity = (root / 'tweak/Sources/Shared/Player/DJArtworkIdentity.m').read_text()
+header = (root / 'tweak/Sources/Shared/Player/DJArtworkIdentity.h').read_text()
+assert 'BOOL explicitIdentity = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);' in identity
+assert 'BOOL confirmed = explicitIdentity || dedicated || editorial;' in identity
+assert 'BOOL genericPlaylist = playlistLabel(card.accessibilityLabel) && !confirmed;' in identity
 assert 'editorialDJIdentity' in identity and 'isDedicatedDJComponent' in identity
 assert 'return confirmed;' in identity
-assert 'return djTitle(card.accessibilityLabel);' not in identity
+assert 'if (playlistLabel(card.accessibilityLabel))' not in identity
+assert 'spotify:playlist:37i9dQZF1EYkqdzj48dyYq' in identity
+assert '[holder isDescendantOfView:cache.card]' in identity, 'cached parent card may be stale on cell reuse'
+assert 'state.card != card' in identity, 'fallback state must not leak to a new card'
+assert 'state.nativeImage = nativeImage;' in identity
+assert 'nativeImage == state.nativeImage && nativeImage != nil' in identity
+assert 'else if (!unchangedTemporary)' in identity, 'native image resolution must clear the fallback'
+assert 'now - state.firstMissing >= 0.8' in identity
+assert 'SGDJ_TRACE(@"artwork.placeholder"' in identity
+assert 'SGDJ_TRACE(@"artwork.draw"' in identity and '@"outcome": @YES' in identity
+assert 'void SGDJArtworkTracePaint(' in header
 for look in ('Native', 'Redesigned'):
-    text = (root/f'tweak/Sources/{look}/Home/DJArtwork.x').read_text()
-    assert 'SGDJArtworkIsConfirmedCard(row)' in text
-    assert 'SGDJArtworkNeedsPlaceholder(row, holder, &retry)' in text
-    assert 'SGDJArtworkEnclosingCard(holder)' in text
-    assert 'if (retry)' in text and 'dispatch_after(' in text
-    assert 'SGDJLabel(' not in text and 'SGRDJLabel(' not in text
-print('DJ artwork identity gates: PASS')
-
-identity_missing = identity
-assert 'BOOL missing = candidate && (!nativeArtwork || placeholder);' in identity_missing
-assert 'sgScanArt(holder, 0, &nativeArtwork, &placeholder)' in identity_missing
-assert 'foundBitmapSlot && !nativeArtwork && placeholder' not in identity_missing
-assert 'now - firstSeen.doubleValue >= 0.8' in identity_missing
-assert 'SGDJ_TRACE(@"artwork.placeholder"' in identity_missing
-for look in ('Native', 'Redesigned'):
-    art = (root/f'tweak/Sources/{look}/Home/DJArtwork.x').read_text()
-    assert 'SGDJ_TRACE(@"artwork.draw"' in art
-    assert 'SGDJ_TRACE(@"artwork.cover"' in art
-print('DJ blank-placeholder fallback: PASS (requires device verification)')
-
-assert 'SGDJArtworkCardCache' in identity
-assert 'cache.parent == parent && cache.window == window' in identity
-assert 'cache.card || now - cache.checkedAt < 0.25' in identity
-print('Artwork enclosing-card cache: PASS')
+    art = (root / f'tweak/Sources/{look}/Home/DJArtwork.x').read_text()
+    assert 'SGDJArtworkIsConfirmedCard(row)' in art
+    assert 'SGDJArtworkNeedsPlaceholder(row, holder, &retry)' in art
+    assert 'SGDJArtworkEnclosingCard(holder)' in art
+    assert 'if (retry)' in art and 'dispatch_after(' in art
+    assert art.count('SGDJArtworkTracePaint(holder, overlay, row,') == 3
+    assert 'SGDJLabel(' not in art and 'SGRDJLabel(' not in art
+print('DJ artwork: identity, cell reuse, placeholder continuity and overlay outcome probes PASS (static)')
