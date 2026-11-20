@@ -410,11 +410,15 @@ static UIView *homePageNear(UIView *view, NSUInteger depth) {
 // it shows through behind the title and the first shelf; the shelves clear theirs (HomeSections.x).
 static void layoutTint(UIView *view) {
     __block UIView *page = nil;
-    if (SGBelowiOS26() && SGUseLegacyGlass()) page = homePageNear(view, 7);
-    if (!page) page = sg_tintView.superview;
+    // A Music/Home filter transition can replace HomePageView without laying
+    // out the retained Funkis controller again. Never choose the last tint's
+    // old superview before resolving the page currently attached to `view`.
+    if (SGBelowiOS26() && SGUseLegacyGlass()) page = homePageNear(view, 10);
     if (!page) SGForEachView(view, ^(UIView *v) {
-        if (!page && [v.accessibilityIdentifier hasPrefix:@"HomePageView"]) page = v;
+        if (!page && [v.accessibilityIdentifier hasPrefix:@"HomePageView-"] && v.window) page = v;
     });
+    if (!page && sg_tintView.superview && [sg_tintView.superview isDescendantOfView:view]
+        && sg_tintView.superview.window == view.window) page = sg_tintView.superview;
     if (!page) return;
     SGRHomeTintView *tint = objc_getAssociatedObject(page, &kTintKey);
     if (!tint) {
@@ -643,8 +647,11 @@ static void keepHeaderClear(UIView *element) {
     if (SGIsVisibleColor(element.layer.backgroundColor)) element.layer.backgroundColor = NULL;
 }
 
-static char kFeedLiftConstraintKey;
+static char kFeedLiftConstraintKey, kHomeReflowPendingKey, kHomeReflowTriesKey;
 static void liftFeed(UIView *element) {
+    // The layout callback can be re-entered while a constraint is activated.
+    static BOOL lifting;
+    if (lifting || !element) return;
     UIView *page = element.superview;
     if (!SGBelowiOS26() || !page) return;
     if ([NSStringFromClass(element.class) containsString:@"HomeHeaderElement"]) keepHeaderClear(element);
@@ -669,25 +676,37 @@ static void liftFeed(UIView *element) {
 
     NSLayoutConstraint *below = nil, *activeTop = nil;
     for (NSLayoutConstraint *c in page.constraints) {
-        if (!c.active || c.firstItem != container || c.firstAttribute != NSLayoutAttributeTop) continue;
-        if (c.secondItem == page && c.secondAttribute == NSLayoutAttributeTop) activeTop = c;
-        if (c.secondItem == element && c.secondAttribute == NSLayoutAttributeBottom) below = c;
+        if (!c.active) continue;
+        // Auto Layout can store an equality in either direction. Stage 59
+        // only recognized container.top = header.bottom, but the new Friday
+        // hosting wrapper may install header.bottom = container.top.
+        BOOL forward = c.firstItem == container && c.firstAttribute == NSLayoutAttributeTop;
+        BOOL reverse = c.secondItem == container && c.secondAttribute == NSLayoutAttributeTop;
+        if (forward && c.secondItem == page && c.secondAttribute == NSLayoutAttributeTop) activeTop = c;
+        if (reverse && c.firstItem == page && c.firstAttribute == NSLayoutAttributeTop) activeTop = c;
+        if ((forward && c.secondItem == element && c.secondAttribute == NSLayoutAttributeBottom) ||
+            (reverse && c.firstItem == element && c.firstAttribute == NSLayoutAttributeBottom)) below = c;
     }
-    if (activeTop) {
-        // The previous constraint is still correct. Recompute the inset as
-        // the feed's safe area may have changed when the filter was rebuilt.
+    CGFloat top = CGRectGetMinY(container.frame);
+    if (activeTop && fabs(top) < 1.0) {
         insetFeed(feed);
         return;
     }
-    // Never move an unrelated SwiftUI page. A Spotify header-to-feed tie or
-    // a container we previously lifted is the evidence required to intervene.
-    BOOL previouslyLifted = objc_getAssociatedObject(element, &kLiftedKey) != nil;
-    if (!below && !previouslyLifted) return;
+    // The latest Stage 55 tree gives a second, concrete identity check: the
+    // replacement feed container starts at exactly header.bottom (112pt),
+    // while the original Home has already been lifted to zero. This covers
+    // a SwiftUI-recreated tie not present in `page.constraints` yet.
+    BOOL atHeaderBottom = top > 20 && fabs(top - CGRectGetMaxY(element.frame)) < 3.0;
+    BOOL previouslyLifted = objc_getAssociatedObject(element, &kLiftedKey) != nil ||
+                            objc_getAssociatedObject(container, &kFeedLiftConstraintKey) != nil;
+    if (!below && !previouslyLifted && !atHeaderBottom) return;
     if (sg_firstTop <= 0) {
         CGFloat before = CGRectGetMinY(container.frame);
         sg_firstTop = before + feed.safeAreaInsets.top;
     }
+    lifting = YES;
     if (below) below.active = NO;
+    if (activeTop) activeTop.active = NO; // stale top constraint, no longer governing the current hosting wrapper
     NSLayoutConstraint *lift = [container.topAnchor constraintEqualToAnchor:page.topAnchor];
     lift.active = YES;
     objc_setAssociatedObject(container, &kFeedLiftConstraintKey, lift, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -695,8 +714,9 @@ static void liftFeed(UIView *element) {
     [page layoutIfNeeded];
     if (container.clipsToBounds) container.clipsToBounds = NO;
     insetFeed(feed);
-    SGLog(@"redesign home: %@ feed container to y=0 after Home/Music transition; first content %.0fpt",
-          previouslyLifted ? @"re-lifted" : @"lifted", sg_firstTop);
+    SGLog(@"redesign home: %@ feed container %.1fpt -> %.1fpt; first content %.0fpt",
+          previouslyLifted ? @"re-lifted" : @"lifted", top, CGRectGetMinY(container.frame), sg_firstTop);
+    lifting = NO;
 }
 
 // The page's own pass can run before Spotify has sized its header at all (the header's view 0 by 0, its stack still
@@ -786,11 +806,54 @@ static void layoutHeader(UIViewController *page) {
 // The feed can come after the header's last pass (its page loads while the header is laid out, a few seconds on
 // a slow account), and the page's view has no pass of its own after; a feed that replaces another (a filter) comes
 // while the old one is still in the window. The feed's own controller hands it the follower on each of its passes.
+
+// The Home_Evo page finishes loading *after* FunkisViewController's own
+// viewDidLayoutSubviews. Stage 55 showed that no later Funkis layout occurred
+// after selecting Music or returning to Home. Schedule one guarded repair on
+// the next main-queue turn, when SwiftUI has completed this page's layout.
+// Only pages with a missing tint or a feed at header.bottom need the pass.
+static void scheduleHomeReflowForLoadedPage(UIView *loadedView) {
+    UIView *root = sg_pageView;
+    UIView *element = sg_header.superview;
+    if (!root || !root.window || !element || !loadedView ||
+        ![loadedView isDescendantOfView:root] || ![element isDescendantOfView:root] ||
+        !SGBelowiOS26() || !SGUseLegacyGlass()) return;
+    UIView *page = homePageNear(root, 10);
+    if (!page || !page.window) return;
+    UIView *container = page;
+    while (container && container.superview && container.superview != element.superview)
+        container = container.superview;
+    BOOL displaced = container && container.superview == element.superview &&
+                     CGRectGetMinY(container.frame) > 2;
+    BOOL missingTint = ![objc_getAssociatedObject(page, &kTintKey) isKindOfClass:SGRHomeTintView.class] ||
+                       ((UIView *)objc_getAssociatedObject(page, &kTintKey)).superview != page;
+    if (!displaced && !missingTint) {
+        objc_setAssociatedObject(page, &kHomeReflowTriesKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return;
+    }
+    if ([objc_getAssociatedObject(page, &kHomeReflowTriesKey) integerValue] >= 3 ||
+        objc_getAssociatedObject(page, &kHomeReflowPendingKey)) return;
+    objc_setAssociatedObject(page, &kHomeReflowPendingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    __weak UIView *weakPage = page;
+    __weak UIView *weakRoot = root;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *current = weakPage, *host = weakRoot;
+        if (!current) return;
+        objc_setAssociatedObject(current, &kHomeReflowPendingKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (!host.window || sg_pageView != host || ![current isDescendantOfView:host]) return;
+        NSInteger attempts = [objc_getAssociatedObject(current, &kHomeReflowTriesKey) integerValue];
+        objc_setAssociatedObject(current, &kHomeReflowTriesKey, @(attempts + 1), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        liftFeed(sg_header.superview);
+        layoutTint(host);
+    });
+}
+
 %hook _TtC16Home_EvoPageImpl33EvoLoadableResourceViewController
 - (void)viewDidLayoutSubviews {
     %orig;
     UIView *view = ((UIViewController *)self).viewIfLoaded;
     if (!sg_pageView || !view.window || ![view isDescendantOfView:sg_pageView]) return;
+    scheduleHomeReflowForLoadedPage(view);
     for (UIView *sub in view.subviews) {
         if ([sub isKindOfClass:UICollectionView.class]) {
             if (sub != sg_feed) followFeed((UIScrollView *)sub);
