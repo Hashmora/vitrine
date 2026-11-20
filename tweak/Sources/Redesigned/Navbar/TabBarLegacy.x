@@ -40,7 +40,7 @@ static const CGFloat kNavGlassBottomMargin = 8;   // gap under it, and over it t
 static const CGFloat kNavPlatterHeight = 62;
 static const CGFloat kNavButtonHeight = 54;
 static const CGFloat kNavPlatterHeightIconOnly = 62;
-static const CGFloat kNavIconOnlyImageShift = 4;
+static const CGFloat kNavIconOnlyImageShift = 4; // adaptive (>4 tabs) fallback only
 static const CGFloat kNavItemSpacing = 0;  // another 2pt closer, without resizing the icons
 static const CGFloat kNavCircleSide = 48;   // fallback size for an apart circle outside compact mode
 static const CGFloat kNavCompactCircleSide = 62; // native compact platter: 54pt rest / 70pt pressed
@@ -776,7 +776,9 @@ static void paintGlyphs(UITabBar *bar) {
 // One mask cuts the coloured set to the lens at rest and throughout playback.
 static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *lens) {
     UIView *selected = objc_getAssociatedObject(host, &kAccentCopyKey);
-    if (!tintedTabs() || sg_minimized || !lens || lens.hidden) {
+    // Keep the lens's unscaled selected-content copy even with accent OFF.
+    // Otherwise the 0.92x lens optics shrink the underlying white icon.
+    if (sg_minimized || !lens || lens.hidden) {
         lens.tintOverlay = nil;
         lens.normalContent = nil;
         selected.hidden = YES;
@@ -800,7 +802,7 @@ static void syncLensAccent(SGRLegacyTabBar *bar, UIView *host, SGRLegacyLens *le
     NSArray<UIView *> *buttons = tabButtons(bar);
     if (buttons.count != bar.items.count) { lens.tintOverlay = nil; lens.normalContent = nil; selected.hidden = YES; return; }
     NSMutableSet<UIView *> *used = [NSMutableSet setWithCapacity:buttons.count * 2];
-    UIColor *accent = SGRAccent();
+    UIColor *accent = openTabColor();
     for (NSUInteger i = 0; i < buttons.count; i++) {
         UIView *button = buttons[i];
         UIImageView *nativeIcon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
@@ -1030,8 +1032,7 @@ static CGFloat nativeBarWidth(NSUInteger count) {
 static BOOL nativeTabLayout(UITabBar *bar) {
     NSUInteger count = bar.items.count;
     return count >= 1 && count <= 4 &&
-        bar.bounds.size.width + 0.5 >= nativeBarWidth(count) &&
-        !SGHidden(SGRKeyNavbarHideLabels);
+        bar.bounds.size.width + 0.5 >= nativeBarWidth(count);
 }
 
 static void alignTabContent(UITabBar *bar) {
@@ -1052,7 +1053,9 @@ static void alignTabContent(UITabBar *bar) {
         UIImageView *icon = objc_getAssociatedObject(button, &kGlyphOverlayKey);
         if (icon && !icon.hidden) {
             icon.bounds = CGRectMake(0, 0, 24, 24);
-            icon.center = CGPointMake(kNativeSlotWidth / 2, kNativeIconY + 12);
+            // With captions gone, the 24pt glyph is centred on the 62pt capsule.
+            icon.center = CGPointMake(kNativeSlotWidth / 2,
+                                      SGHidden(SGRKeyNavbarHideLabels) ? kNavButtonHeight / 2 : kNativeIconY + 12);
         }
         for (UIView *sub in button.subviews) {
             if (![sub isKindOfClass:UILabel.class]) continue;
@@ -1961,7 +1964,8 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
         NSString *title = hideLabels ? nil : labelIn(sources[i]).text;
         if (hideLabels ? item.title != nil : title.length && ![title isEqualToString:item.title]) item.title = title;
         // UIKit lays the icon out as if a label sat under it, so without labels it is nudged down to centre.
-        UIEdgeInsets wantInsets = hideLabels ? UIEdgeInsetsMake(kNavIconOnlyImageShift, 0, -kNavIconOnlyImageShift, 0) : UIEdgeInsetsZero;
+        UIEdgeInsets wantInsets = hideLabels && !nativeTabLayout(bar)
+            ? UIEdgeInsetsMake(kNavIconOnlyImageShift, 0, -kNavIconOnlyImageShift, 0) : UIEdgeInsetsZero;
         if (!UIEdgeInsetsEqualToEdgeInsets(item.imageInsets, wantInsets)) item.imageInsets = wantInsets;
         // Nudge the caption towards its icon, not the capsule's bottom edge.
         UIOffset titleOffset = UIOffsetZero; // aligned with the 35pt native caption origin below
@@ -2014,7 +2018,7 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     BOOL separate = apartSource && !fold;
     CGFloat apartRoom = separate ? platterHeight + SGRGrid : 0;
     CGFloat availableWidth = width - kNavGlassMargin * 2 - apartRoom;
-    BOOL nativeWidth = sources.count >= 1 && sources.count <= 4 && !hideLabels &&
+    BOOL nativeWidth = sources.count >= 1 && sources.count <= 4 &&
                        nativeBarWidth(sources.count) <= availableWidth + 0.5;
     CGFloat naturalWidth = nativeWidth ? nativeBarWidth(sources.count)
                         : kNavItemWidth * sources.count + kNavItemSpacing * (sources.count - 1);
