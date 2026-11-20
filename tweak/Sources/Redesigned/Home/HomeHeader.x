@@ -26,7 +26,7 @@
 // Tries at finding the tab's name before settling for the English one: a miss walks the window.
 static const NSUInteger kTitleTries = 8;
 
-static char kTitleKey, kTabKey, kPillGlassKey, kGlassKey, kButtonsKey, kConnectKey, kTintKey, kWatchKey;
+static char kTitleKey, kTabKey, kPillGlassKey, kPillDimKey, kGlassKey, kButtonsKey, kConnectKey, kTintKey, kWatchKey;
 // The title row's pill: a glass capsule around the filter button and the avatar, 44pt tall, as the reference has
 // it; the menu drives Spotify's own filter chips, hidden in the stack, and offers the device picker when Spotify
 // has one (a now playing bar) and the large shelf's Show all while its heading is gone (HomeTopPicks.x).
@@ -368,7 +368,11 @@ static CGFloat layoutPill(UIView *header, UIStackView *stack, UIView *face) {
     place(buttons, pill);
     CGRect filter = CGRectMake(kPillPad, 0, kPillButton, kPillHeight);
     if (!CGRectEqualToRect(buttons.filter.frame, filter)) buttons.filter.frame = filter;
-    SGRGlassCapsuleInside(glass, &kPillGlassKey, pill.size, NO);
+    UIView *pillGlass = SGRGlassCapsuleInside(glass, &kPillGlassKey, pill.size, NO);
+    // Mirror playlist Back's 45%-black glass body, but only in the iOS 18
+    // Legacy Glass fallback. Never dim genuine iOS 26 system glass.
+    if (SGBelowiOS26() && SGUseLegacyGlass() && pillGlass)
+        SGRDarkenGlass(pillGlass, &kPillDimKey, kPillHeight / 2, SGRBarDim);
     layoutFriday(glass, pill.size);
     return CGRectGetMinX(pill);
 }
@@ -377,6 +381,7 @@ static CGFloat layoutPill(UIView *header, UIStackView *stack, UIView *face) {
 
 static __weak SGRHomeTintView *sg_tintView;
 static char kFridayImageKey, kFridayColorKey, kMusicCardImageKey, kMusicCardColorKey;
+static char kHomeFridayCoverProbeKey;
 
 static void paintTint(SGRHomeTintView *tint, BOOL animated) {
     CAGradientLayer *layer = (CAGradientLayer *)tint.layer;
@@ -386,6 +391,12 @@ static void paintTint(SGRHomeTintView *tint, BOOL animated) {
     // for the banner's asynchronous UIImage or the banner-specific callback.
     UIColor *liveMusic = isFriday() ? selectedMusicAccent() : nil;
     UIColor *top = liveMusic ?: (friday ?: (musicCard ?: (sg_pageTint ?: UIColor.blackColor)));
+    // The native selected Music chip is pale (#A2D0FA in Stage 55). Using it
+    // raw as a 480pt backdrop washes out artwork and white labels. Clamp the
+    // Friday Music background to the same contrast-safe field luminance as
+    // the redesigned Home cards; keep the accent itself vivid in the rim.
+    if (isFriday() && musicFilterSelected() && (liveMusic || friday))
+        top = SGRFieldColorFor(top);
     NSArray *colors = @[(id)top.CGColor, (id)[top colorWithAlphaComponent:0].CGColor];
     if ([layer.colors isEqualToArray:colors]) return;
     if (animated && tint.window) {
@@ -437,8 +448,9 @@ static void repaintFridayRing(void) {
 // actual Friday logo over a carousel cover; an older async result must never
 // replace the accent of a newer image/page.
 static void sampleFridayAccent(UIImage *image, NSUInteger priority) {
-    if (!image || !isFriday() || !SGBelowiOS26() || !SGUseLegacyGlass() ||
-        priority < sg_fridayAccentPriority) return;
+    // The redesigned Friday rim exists on both iOS 26 and the iOS 18
+    // fallback. Artwork-derived Home accents must be available to both.
+    if (!image || !isFriday() || priority < sg_fridayAccentPriority) return;
     if (sg_fridayAccentImage == image && priority == sg_fridayAccentPriority) return;
     sg_fridayAccentImage = image;
     sg_fridayAccentPriority = priority;
@@ -505,6 +517,30 @@ static UIView *homePageNear(UIView *view, NSUInteger depth) {
     return nil;
 }
 
+// The Home carousel is nested inside an *outer* visible collection cell.
+// Resolve artwork from the actual NMF HomeCard button, not from an immediate
+// child of the outer cell (which is just another UICollectionView). The
+// button's accessibility label is present even when its Encore title is not.
+static UIImage *fridayHomeCoverIn(UIView *outerCellContent) {
+    __block UIImage *cover = nil;
+    SGForEachView(outerCellContent, ^(UIView *candidate) {
+        if (cover || candidate.hidden || candidate.alpha < 0.01 ||
+            ![candidate.accessibilityIdentifier isEqualToString:@"Components.UI.HomeCard"] ||
+            ![candidate.accessibilityLabel hasPrefix:@"New Music Friday"]) return;
+        __block CGFloat largest = 0;
+        SGForEachView(candidate, ^(UIView *part) {
+            if (![part isKindOfClass:UIImageView.class] || part.hidden || part.alpha < 0.01) return;
+            UIImageView *imageView = (UIImageView *)part;
+            CGFloat area = imageView.bounds.size.width * imageView.bounds.size.height;
+            if (imageView.image && area > largest && area >= 72 * 72) {
+                largest = area;
+                cover = imageView.image;
+            }
+        });
+    });
+    return cover;
+}
+
 // The gradient at the back of the page's view (HomePageView, which holds the feed), the feed's own black cleared so
 // it shows through behind the title and the first shelf; the shelves clear theirs (HomeSections.x).
 static void layoutTint(UIView *view) {
@@ -537,11 +573,11 @@ static void layoutTint(UIView *view) {
     for (UIView *sub in page.subviews) {
         if (![sub isKindOfClass:UICollectionView.class]) continue;
         if (![sub.backgroundColor isEqual:UIColor.clearColor]) sub.backgroundColor = UIColor.clearColor;
-        // On the Friday Music filter the visible full-bleed banner has no
-        // accessibilityLabel on its UIImageView in Stage 55, although the
-        // earlier section classifier sometimes saw one. Read the *visible*
-        // banner image directly, once per image, as a reliable fallback.
-        if (!SGBelowiOS26() || !SGUseLegacyGlass()) continue;
+        // Home's NMF cover works on both redesigned modes; inspecting the
+        // Music full-bleed banner and changing its wrappers below is scoped
+        // separately to the Legacy Glass fallback.
+        BOOL legacy = SGBelowiOS26() && SGUseLegacyGlass();
+        if (!legacy && !isFriday()) continue;
         UICollectionView *collection = (UICollectionView *)sub;
         NSArray<UICollectionViewCell *> *cells = [collection.visibleCells sortedArrayUsingComparator:^NSComparisonResult(UICollectionViewCell *a, UICollectionViewCell *b) {
             return [[collection indexPathForCell:a] compare:[collection indexPathForCell:b]];
@@ -560,17 +596,11 @@ static void layoutTint(UIView *view) {
             // On Friday, Home itself may show the NMF carousel cover before
             // Music's logo banner has loaded. Use it only as a temporary ring
             // accent; never give Home the banner-specific background override.
-            if (isFriday() && sg_fridayAccentPriority < 2 && !sg_fridayAccentImage) {
-                __block UIImage *cover = nil;
-                SGForEachView(cell.contentView, ^(UIView *v) {
-                    if (cover || ![v.accessibilityLabel hasPrefix:@"New Music Friday"]) return;
-                    SGForEachView(v, ^(UIView *child) {
-                        if (!cover && [child isKindOfClass:UIImageView.class])
-                            cover = ((UIImageView *)child).image;
-                    });
-                });
+            if (isFriday() && sg_fridayAccentPriority < 2) {
+                UIImage *cover = fridayHomeCoverIn(cell.contentView);
                 if (cover) sampleFridayAccent(cover, 1);
             }
+            if (!legacy) continue;
             if (![NSStringFromClass(root.class) containsString:@"Discovery_BannerKit.FullBleedBannerElementView"]
                 || cell.hidden || cell.contentView.hidden) continue;
             // Unlike Home shelves, this full-bleed banner is wrapped by an
@@ -996,6 +1026,19 @@ static void scheduleHomeReflowForLoadedPage(UIView *loadedView) {
     BOOL missingTint = ![objc_getAssociatedObject(page, &kTintKey) isKindOfClass:SGRHomeTintView.class] ||
                        ((UIView *)objc_getAssociatedObject(page, &kTintKey)).superview != page;
     if (!displaced && !missingTint) {
+        // Home's Friday cover often arrives *after* the first Funkis layout,
+        // while the feed controller keeps laying out the nested carousel.
+        // Retry this read-only visible-card scan at most once every 0.7 s
+        // until it supplies a tint. No navigation to Music is required.
+        if (isFriday() && sg_fridayAccentPriority < 2 && !sg_fridayAccent &&
+            !musicFilterSelected()) {
+            CFTimeInterval now = CACurrentMediaTime();
+            NSNumber *last = objc_getAssociatedObject(page, &kHomeFridayCoverProbeKey);
+            if (!last || now - last.doubleValue >= 0.7) {
+                objc_setAssociatedObject(page, &kHomeFridayCoverProbeKey, @(now), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                layoutTint(root);
+            }
+        }
         // The selected pill's accent may arrive after the page's first
         // layout. Its background can change without a new Funkis pass, so
         // refresh the existing gradient on this page's own layout pass.
