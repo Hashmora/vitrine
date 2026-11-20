@@ -48,7 +48,7 @@ static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its it
 static const CGFloat kSelPillInset = 4;     // a slightly taller bubble with more tab title headroom
 static const CGFloat kSelPillXInset = 4;  // wider resting underlay, still with even side gaps
 static const CGFloat kLensOverhang = 4;     // the held bubble stands a little taller above and below the capsule
-static const CGFloat kBarPressScale = 1.027; // measured compact lift without scaling glyphs
+static const CGFloat kBarPressScale = 1.057; // enlarge the visible backdrop, never the tab glyphs
 static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
 static BOOL sg_minimized;
@@ -426,13 +426,21 @@ static char kNavDimKey, kCircleDimKey;
 }
 
 - (void)applyCompactFingerPose {
-    CGFloat dx = _held ? MAX(-10, MIN(10, _trackingDX * 0.35)) : 0;
-    CGFloat stretch = _held ? MIN(0.035, fabs(dx) / 10 * 0.035) : 0;
-    CGAffineTransform transform = CGAffineTransformMakeTranslation(dx, 0);
-    transform = CGAffineTransformScale(transform, 1 + stretch, 1 - stretch * 0.28);
-    _heldEdge.transform = transform;
-    _heldGlare.affineTransform = transform;
-    _heldPerimeter.affineTransform = transform;
+    // The finger carries the *raised lens*, not the entire compact control.
+    // The previous 0.35 gain was further clamped to just +/-3.5pt, so the
+    // response was nearly invisible even in the slow-driver recordings.
+    CGFloat dx = _held ? MAX(-13, MIN(13, _trackingDX * 0.58)) : 0;
+    CGFloat stretch = _held ? MIN(0.020, fabs(dx) / 13 * 0.020) : 0;
+    CGAffineTransform lens = CGAffineTransformMakeTranslation(dx, 0);
+    lens = CGAffineTransformScale(lens, _held ? 1.055 + stretch : 1, _held ? 1.055 - stretch * 0.22 : 1);
+    _heldEdge.transform = lens;
+    _heldGlare.affineTransform = lens;
+    _heldPerimeter.affineTransform = lens;
+    // Enlarge the visible compact button's normal glass as well; the icon
+    // remains at its native 1x size and the tap target remains unchanged.
+    CGAffineTransform backing = _held ? CGAffineTransformMakeScale(1.085, 1.085) : CGAffineTransformIdentity;
+    _pane.transform = backing;
+    _film.transform = backing;
 }
 
 - (void)setHeld:(BOOL)held animated:(BOOL)animated {
@@ -958,7 +966,7 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
     }
     // Apple gives the dark platter a small *positive* lift on hold; the
     // previous 0.978Y squeezed it just as the glass bubble expanded.
-    CATransform3D target = pressed ? CATransform3DMakeScale(kBarPressScale, 1.017, 1) : CATransform3DIdentity;
+    CATransform3D target = pressed ? CATransform3DMakeScale(kBarPressScale, 1.055, 1) : CATransform3DIdentity;
     const void *keys[] = { &kNavGlassKey, &kNavTintKey };
     for (NSUInteger i = 0; i < 2; i++) {
         const void *key = keys[i];
@@ -973,7 +981,7 @@ static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
         CABasicAnimation *anim = [CABasicAnimation animationWithKeyPath:@"transform"];
         anim.fromValue = [NSValue valueWithCATransform3D:from];
         anim.toValue = [NSValue valueWithCATransform3D:target];
-        anim.duration = pressed ? 0.48 : 0.70;
+        anim.duration = pressed ? 0.31 : 0.48;
         anim.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.18 :0.0 :0.22 :1.0];
         [surface.layer addAnimation:anim forKey:@"vitrine.legacyTabPress"];
     }

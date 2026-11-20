@@ -87,7 +87,7 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
         // most of the reduced track was shown through two blurred copies.
         // Limit blur to the thin exposed rim and let the synthetic mini-track
         // supply the sharp center. Do not change the shared glass factory.
-        glass.blurRadius = 1.45;
+        glass.blurRadius = 1.55;
         glass.lensScale = kHeldLensScale * 1.30;
         // The native switch's held centre is clear: only the LEFT/RIGHT
         // crescents blur and refract. The white specular ring is separate.
@@ -151,7 +151,9 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     // middle and the top/bottom middle of the switch remain tack-sharp.
     _sideRefractionMask.startPoint = CGPointMake(0, 0.5);
     _sideRefractionMask.endPoint = CGPointMake(1, 0.5);
-    _sideRefractionMask.locations = @[@0, @0.08, @0.27, @0.37, @0.63, @0.73, @0.92, @1];
+    // About 15% more horizontal reach than Stage 30, without creating a
+    // circular blur ring or changing the sharp central track image.
+    _sideRefractionMask.locations = @[@0, @0.09, @0.31, @0.42, @0.58, @0.69, @0.91, @1];
     _sideRefractionMask.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.92].CGColor,
                                    (id)[UIColor colorWithWhite:1 alpha:0.88].CGColor,
                                    (id)[UIColor colorWithWhite:1 alpha:0.25].CGColor,
@@ -162,8 +164,9 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
                                    (id)[UIColor colorWithWhite:1 alpha:0.92].CGColor];
     _pane.layer.mask = _sideRefractionMask;
     _ring = [CAShapeLayer layer];
-    _ring.fillColor = [UIColor colorWithRed:0.9 green:0.95 blue:1 alpha:0.06].CGColor;
-    _ring.strokeColor = UIColor.clearColor.CGColor;
+    _ring.fillColor = UIColor.clearColor.CGColor;
+    _ring.strokeColor = [UIColor colorWithWhite:1 alpha:0.18].CGColor;
+    _ring.lineWidth = 0.88;
     _rim = [UIView new];
     _rim.userInteractionEnabled = NO;
     _rim.alpha = _pane.alpha;
@@ -210,6 +213,12 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     _hasTrack = YES;
     _inner.hidden = NO;
     _mini.backgroundColor = color;
+    // A thin accent-coloured perimeter belongs to the held glass; the dark
+    // shadow from earlier stages did not. Keep the white specular streak as
+    // a separate highlight (it is not a filled green glow).
+    UIColor *rimColor = [color colorWithAlphaComponent:0.78];
+    if (!CGColorEqualToColor(_ring.strokeColor, rimColor.CGColor))
+        [self setLayer:_ring value:(__bridge id)rimColor.CGColor forKey:@"strokeColor"];
     CGColorRef fill = color.CGColor;
     for (CAShapeLayer *flare in @[_flareLeft, _flareRight]) {
         if (!CGColorEqualToColor(flare.fillColor, fill)) [self setLayer:flare value:(__bridge id)fill forKey:@"fillColor"];
@@ -359,7 +368,7 @@ static const CGFloat kPullShare = 0.3, kMaxPull = 14, kPullStretch = 0.25;
     // A layer's shadow is not a view's animatable property: it fades in its own animation, as long as the swell.
     CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"shadowOpacity"];
     fade.fromValue = @(_shade.presentationLayer ? _shade.presentationLayer.shadowOpacity : _shade.shadowOpacity);
-    CGFloat shadow = lifted ? (_hasTrack ? 0.09f : 0.35f) : 0.0f;
+    CGFloat shadow = lifted && !_hasTrack ? 0.35f : 0.0f;
     fade.toValue = @(shadow);
     fade.duration = lifted ? 0.2 : 0.3;
     _shade.shadowOpacity = shadow;
