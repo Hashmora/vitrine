@@ -730,6 +730,82 @@ static void dumpLayers(CALayer *layer, NSUInteger depth, NSUInteger maxDepth, NS
     for (CALayer *sub in layer.sublayers) dumpLayers(sub, depth + 1, maxDepth, lines);
 }
 
+// Stage 42: one read-only inspection of the exact Encore glyph beside a visible label.
+// /get cannot reach a Swift stored ivar ("icon" or "experimentalIcon"). The same
+// runtime route is already used for playlist Sort in Redesigned/Playlist/PlaylistMenu.x.
+// This command belongs to SG_DRIVER, never to the release tweak.
+static NSArray<NSDictionary *> *encoreNamedIvars(UIView *view) {
+    NSMutableArray<NSDictionary *> *results = [NSMutableArray array];
+    for (Class cls = object_getClass(view); cls && cls != UIView.class; cls = class_getSuperclass(cls)) {
+        unsigned int count = 0;
+        Ivar *ivars = class_copyIvarList(cls, &count);
+        for (unsigned int i = 0; i < count; i++) {
+            const char *type = ivar_getTypeEncoding(ivars[i]);
+            // object_getIvar is only valid for object ivars, not Swift value types.
+            if (!type || type[0] != '@') continue;
+            id icon = object_getIvar(view, ivars[i]);
+            if (!icon || ![icon respondsToSelector:@selector(name)]) continue;
+            id value = ((id (*)(id, SEL))objc_msgSend)(icon, @selector(name));
+            if (![value isKindOfClass:NSString.class] || ![(NSString *)value length]) continue;
+            [results addObject:@{ @"ivar" : [NSString stringWithUTF8String:ivar_getName(ivars[i])],
+                                  @"owner" : NSStringFromClass(cls),
+                                  @"iconClass" : NSStringFromClass([icon class]),
+                                  @"name" : value }];
+        }
+        free(ivars);
+    }
+    return results;
+}
+
+static NSDictionary *encoreGlyphBesideLabel(NSString *wanted) {
+    Class glyphClass = NSClassFromString(@"SPTEncoreIconView");
+    if (!glyphClass) return @{ @"status" : @"INCOMPLETE_NO_CLASS", @"label" : wanted };
+    NSArray<UIView *> *labels = findAll(@{ @"class" : @"SPTEncoreLabel", @"label" : wanted }, nil);
+    NSMutableArray<NSDictionary *> *matches = [NSMutableArray array];
+    for (UIView *label in labels) {
+        if (!isShown(label)) continue;
+        UIView *icon = nil;
+        // Prefer the nearest Encore.StackView; the tree shows the icon and its
+        // label as direct siblings. Do not guess by screen coordinates or index.
+        for (UIView *ancestor = label.superview; ancestor && ancestor != label.window; ancestor = ancestor.superview) {
+            __block UIView *single = nil;
+            __block NSUInteger found = 0;
+            SGForEachView(ancestor, ^(UIView *child) {
+                if ([child isKindOfClass:glyphClass] && isShown(child)) {
+                    found++;
+                    single = child;
+                }
+            });
+            if (found == 1) { icon = single; break; }
+            if (found > 1) break; // A wider ancestor is ambiguous, never use it.
+        }
+        if (!icon) {
+            [matches addObject:@{ @"labelFrame" : describe(label)[@"frame"],
+                                  @"error" : @"No unique nearby visible icon" }];
+            continue;
+        }
+        [matches addObject:@{ @"labelFrame" : describe(label)[@"frame"],
+                              @"iconFrame" : describe(icon)[@"frame"],
+                              @"iconViewClass" : NSStringFromClass(icon.class),
+                              @"namedIvars" : encoreNamedIvars(icon) }];
+    }
+    if (matches.count != 1 || !matches.firstObject[@"namedIvars"]) {
+        return @{ @"label" : wanted, @"status" : @"INCOMPLETE_TARGET", @"matches" : matches };
+    }
+    NSArray<NSDictionary *> *named = matches.firstObject[@"namedIvars"];
+    NSMutableSet<NSString *> *names = [NSMutableSet set];
+    for (NSDictionary *entry in named) [names addObject:entry[@"name"]];
+    NSString *status = names.count == 1 ? @"COMPLETE_ICON_NAME" :
+                       names.count > 1 ? @"INCOMPLETE_AMBIGUOUS_ICON" : @"INCOMPLETE_NO_ICON_NAME";
+    NSMutableDictionary *answer = [@{ @"label" : wanted, @"status" : status,
+                                      @"matches" : matches } mutableCopy];
+    if (names.count == 1) {
+        answer[@"exactIconName"] = names.anyObject;
+        answer[@"sourceIvars"] = [named valueForKey:@"ivar"];
+    }
+    return answer;
+}
+
 typedef NSDictionary *(^SGCommand)(NSDictionary *p);
 
 // The log number when the last command that does something began: a log wait looks from there, so
@@ -1070,6 +1146,11 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
                 });
                 return touchAt(where, 0.08);
             },
+            @"encore.inspect" : ^NSDictionary *(NSDictionary *p) {
+                NSString *label = p[@"label"] ?: @"Lyric stickers";
+                if (!label.length || label.length > 80) fail(@"encore.inspect takes a short label");
+                return onMain(^id { return encoreGlyphBesideLabel(label); });
+            },
             @"get" : ^NSDictionary *(NSDictionary *p) {
                 NSArray<NSString *> *steps = pathSteps(p);
                 return onMain(^id {
@@ -1122,7 +1203,7 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
 }
 
 static NSSet<NSString *> *readOnly(void) {
-    return [NSSet setWithArray:@[@"find", @"state", @"screenshot", @"log", @"wait", @"get", @"layers"]];
+    return [NSSet setWithArray:@[@"find", @"state", @"screenshot", @"log", @"wait", @"get", @"layers", @"encore.inspect"]];
 }
 
 BOOL SGDriverHandles(NSString *command) {
