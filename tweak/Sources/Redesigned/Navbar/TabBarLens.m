@@ -93,7 +93,12 @@ static const CGFloat kPlayStep = 1.0 / 120;
     CAGradientLayer *_glare;
     CAShapeLayer *_glareMask;
     CAShapeLayer *_perimeter;
-    CAShapeLayer *_longSpecular;
+    // A sibling ABOVE the selected artwork. The glass itself stays behind
+    // the glyphs for correct refraction, but the hairline reflection must not
+    // be occluded by the tab bar's selected-content view.
+    CALayer *_rimOverlay;
+    CAGradientLayer *_longSpecular;
+    CAShapeLayer *_specularMask;
     CAGradientLayer *_fingerHighlight;
     CGFloat _touchStartX, _touchAnchorX, _touchLastX;
     CFTimeInterval _touchDownTime;
@@ -158,11 +163,13 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _glare.startPoint = CGPointMake(0, 0);
     _glare.endPoint = CGPointMake(1, 1);
     // Match the thumb's directional highlight, not a static opaque border.
-    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.76].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.025].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.025].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.72].CGColor];
-    _glare.locations = @[@0, @0.20, @0.80, @1];
+    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.80].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.035].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.035].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.76].CGColor];
+    // The opposite highlights taper along the capsule rather than stopping
+    // at arbitrary hand-drawn horizontal segments.
+    _glare.locations = @[@0, @0.46, @0.54, @1];
     _glareMask = [CAShapeLayer layer];
     _glareMask.fillColor = nil;
     _glareMask.strokeColor = UIColor.whiteColor.CGColor;
@@ -177,25 +184,30 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _perimeter.strokeColor = [UIColor colorWithWhite:1 alpha:0.18].CGColor;
     _perimeter.lineWidth = 0.48;
     _perimeter.opacity = 0;
-    _perimeter.zPosition = 2;
-    [self.layer addSublayer:_perimeter];
-    _glare.zPosition = 3;
-    [self.layer addSublayer:_glare];
-    // Long, diagonal native-style arcs on top-left and bottom-right. The
-    // fine 0.85pt perimeter remains independent of these directional lines.
-    _longSpecular = [CAShapeLayer layer];
+    _rimOverlay = [CALayer layer];
+    _rimOverlay.name = @"Vitrine.LegacyLensAboveTabsRim";
+    _rimOverlay.zPosition = 100;
+    _rimOverlay.masksToBounds = NO;
+    [_rimOverlay addSublayer:_perimeter];
+    [_rimOverlay addSublayer:_glare];
+    // A second, narrower directional gradient on the EXACT SAME outline.
+    // Unlike the old Bezier strokes, it cannot diverge from the glass shape.
+    _longSpecular = [CAGradientLayer layer];
     _longSpecular.name = @"Vitrine.LegacyLensLongSpecular";
-    _longSpecular.fillColor = nil;
-    _longSpecular.strokeColor = [UIColor colorWithWhite:1 alpha:0.78].CGColor;
-    _longSpecular.lineWidth = 0.62;
-    _longSpecular.lineCap = kCALineCapRound;
-    _longSpecular.shadowColor = UIColor.whiteColor.CGColor;
-    _longSpecular.shadowRadius = 0;
-    _longSpecular.shadowOpacity = 0;
-    _longSpecular.shadowOffset = CGSizeZero;
+    _longSpecular.startPoint = CGPointMake(0, 0);
+    _longSpecular.endPoint = CGPointMake(1, 1);
+    _longSpecular.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.30].CGColor,
+                             (id)[UIColor colorWithWhite:1 alpha:0.008].CGColor,
+                             (id)[UIColor colorWithWhite:1 alpha:0.008].CGColor,
+                             (id)[UIColor colorWithWhite:1 alpha:0.28].CGColor];
+    _longSpecular.locations = @[@0, @0.42, @0.58, @1];
+    _specularMask = [CAShapeLayer layer];
+    _specularMask.fillColor = nil;
+    _specularMask.strokeColor = UIColor.whiteColor.CGColor;
+    _specularMask.lineWidth = 0.40;
+    _longSpecular.mask = _specularMask;
     _longSpecular.opacity = 0;
-    _longSpecular.zPosition = 4;
-    [self.layer addSublayer:_longSpecular];
+    [_rimOverlay addSublayer:_longSpecular];
     // The press feedback follows the touch's highlighted state, as in
     // Telegram's GlassBarButtonComponent. Unlike its non-glass button scale,
     // this is a local luminance cue: the tab bar already animates its scale.
@@ -369,6 +381,11 @@ static BOOL bubbles(void);
 
 - (void)didMoveToSuperview {
     [super didMoveToSuperview];
+    // Keep the *reflection* above the UIKit icon groups. Its geometry is
+    // synced separately, but its mask uses the exact same local lens path.
+    [_rimOverlay removeFromSuperlayer];
+    if (self.superview) [self.superview.layer addSublayer:_rimOverlay];
+    [self applyPose];
     // The overlay is a sibling of this lens. It must not survive a bar being
     // removed or moved to another host during a Spotify navigation rebuild.
     if (!self.superview) {
@@ -394,40 +411,20 @@ static BOOL bubbles(void);
     [CATransaction setDisableActions:YES];
     _glare.frame = bounds;
     _glareMask.frame = _glare.bounds;
-    // The selected-bar mask is above this view and cuts exactly at the
-    // lens outline. An edge-centred stroke loses its inner antialiasing to
-    // that mask and is visible mainly beyond the platter. Put the rim just
-    // INSIDE the lens so its light is visible over the full capsule.
-    CGRect pathBounds = CGRectInset(_glare.bounds, 1.8, 1.8);
-    CGPathRef outline = [UIBezierPath bezierPathWithRoundedRect:pathBounds
-                                           cornerRadius:CGRectGetHeight(pathBounds) / 2].CGPath;
+    // One shared optical outline: all three components sit at the same
+    // radius as the glass's capsule, inset only half a pixel to retain the
+    // antialiasing inside the edge. There is NO independent white stripe.
+    CGRect pathBounds = CGRectInset(bounds, 0.50, 0.50);
+    UIBezierPath *opticalPath = [UIBezierPath bezierPathWithRoundedRect:pathBounds
+                                            cornerRadius:CGRectGetHeight(pathBounds) / 2];
+    CGPathRef outline = opticalPath.CGPath;
+    _rimOverlay.bounds = bounds;
     _glareMask.path = outline;
     _perimeter.frame = bounds;
     _perimeter.path = outline;
-    CGRect arc = CGRectInset(bounds, 2.3, 2.3);
-    UIBezierPath *specular = [UIBezierPath bezierPath];
-    // Follow most of each diagonal shoulder, then continue far onto the
-    // horizontal segment (unlike Stage 90's tiny quarter-corner marks).
-    // The opposite rails stay faint: these are still two directional glints,
-    // not a bright uninterrupted top/bottom outline.
-    CGFloat x0 = CGRectGetMinX(arc), y0 = CGRectGetMinY(arc);
-    CGFloat x1 = CGRectGetMaxX(arc), y1 = CGRectGetMaxY(arc);
-    CGFloat cr = MAX(1, CGRectGetHeight(arc) / 2);
-    CGFloat straight = MAX(0, CGRectGetWidth(arc) - 2 * cr);
-    CGFloat run = straight * 0.68;
-    CGFloat cy = (y0 + y1) / 2;
-    [specular moveToPoint:CGPointMake(x0 + 0.06 * cr, cy + 0.22 * cr)];
-    [specular addCurveToPoint:CGPointMake(x0 + cr, y0)
-               controlPoint1:CGPointMake(x0 + 0.13 * cr, y0 + 0.14 * cr)
-               controlPoint2:CGPointMake(x0 + 0.52 * cr, y0)];
-    [specular addLineToPoint:CGPointMake(x0 + cr + run, y0)];
-    [specular moveToPoint:CGPointMake(x1 - cr - run, y1)];
-    [specular addLineToPoint:CGPointMake(x1 - cr, y1)];
-    [specular addCurveToPoint:CGPointMake(x1 - 0.06 * cr, cy - 0.22 * cr)
-               controlPoint1:CGPointMake(x1 - 0.52 * cr, y1)
-               controlPoint2:CGPointMake(x1 - 0.13 * cr, y1 - 0.14 * cr)];
     _longSpecular.frame = bounds;
-    _longSpecular.path = specular.CGPath;
+    _specularMask.frame = bounds;
+    _specularMask.path = outline;
     _fingerHighlight.frame = bounds;
     if (_platterEdgePane) {
         if (!CGRectEqualToRect(_platterEdgePane.bounds, bounds)) _platterEdgePane.bounds = bounds;
@@ -442,8 +439,21 @@ static BOOL bubbles(void);
     [CATransaction commit];
 }
 
+- (void)setHidden:(BOOL)hidden {
+    [super setHidden:hidden];
+    _rimOverlay.hidden = hidden;
+}
+
+- (void)setAlpha:(CGFloat)alpha {
+    [super setAlpha:alpha];
+    // This rim is a host sibling, so UIView alpha does not propagate to it.
+    // Mirror invisibility during navbar compacting and page transitions.
+    _rimOverlay.opacity = alpha;
+}
+
 - (void)didMoveToWindow {
     [super didMoveToWindow];
+    if (self.window) [self applyPose];
     if (!self.window) {
         [self stop];
         [self dropPlayback];
@@ -907,18 +917,29 @@ static BOOL bubbles(void) {
     *sx = width * (1 + d) / baseWidth;
     *sy = held * (1 - kLensVolume * d);
     CGPoint pose = CGPointMake((st.L + st.R) / 2, CGRectGetMidY(_restFrame));
-    // The Stage 91 pose used to *push* the lens to the full 8pt overhang
-    // on touch-down, even when the finger had not moved. That makes a static
-    // hold look as though the glass has jumped out of the capsule. Keep the
-    // spring's natural center and only CAP its outer edge at 8pt; an outward
-    // drag may still reach that limit through rubber().
+    // A slight native-style outward lean belongs to the first/last tab as
+    // soon as it is raised; a static hold should only reach 3pt, not the
+    // full 8pt drag limit. The spring drives the lean, not a hard jump.
     if (st.lift > 0.001 && _minCenter > 0 && _maxCenter > _minCenter &&
         _normalContent && self.superview) {
         CGRect platter = [_normalContent convertRect:_normalContent.bounds toView:self.superview];
         CGFloat half = baseWidth * *sx / 2;
         CGFloat minX = CGRectGetMinX(platter) - kLensOverscroll + half;
         CGFloat maxX = CGRectGetMaxX(platter) + kLensOverscroll - half;
-        if (maxX >= minX) pose.x = MAX(minX, MIN(maxX, pose.x));
+        if (maxX >= minX) {
+            CGFloat rise = MIN(1, MAX(0, st.lift));
+            CGFloat nearLeft = MIN(1, MAX(0, (_minCenter + 14 - pose.x) / 14));
+            CGFloat nearRight = MIN(1, MAX(0, (pose.x - (_maxCenter - 14)) / 14));
+            // Move outward only if the natural spring hasn't already reached
+            // the 3pt shoulder; never pull an outward drag back in.
+            CGFloat gentleLeft = minX + (kLensOverscroll - 3.0);
+            CGFloat gentleRight = maxX - (kLensOverscroll - 3.0);
+            if (nearLeft > 0 && gentleLeft < pose.x)
+                pose.x += (gentleLeft - pose.x) * rise * nearLeft;
+            else if (nearRight > 0 && gentleRight > pose.x)
+                pose.x += (gentleRight - pose.x) * rise * nearRight;
+            pose.x = MAX(minX, MIN(maxX, pose.x));
+        }
     }
     *center = pose;
 }
@@ -943,6 +964,13 @@ static BOOL bubbles(void) {
         self.center = center;
         self.transform = CGAffineTransformMakeScale(sx, sy);
     }];
+    // Same pose as the glass, but over UIKit's selected-content masks.
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _rimOverlay.position = center;
+    _rimOverlay.transform = CATransform3DMakeScale(sx, sy, 1);
+    _rimOverlay.hidden = self.hidden;
+    [CATransaction commit];
     // The glare follows the signed motion of the glass, just like the thumb's
     // moving light, rather than staying a fixed white outline on the screen.
     CGFloat motion = tanh((_vL + _vR) / 1800);
@@ -1103,6 +1131,9 @@ static BOOL bubbles(void) {
     [self.layer removeAnimationForKey:@"lens.x"];
     [self.layer removeAnimationForKey:@"lens.sx"];
     [self.layer removeAnimationForKey:@"lens.sy"];
+    [_rimOverlay removeAnimationForKey:@"lens.x"];
+    [_rimOverlay removeAnimationForKey:@"lens.sx"];
+    [_rimOverlay removeAnimationForKey:@"lens.sy"];
     [_platterEdgePane.layer removeAnimationForKey:@"lens.x"];
     [_platterEdgePane.layer removeAnimationForKey:@"lens.sx"];
     [_platterEdgePane.layer removeAnimationForKey:@"lens.sy"];
@@ -1222,6 +1253,19 @@ static BOOL bubbles(void) {
     add(@"lens.x", @"position.x", xs);
     add(@"lens.sx", @"transform.scale.x", sxs);
     add(@"lens.sy", @"transform.scale.y", sys);
+    // A second, identically clocked transform for the rim above all tabs;
+    // otherwise the light lags behind the render-server glass after release.
+    if (_rimOverlay.superlayer) {
+        for (NSString *key in @[@"lens.x", @"lens.sx", @"lens.sy"]) {
+            CAKeyframeAnimation *a = [CAKeyframeAnimation animationWithKeyPath:
+                [key isEqualToString:@"lens.x"] ? @"position.x" :
+                ([key isEqualToString:@"lens.sx"] ? @"transform.scale.x" : @"transform.scale.y")];
+            a.values = [key isEqualToString:@"lens.x"] ? xs : ([key isEqualToString:@"lens.sx"] ? sxs : sys);
+            a.duration = duration;
+            a.calculationMode = kCAAnimationLinear;
+            [_rimOverlay addAnimation:a forKey:key];
+        }
+    }
     if (_platterEdgePane && _platterEdgePane.superview == self.superview) {
         for (NSString *key in @[@"lens.x", @"lens.sx", @"lens.sy"]) {
             NSString *path = [key isEqualToString:@"lens.x"] ? @"position.x" :
