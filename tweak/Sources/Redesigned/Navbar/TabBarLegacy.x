@@ -48,7 +48,7 @@ static const CGFloat kNavItemWidth = 90;    // fixed, so the capsule hugs its it
 static const CGFloat kSelPillInset = 4;     // a slightly taller bubble with more tab title headroom
 static const CGFloat kSelPillXInset = 4;  // wider resting underlay, still with even side gaps
 static const CGFloat kLensOverhang = 4;     // the held bubble stands a little taller above and below the capsule
-static const CGFloat kBarPressScale = 1.057; // enlarge the visible backdrop, never the tab glyphs
+static const CGFloat kBarPressScale = 1.057; // uniformly enlarge the platter, glyphs, accent and raised lens
 static __weak UIView *sg_stockBar;
 // See "compact". The circles' frames in the host's coordinates, the trailing one empty when no tab is set apart.
 static BOOL sg_minimized;
@@ -951,40 +951,45 @@ static void setCreateOpen(SGRLegacyTabBar *bar, BOOL open) {
 
 #pragma mark - the system bar
 
-// Scale only the two *glass surfaces*. A sublayerTransform on host scales
-// the UITabBarButton glyphs, titles and accent mirror as well, which makes
-// the held lens appear to shrink its icons rather than its platter.
+// Scale one composition, not two independently animated backdrops. The host
+// contains the platter, original buttons, green artwork, and both lens panes.
+// Scaling just the dark capsule (Stage 31) let the lifted lens miss its left
+// edge, kept the glyphs at 1x and could reset midway through a drag when the
+// glass was laid out again. sublayerTransform preserves UIKit's touch frames.
 static void setBarPressed(SGRLegacyTabBar *bar, BOOL pressed) {
     UIView *host = bar.stockBar ? objc_getAssociatedObject(bar.stockBar, &kHostKey) : nil;
     if (!host) return;
     pressed &= SGUseLegacyGlass() && !SGRReduceMotion() && !sg_minimized;
-    // Clear any inherited transform from older layout passes before changing
-    // glass-only targets; host geometry and UIKit hit areas stay untouched.
-    if (!CATransform3DIsIdentity(host.layer.sublayerTransform)) {
-        [host.layer removeAnimationForKey:@"vitrine.legacyTabPress"];
-        host.layer.sublayerTransform = CATransform3DIdentity;
-    }
-    // Apple gives the dark platter a small *positive* lift on hold; the
-    // previous 0.978Y squeezed it just as the glass bubble expanded.
-    CATransform3D target = pressed ? CATransform3DMakeScale(kBarPressScale, 1.055, 1) : CATransform3DIdentity;
+    // The old Stage 31 transform is removed from the two surfaces: do not
+    // enlarge them a second time under the common composition transform.
     const void *keys[] = { &kNavGlassKey, &kNavTintKey };
     for (NSUInteger i = 0; i < 2; i++) {
-        const void *key = keys[i];
-        UIView *surface = objc_getAssociatedObject(host, key);
-        if (!surface || CATransform3DEqualToTransform(surface.layer.transform, target)) continue;
-        CALayer *shown = surface.layer.presentationLayer;
-        CATransform3D from = shown ? shown.transform : surface.layer.transform;
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        surface.layer.transform = target;
-        [CATransaction commit];
-        CABasicAnimation *anim = [CABasicAnimation animationWithKeyPath:@"transform"];
-        anim.fromValue = [NSValue valueWithCATransform3D:from];
-        anim.toValue = [NSValue valueWithCATransform3D:target];
-        anim.duration = pressed ? 0.31 : 0.48;
-        anim.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.18 :0.0 :0.22 :1.0];
-        [surface.layer addAnimation:anim forKey:@"vitrine.legacyTabPress"];
+        UIView *surface = objc_getAssociatedObject(host, keys[i]);
+        if (!surface) continue;
+        [surface.layer removeAnimationForKey:@"vitrine.legacyTabPress"];
+        if (!CATransform3DIsIdentity(surface.layer.transform)) {
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            surface.layer.transform = CATransform3DIdentity;
+            [CATransaction commit];
+        }
     }
+    CATransform3D target = pressed
+        ? CATransform3DMakeScale(kBarPressScale, 1.055, 1)
+        : CATransform3DIdentity;
+    if (CATransform3DEqualToTransform(host.layer.sublayerTransform, target)) return;
+    CALayer *shown = host.layer.presentationLayer;
+    CATransform3D from = shown ? shown.sublayerTransform : host.layer.sublayerTransform;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    host.layer.sublayerTransform = target;
+    [CATransaction commit];
+    CABasicAnimation *anim = [CABasicAnimation animationWithKeyPath:@"sublayerTransform"];
+    anim.fromValue = [NSValue valueWithCATransform3D:from];
+    anim.toValue = [NSValue valueWithCATransform3D:target];
+    anim.duration = pressed ? 0.31 : 0.48;
+    anim.timingFunction = [CAMediaTimingFunction functionWithControlPoints:0.18 :0.0 :0.22 :1.0];
+    [host.layer addAnimation:anim forKey:@"vitrine.legacyTabPress"];
 }
 
 // Measured iOS 26: four 100.333pt visual slots, overlapping by 16.444pt,
