@@ -130,7 +130,11 @@ UIView *SGRPlayerEncoreGlyphIn(SGRGlyphButton *button, NSString *name) {
     button.glyph.hidden = YES;
     if (encore.superview != button) [button addSubview:encore];
     encore.center = CGPointMake(CGRectGetMidX(button.bounds), CGRectGetMidY(button.bounds));
-    encore.foregroundColor = button.glyph.tintColor ?: SGRPrimary();
+    // Spotify's inactive quote is white in the Lyric stickers control (Stage 44).
+    // Do not inherit the grey Apple Lyrics state: it applies only when the
+    // Spotify icons preference is off. Other Encore buttons keep their ink.
+    BOOL lyricsQuote = [name isEqualToString:@"quote"] || [name isEqualToString:@"quoteActive"];
+    encore.foregroundColor = lyricsQuote ? SGRPrimary() : (button.glyph.tintColor ?: SGRPrimary());
     return encore;
 }
 
