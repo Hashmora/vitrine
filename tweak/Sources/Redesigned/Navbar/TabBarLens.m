@@ -401,7 +401,6 @@ static BOOL bubbles(void);
     _perimeter.frame = bounds;
     _perimeter.path = outline;
     CGRect arc = CGRectInset(bounds, 0.6, 0.6);
-    CGFloat w = CGRectGetWidth(arc), h = CGRectGetHeight(arc);
     UIBezierPath *specular = [UIBezierPath bezierPath];
     // The system's specular is a thin, crisp curve on opposite diagonal
     // shoulders, NOT a horizontal top rail and bottom rail. Draw only the
