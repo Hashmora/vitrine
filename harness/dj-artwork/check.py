@@ -24,6 +24,10 @@ assert 'sgScanArt(holder, 0, &nativeArtwork, &placeholder)' in identity_missing
 assert 'foundBitmapSlot && !nativeArtwork && placeholder' not in identity_missing
 assert 'now - firstSeen.doubleValue >= 0.8' in identity_missing
 assert 'SGDJ_TRACE(@"artwork.placeholder"' in identity_missing
+for look in ('Native', 'Redesigned'):
+    art = (root/f'tweak/Sources/{look}/Home/DJArtwork.x').read_text()
+    assert 'SGDJ_TRACE(@"artwork.draw"' in art
+    assert 'SGDJ_TRACE(@"artwork.cover"' in art
 print('DJ blank-placeholder fallback: PASS (requires device verification)')
 
 assert 'SGDJArtworkCardCache' in identity
