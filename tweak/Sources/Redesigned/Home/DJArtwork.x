@@ -12,6 +12,8 @@
 static UIImage *SGRDJCover;
 static NSHashTable<UIView *> *SGRDJHolders;
 static NSInteger const SGRDJCoverTag = 0x444a43;
+static char SGRDJOverlayKey;
+static char SGRDJRegisteredHolderKey;
 #if SG_DRIVER
 static char SGRDJDrawProbeKey;
 #endif
@@ -45,7 +47,7 @@ static void SGRDJLoad(void) {
 }
 static void SGRDJDraw(UIView *holder) {
     UIView *row = SGDJArtworkEnclosingCard(holder);
-    UIImageView *overlay = (UIImageView *)[holder viewWithTag:SGRDJCoverTag];
+    UIImageView *overlay = objc_getAssociatedObject(holder, &SGRDJOverlayKey);
     BOOL confirmed = row && SGDJArtworkIsConfirmedCard(row);
     BOOL retry = NO;
     BOOL placeholderFallback = !confirmed && row && SGDJArtworkNeedsPlaceholder(row, holder, &retry);
@@ -70,11 +72,16 @@ static void SGRDJDraw(UIView *holder) {
 #endif
     if (!confirmed && !placeholderFallback) {
         [overlay removeFromSuperview];
+        // A reused Spotify cell must not retain the previous DJ overlay.
+        if (overlay) objc_setAssociatedObject(holder, &SGRDJOverlayKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         SGDJArtworkTracePaint(holder, overlay, row, NO, !!SGRDJCover, YES);
         return;
     }
     if (!SGRDJHolders) SGRDJHolders = [NSHashTable weakObjectsHashTable];
-    [SGRDJHolders addObject:holder];
+    if (!objc_getAssociatedObject(holder, &SGRDJRegisteredHolderKey)) {
+        [SGRDJHolders addObject:holder];
+        objc_setAssociatedObject(holder, &SGRDJRegisteredHolderKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     if (!SGRDJCover) SGRDJCover = [UIImage imageWithContentsOfFile:SGRDJCoverPath()];
     if (!SGRDJCover) {
         SGRDJLoad();
@@ -90,10 +97,13 @@ static void SGRDJDraw(UIView *holder) {
         overlay.contentMode = UIViewContentModeScaleAspectFill;
         overlay.clipsToBounds = YES;
         overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [holder addSubview:overlay];
+        objc_setAssociatedObject(holder, &SGRDJOverlayKey, overlay, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    overlay.frame = holder.bounds;
-    overlay.image = SGRDJCover;
+    // Avoid triggering repeated UIKit layout/compositing for unchanged artwork.
+    // The same overlay object is reused while its Spotify holder remains a DJ card.
+    if (overlay.superview != holder) [holder addSubview:overlay];
+    if (!CGRectEqualToRect(overlay.frame, holder.bounds)) overlay.frame = holder.bounds;
+    if (overlay.image != SGRDJCover) overlay.image = SGRDJCover;
     // Spotify's Home image holder starts square and often gets its radius only after a tap.
     // Match Home's cover/tile radius on the very first draw instead of inheriting that zero.
     NSString *kind = row.accessibilityIdentifier;
@@ -101,9 +111,11 @@ static void SGRDJDraw(UIView *holder) {
     if ([kind isEqualToString:@"Components.UI.HomeCard"]) radius = SGRRadiusCover;
     else if ([kind isEqualToString:@"Shortcut.Card.Home"])
         radius = SGRHomeLook() ? SGRHomeTileRadius : SGRRadiusCover;
-    overlay.layer.cornerRadius = MAX(radius, holder.layer.cornerRadius);
-    overlay.layer.cornerCurve = kCACornerCurveContinuous;
-    [holder bringSubviewToFront:overlay];
+    radius = MAX(radius, holder.layer.cornerRadius);
+    if (overlay.layer.cornerRadius != radius) overlay.layer.cornerRadius = radius;
+    if (![overlay.layer.cornerCurve isEqualToString:kCACornerCurveContinuous])
+        overlay.layer.cornerCurve = kCACornerCurveContinuous;
+    if (holder.subviews.lastObject != overlay) [holder bringSubviewToFront:overlay];
     SGDJArtworkTracePaint(holder, overlay, row, YES, YES, YES);
 }
 %hook SGRDJCardImage
