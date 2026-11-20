@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Stage 83 | Native 60Hz evidence for interrupted NPV and Legacy lens (after Stage 82).
+"""Stage 95 | Native early-NPV mask/sheet visibility, plus Legacy lens trace (Stage 94+).
 
 One standalone, Python-standard-library-only file. NO patch, build, uninstall,
-login, GUI clicks, or user prompts. The SG_DRIVER on port 8087 must include Stage 83 native nav.trace.* commands,
+login, GUI clicks, or user prompts. The SG_DRIVER on port 8087 must include Stage 95 PlayerMorph.surface plus Stage 83 nav.trace.* commands,
 and Stage 77's navbar.mini-state, navbar.minimize and swipe.reverse.
 
 Scenarios:
@@ -223,7 +223,7 @@ class Collector:
         self.report = {
             'status': 'INCOMPLETE', 'requested': args.scenarios, 'scenarios': {},
             'started': datetime.now().isoformat(), 'udid': args.udid, 'port': args.port,
-            'requires': 'Installed Stage 83 SG_DRIVER with native nav.trace.*',
+            'requires': 'Installed Stage 95 morph surface instrumentation with Stage 83 nav.trace.*',
             'note': 'EVIDENCE_CAPTURED means reproducible recordings, NOT confirmed bug or fix',
         }
         self.index = 0
@@ -558,6 +558,7 @@ class Collector:
              'barFollowers':f.get('barTransition',{}).get('followerCount'),
              'morphActive':f.get('playerMorph',{}).get('active'),
              'morphProgress':f.get('playerMorph',{}).get('lastProgress'),
+             'morphSurface':f.get('playerMorph',{}).get('surface'),
              'lens': [{'screen':v.get('screen'),'touching':v.get('touching'),
                        'refracting':v.get('refracting')}
                       for v in f.get('objects',[])
@@ -740,13 +741,13 @@ class Collector:
                 via = [pt[0], max(135.0, pt[1]-145.0)]
                 args = {'from': loc(pt), 'via': loc(via), 'to': loc(pt),
                         'up': str(up), 'back': str(back), 'hold': str(hold)}
-                samples = ([.15,.55,1.05,1.68,2.55,3.35,4.10,4.52,4.95,5.50]
-                           if hold else [.12,.39,.75,.95,1.22,1.65,2.25])
+                samples = ([.10,.32,.74,1.78,2.85,4.32,5.10]
+                           if hold else [.10,.28,.59,.91,1.26,1.75])
                 event = self.record(tag, {'cmd':'swipe.reverse','args':args,
                                          'probe_mini_after':True,
                                          # Native trace replaces serialized HTTP live_mini requests.
                                          'live_mini_at_s':None,
-                                         'video_marks_ms':[250,750,1300,1900,2900,3800,4500,5000]},
+                                         'video_marks_ms':[100,200,350,500,750,1050,1450,2000,3200,4300,5000]},
                                     samples, up+back+hold, after_s=.45)
                 actual = event['response'].get('via')
                 if not (isinstance(actual, list) and len(actual)==2 and
@@ -758,6 +759,36 @@ class Collector:
                                     x['capture_end_s'] <= up+back+hold-.10]
                     if not held_samples:
                         raise EvidenceError('no verified screenshot during return-and-hold interval')
+                # Correlate actual player-mask and sheet opacity with the
+                # finger's progress during the beginning of the open. This
+                # makes a fully invisible player measurable rather than an
+                # inference from one late screenshot.
+                frames=json.loads((self.root/tag/'native'/'frames.json').read_text())
+                series=[]
+                for frame in frames:
+                    morph=frame.get('playerMorph') or {}
+                    surface=morph.get('surface') or {}
+                    if not morph.get('active') or not surface:
+                        continue
+                    series.append({'time_s':frame.get('t'),
+                        'progress':morph.get('lastProgress'),
+                        'interactive':morph.get('currentlyInteractive'),
+                        'held':frame.get('held'), 'minimized':frame.get('minimized'),
+                        'barTransition':frame.get('barTransition'),
+                        'surface':surface})
+                dump(self.root/tag/'early-morph-visibility.json', series)
+                early=[sample for sample in series
+                       if isinstance(sample.get('progress'),(float,int))
+                       and 0.02 < sample['progress'] < 0.30]
+                summary={'totalMorphFrames':len(series), 'earlyOpenFrames':len(early),
+                    'maskNearlyInvisible':sum((item['surface'].get('maskOpacity') or 0)<0.08
+                                               for item in early),
+                    'sheetNearlyInvisible':sum((item['surface'].get('sheetOpacity') or 0)<0.08
+                                               for item in early),
+                    'explanation':'Counts are observational; they do not assert an animation is fixed.'}
+                dump(self.root/tag/'early-visibility-summary.json',summary)
+                if len(series)<8:
+                    raise EvidenceError('native morph surface missing during touch')
                 self.snapshot(tag+'/after', deep=True)
                 time.sleep(.9)
                 self.snapshot(tag+'/settled', deep=True)
