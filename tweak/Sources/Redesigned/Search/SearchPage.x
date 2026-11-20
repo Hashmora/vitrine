@@ -25,6 +25,8 @@
 static const NSUInteger kMissesLogged = 60;
 
 static char kTitleKey, kFaceGlassKey, kFollowerKey, kScannablesGlassKey;
+static char kScanCloseGlassKey, kScanPhotosGlassKey;
+static char kScanCloseDimKey, kScanPhotosDimKey;
 
 static __weak UICollectionView *sg_list;
 static __weak UIStackView *sg_row;
@@ -207,7 +209,9 @@ static void layoutHeader(UIStackView *row) {
     // A transform preserves hit testing and survives the next SwiftUI layout.
     if (camera) {
         if (codesEnabled && face) {
-            CGFloat x = CGRectGetMinX(face.frame) - SGRGrid - camera.bounds.size.width;
+            // Both glass circles are 44pt wide. The previous 8pt slot gap
+            // left their glass rims nearly touching (Stage 80 tree).
+            CGFloat x = CGRectGetMinX(face.frame) - 20 - camera.bounds.size.width;
             // The arrangeable's own x remains stable before the transform.
             // A different transform from a previous pass is not included in center.
             CGFloat baseX = camera.center.x - camera.bounds.size.width / 2;
@@ -258,25 +262,51 @@ static void layoutHeader(UIStackView *row) {
 }
 %end
 
+// The original Spotify Codes scanner is its own controller, not a native
+// UINavigationBar or one of our modal sheets. Keep both native actions and
+// glyphs, adding only the glass behind its existing controls on Legacy Glass.
+static void dressScannables(UIViewController *controller) {
+    UIView *root = controller.viewIfLoaded;
+    if (!root.window || !SGBelowiOS26()) return;
+    SGForEachView(root, ^(UIView *view) {
+        NSString *identifier = view.accessibilityIdentifier;
+        if ([identifier isEqualToString:@"scannablesScanningViewCloseButton"] &&
+            view.bounds.size.width > 40 && view.bounds.size.height > 40) {
+            SGRUnclipUpTo(view, ^BOOL(UIView *v) { return v == root; });
+            SGRDarkenGlass(SGRGlassInside(view, &kScanCloseGlassKey, 44),
+                          &kScanCloseDimKey, 22, SGRBarDim);
+        } else if ([identifier isEqualToString:@"Components.UI.TertiaryButton"] &&
+                   [view.accessibilityLabel isEqualToString:@"Select from photos"] &&
+                   view.bounds.size.width > 60 && view.bounds.size.height >= 30) {
+            // Unlike a 44pt round Back, this is Spotify's 34pt-wide label pill.
+            UIView *glass = SGRGlassCapsuleInside(view, &kScanPhotosGlassKey,
+                                                  CGSizeMake(view.bounds.size.width, view.bounds.size.height), NO);
+            SGRDarkenGlass(glass, &kScanPhotosDimKey, view.bounds.size.height / 2, SGRBarDim);
+        }
+    });
+}
+
 %ctor {
     if (!SGRedesignedUI()) return;
     %init;
+    if (SGBelowiOS26()) {
+        SGRPassSwiftController(@"Scannables_ScannablesImpl", @"ScannablesScanViewController", ^(UIViewController *c) { dressScannables(c); });
+    }
     SGRequireClasses(@[
         @"_TtC21Browse_BrowsePageImpl24BrowsePageViewController",
         @"_TtC29ListeningActivity_ElementsKit21AdaptiveFaceContainer",
     ]);
 }
 
-// The Search page did not previously have settings of its own. Keep Spotify's
-// original scannables navigation intact; the sheet it opens is a later task.
-UIViewController *SGRSearchSettingsPage(void) {
+// One switch does not warrant its own navigation page. Exposed as a row on
+// the redesigned settings root, where it takes effect on the next Search layout.
+SGModRow *SGRSearchCodesRow(void) {
     SGModRow *codes = SGOptionRow(@"Spotify Codes", @"Show Spotify's original camera action in Search", SGRKeySearchSpotifyCodes);
     codes.changed = ^(BOOL enabled) {
+        (void)enabled;
         SGPrefsChanged();
         [sg_row setNeedsLayout];
         [sg_row.superview setNeedsLayout];
     };
-    return [[SGModPage alloc] initWithTitle:@"Search" intro:nil sections:@[
-        SGSection(nil, @[codes]),
-    ] footer:nil];
+    return codes;
 }

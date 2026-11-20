@@ -27,4 +27,5 @@ void SGRSearchCloseGap(UICollectionView *list);
 
 // Original Browse header camera/Spotify Codes action; optional in Redesigned, off by default.
 #define SGRKeySearchSpotifyCodes @"spotifyglass.redesign.search.spotifyCodes"
-UIViewController *SGRSearchSettingsPage(void);
+@class SGModRow;
+SGModRow *SGRSearchCodesRow(void);

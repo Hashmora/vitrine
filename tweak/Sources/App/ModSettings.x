@@ -86,11 +86,11 @@ static UIViewController *modSettingsPage(void) {
     home.visible = native;
     SGModRow *redesignedHome = pageRow(@"Home", @"house.fill", UIColor.systemBrownColor, ^UIViewController *{ return SGRHomeSettingsPage(); });
     redesignedHome.visible = redesigned;
-    SGModRow *redesignedSearch = pageRow(@"Search", @"magnifyingglass", UIColor.systemBlueColor, ^UIViewController *{ return SGRSearchSettingsPage(); });
-    redesignedSearch.visible = redesigned;
+    SGModRow *redesignedCodes = SGRSearchCodesRow();
+    redesignedCodes.visible = redesigned;
     [sections addObject:SGSection(nil, @[
         redesignedHome,
-        redesignedSearch,
+        redesignedCodes,
         home,
         pageRow(@"Player", @"play.fill", UIColor.systemPinkColor, ^UIViewController *{ return SGPlayerSettingsPage(); }),
         pageRow(@"Lyrics", @"quote.bubble.fill", UIColor.systemOrangeColor, ^UIViewController *{ return SGLyricsSettingsPage(); }),
