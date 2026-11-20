@@ -10,7 +10,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from zipfile import ZipFile, ZIP_DEFLATED
@@ -21,7 +21,9 @@ UDID = 'ED66415E-FC8E-44EA-B306-33BB985B9CE8'
 def request(port, path, **kwargs):
     url = f'http://127.0.0.1:{port}/{path}'
     if kwargs:
-        url += '?' + urlencode(kwargs)
+        # SG_DRIVER parses query items with NSURLComponents, where '+' stays a
+        # literal plus. Encode spaces as %20, not application/x-www-form-urlencoded '+'.
+        url += '?' + urlencode(kwargs, quote_via=quote)
     with urlopen(Request(url, headers={'X-Phone-Driver': '1'}), timeout=20) as resp:
         data = resp.read().decode('utf-8', 'replace')
     return data if path == 'tree' else json.loads(data)
@@ -55,6 +57,9 @@ def save_json(path, value):
 
 
 def self_test():
+    # Regression: /encore.inspect?label=Lyric+stickers silently matched zero
+    # views even when the label was visible (Stage 42 evidence, 2026-11-20).
+    assert urlencode({'label': 'Lyric stickers'}, quote_via=quote) == 'label=Lyric%20stickers'
     good = {'ok': True, 'status': 'COMPLETE_ICON_NAME', 'label': 'Lyric stickers',
             'exactIconName': 'quotesSquare', 'matches': [
                 {'iconFrame': [90, 700, 24, 24],
