@@ -19,7 +19,9 @@ for look in ('Native', 'Redesigned'):
 print('DJ artwork identity gates: PASS')
 
 identity_missing = identity
-assert 'foundBitmapSlot && !nativeArtwork && placeholder' in identity_missing
+assert 'BOOL missing = candidate && (!nativeArtwork || placeholder);' in identity_missing
+assert 'sgScanArt(holder, 0, &nativeArtwork, &placeholder)' in identity_missing
+assert 'foundBitmapSlot && !nativeArtwork && placeholder' not in identity_missing
 assert 'now - firstSeen.doubleValue >= 0.8' in identity_missing
 assert 'SGDJ_TRACE(@"artwork.placeholder"' in identity_missing
 print('DJ blank-placeholder fallback: PASS (requires device verification)')
