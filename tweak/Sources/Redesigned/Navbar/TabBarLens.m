@@ -208,9 +208,10 @@ static BOOL bubbles(void);
         _glyphEdgeMask = [CAGradientLayer layer];
         _glyphEdgeMask.startPoint = CGPointMake(0, 0.5);
         _glyphEdgeMask.endPoint = CGPointMake(1, 0.5);
-        // Confine reflected glyphs to the actual boundary. A broad 35%
-        // crescent showed the distorted icon *beside* the intact green icon.
-        _glyphEdgeMask.locations = @[@0, @0.07, @0.17, @0.26, @0.74, @0.83, @0.93, @1];
+        // Replace the source pixels at the boundary with the actual backdrop
+        // sample, fading to a clear aperture before reaching the glyph's
+        // central strokes. A faint outer sample made two green outlines.
+        _glyphEdgeMask.locations = @[@0, @0.09, @0.19, @0.25, @0.75, @0.81, @0.91, @1];
         _glyphEdgePane.layer.mask = _glyphEdgeMask;
     }
     if (!_platterEdgePane) {
@@ -278,51 +279,15 @@ static BOOL bubbles(void);
     }
 }
 
+// Do not punch transparent slots into the ONLY sharp accent glyph.  The
+// earlier de-ghost gradient darkened a 6pt strip of that very glyph to 8%
+// opacity; the black "seam" was this mask, not an Apple refraction edge.
+// The opaque portions of the edge-only backdrop now replace, rather than
+// erase, those pixels; its central aperture leaves the sharp glyph intact.
 - (void)updateGlyphSourceMasksAt:(CGPoint)center sx:(CGFloat)sx {
-    if (!_tintOverlay || !self.superview || !_glassOn || !_glyphEdgePane || !_glyphEdgePane.alpha) {
-        [self clearGlyphSourceMasks];
-        return;
-    }
-    CGFloat half = self.bounds.size.width * sx * 0.5;
-    CGFloat edges[2] = { center.x - half, center.x + half };
-    for (UIView *view in _tintOverlay.subviews) {
-        if (![view isKindOfClass:UIImageView.class] || view.hidden || view.alpha < 0.01) continue;
-        CGRect rect = [view convertRect:view.bounds toView:self.superview];
-        CGFloat width = CGRectGetWidth(rect);
-        if (width < 1) continue;
-        CGFloat x = CGRectGetMidX(rect);
-        CGFloat edge = fabs(x - edges[0]) < fabs(x - edges[1]) ? edges[0] : edges[1];
-        CAGradientLayer *mask = objc_getAssociatedObject(view, &kLensGlyphDeghostKey);
-        if (fabs(edge - x) >= width * 0.5 + 8) {
-            if (mask && view.layer.mask == mask) view.layer.mask = nil;
-            continue;
-        }
-        if (!mask) {
-            mask = [CAGradientLayer layer];
-            mask.startPoint = CGPointMake(0, 0.5);
-            mask.endPoint = CGPointMake(1, 0.5);
-            mask.colors = @[(id)UIColor.whiteColor.CGColor,
-                            (id)UIColor.whiteColor.CGColor,
-                            (id)[UIColor colorWithWhite:1 alpha:0.08].CGColor,
-                            (id)UIColor.whiteColor.CGColor,
-                            (id)UIColor.whiteColor.CGColor];
-            objc_setAssociatedObject(view, &kLensGlyphDeghostKey, mask, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-        // Drop direct-pixel alpha only within ~6pt of the refracting edge.
-        // Clamp to the glyph's bounds; all five stops must be sorted.
-        CGFloat unit = (edge - CGRectGetMinX(rect)) / width;
-        CGFloat band = 6.0 / width;
-        CGFloat b = MAX(0, MIN(1, unit - band * 0.45));
-        CGFloat c = MAX(b, MIN(1, unit));
-        CGFloat d = MAX(c, MIN(1, unit + band));
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        mask.frame = view.bounds;
-        mask.locations = @[@0, @(b), @(c), @(d), @1];
-        // At a fully outside edge the mask becomes a no-op automatically.
-        if (view.layer.mask != mask) view.layer.mask = mask;
-        [CATransaction commit];
-    }
+    (void)center;
+    (void)sx;
+    [self clearGlyphSourceMasks];
 }
 
 - (void)updateGlyphEdgeMaskLeft:(CGFloat)left right:(CGFloat)right {
@@ -332,12 +297,12 @@ static BOOL bubbles(void);
     _glyphEdgeMask.frame = _glyphEdgePane.bounds;
     NSArray *colors = @[
         (id)[UIColor colorWithWhite:1 alpha:left].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:left * 0.88].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:left * 0.16].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:left].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:left * 0.55].CGColor,
         (id)[UIColor clearColor].CGColor,
         (id)[UIColor clearColor].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:right * 0.16].CGColor,
-        (id)[UIColor colorWithWhite:1 alpha:right * 0.88].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:right * 0.55].CGColor,
+        (id)[UIColor colorWithWhite:1 alpha:right].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:right].CGColor
     ];
     _glyphEdgeMask.colors = colors;
