@@ -159,15 +159,15 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _glare.startPoint = CGPointMake(0, 0);
     _glare.endPoint = CGPointMake(1, 1);
     // Match the thumb's directional highlight, not a static opaque border.
-    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:1.00].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.075].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.075].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.88].CGColor];
-    _glare.locations = @[@0, @0.32, @0.68, @1];
+    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.76].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.025].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.025].CGColor,
+                      (id)[UIColor colorWithWhite:1 alpha:0.72].CGColor];
+    _glare.locations = @[@0, @0.20, @0.80, @1];
     _glareMask = [CAShapeLayer layer];
     _glareMask.fillColor = nil;
     _glareMask.strokeColor = UIColor.whiteColor.CGColor;
-    _glareMask.lineWidth = 1.12;
+    _glareMask.lineWidth = 0.58;
     _glare.mask = _glareMask;
     _glare.opacity = 0;
     // Apple has a fine continuous edge PLUS a brighter directional streak.
@@ -175,8 +175,8 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _perimeter = [CAShapeLayer layer];
     _perimeter.name = @"Vitrine.LegacyLensFullPerimeter";
     _perimeter.fillColor = nil;
-    _perimeter.strokeColor = [UIColor colorWithWhite:1 alpha:0.36].CGColor;
-    _perimeter.lineWidth = 0.85;
+    _perimeter.strokeColor = [UIColor colorWithWhite:1 alpha:0.18].CGColor;
+    _perimeter.lineWidth = 0.48;
     _perimeter.opacity = 0;
     _perimeter.zPosition = 2;
     [self.layer addSublayer:_perimeter];
@@ -187,12 +187,12 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _longSpecular = [CAShapeLayer layer];
     _longSpecular.name = @"Vitrine.LegacyLensLongSpecular";
     _longSpecular.fillColor = nil;
-    _longSpecular.strokeColor = [UIColor colorWithWhite:1 alpha:0.54].CGColor;
-    _longSpecular.lineWidth = 0.84;
+    _longSpecular.strokeColor = [UIColor colorWithWhite:1 alpha:0.78].CGColor;
+    _longSpecular.lineWidth = 0.62;
     _longSpecular.lineCap = kCALineCapRound;
     _longSpecular.shadowColor = UIColor.whiteColor.CGColor;
-    _longSpecular.shadowRadius = 1.15;
-    _longSpecular.shadowOpacity = 0.22;
+    _longSpecular.shadowRadius = 0;
+    _longSpecular.shadowOpacity = 0;
     _longSpecular.shadowOffset = CGSizeZero;
     _longSpecular.opacity = 0;
     _longSpecular.zPosition = 4;
@@ -404,26 +404,20 @@ static BOOL bubbles(void);
     CGRect arc = CGRectInset(bounds, 0.6, 0.6);
     CGFloat w = CGRectGetWidth(arc), h = CGRectGetHeight(arc);
     UIBezierPath *specular = [UIBezierPath bezierPath];
-    // Concentrate the brightest speculars on opposite *rounded shoulders*.
-    // Long horizontal rails made the rim read as top/bottom stripes instead
-    // of the native upper-left / lower-right diagonal light.
+    // The system's specular is a thin, crisp curve on opposite diagonal
+    // shoulders, NOT a horizontal top rail and bottom rail. Draw only the
+    // curved portions; the very faint full perimeter is independent.
     CGFloat x0 = arc.origin.x + 0.5, y0 = arc.origin.y + 0.5;
-    CGFloat x1 = arc.origin.x + w - 0.5, y1 = arc.origin.y + h - 0.5;
+    CGFloat x1 = CGRectGetMaxX(arc) - 0.5, y1 = CGRectGetMaxY(arc) - 0.5;
     CGFloat cr = MAX(1, (y1 - y0) / 2);
-    CGFloat k = cr * 0.55228475;
-    CGFloat tail = MIN(10.0, w * 0.055);
-    [specular moveToPoint:CGPointMake(x0, y0 + h * 0.75)];
-    [specular addLineToPoint:CGPointMake(x0, y0 + cr)];
-    [specular addCurveToPoint:CGPointMake(x0 + cr, y0)
-               controlPoint1:CGPointMake(x0, y0 + cr - k)
-               controlPoint2:CGPointMake(x0 + cr - k, y0)];
-    [specular addLineToPoint:CGPointMake(x0 + cr + tail, y0)];
-    [specular moveToPoint:CGPointMake(x1 - cr - tail, y1)];
-    [specular addLineToPoint:CGPointMake(x1 - cr, y1)];
-    [specular addCurveToPoint:CGPointMake(x1, y1 - cr)
-               controlPoint1:CGPointMake(x1 - cr + k, y1)
-               controlPoint2:CGPointMake(x1, y1 - cr + k)];
-    [specular addLineToPoint:CGPointMake(x1, y0 + h * 0.25)];
+    [specular moveToPoint:CGPointMake(x0 + 0.14 * cr, y0 + 0.49 * cr)];
+    [specular addCurveToPoint:CGPointMake(x0 + 1.04 * cr, y0 + 0.01 * cr)
+               controlPoint1:CGPointMake(x0 + 0.31 * cr, y0 + 0.17 * cr)
+               controlPoint2:CGPointMake(x0 + 0.64 * cr, y0 + 0.01 * cr)];
+    [specular moveToPoint:CGPointMake(x1 - 1.04 * cr, y1 - 0.01 * cr)];
+    [specular addCurveToPoint:CGPointMake(x1 - 0.14 * cr, y1 - 0.49 * cr)
+               controlPoint1:CGPointMake(x1 - 0.64 * cr, y1 - 0.01 * cr)
+               controlPoint2:CGPointMake(x1 - 0.31 * cr, y1 - 0.17 * cr)];
     _longSpecular.frame = bounds;
     _longSpecular.path = specular.CGPath;
     _fingerHighlight.frame = bounds;
