@@ -2,13 +2,10 @@
 #import <UIKit/UIKit.h>
 BOOL SGDJArtworkIsConfirmedCard(UIView *card);
 
-// A conservative fallback for a Spotify 9.1.90 DJ tile whose native artwork
-// remains unresolved. Delay the override for 0.8 s, tolerate temporary removal
-// of Encore's placeholder without a source-image change, and remove the
-// override when Spotify supplies a new native image or reuses the cell.
-// A playlist named DJ with permanently missing art remains ambiguous without
-// its model URI, and must be checked before merging.
-// *retry requests one delayed redraw on first observation.
+// Conservative fallback for an unresolved Spotify DJ cover: never override
+// an existing native bitmap (UIImageView or layer contents), even while Encore
+// keeps PlaceholderView mounted. An artless user playlist called DJ remains
+// ambiguous until its model URI is available. *retry requests one redraw.
 BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry);
 
 // Cache the nearest Home/Recents card, invalidating it when the image holder

@@ -95,46 +95,57 @@ UIView *SGDJArtworkEnclosingCard(UIView *holder) {
     return card;
 }
 
-// This is a short-lived state of one Encore image holder, never a global
-// decision that every playlist called DJ is Spotify's DJ.
+// Only apply a missing-art fallback when Spotify has not provided a raster.
+// Accessibility titles alone cannot distinguish two playlists named "DJ".
 @interface SGDJArtworkPlaceholderState : NSObject
 @property (nonatomic, weak) UIView *card;
-@property (nonatomic, weak) UIImage *nativeImage;
 @property (nonatomic) CFAbsoluteTime firstMissing;
-@property (nonatomic) BOOL fallbackActive;
-@property (nonatomic) BOOL resolvedNativeArtwork; // never override an image that replaced the placeholder
+@property (nonatomic) BOOL resolvedNativeArtwork;
 @end
 @implementation SGDJArtworkPlaceholderState
 @end
 static char kMissingArtStateKey;
 
-// Keep the source bitmap's identity, not just the fact that UIImageView.image
-// is non-nil: Encore can hide its placeholder view while leaving the same
-// temporary bitmap in the image slot. This must not erase our overlay.
-static void sgScanArt(UIView *view, NSUInteger depth, UIImage **image, BOOL *placeholder) {
-    if (!view || depth > 4 || (*image && *placeholder)) return;
-    if ([view.accessibilityIdentifier hasPrefix:@"SG.DJArtwork"] ||
-        [view.accessibilityIdentifier hasPrefix:@"SGR.DJArtwork"]) return;
-    NSString *name = NSStringFromClass(view.class);
-    if ([name containsString:@"Placeholder"] && !view.hidden && view.alpha > 0.01)
-        *placeholder = YES;
-    if ([view isKindOfClass:UIImageView.class] && ((UIImageView *)view).image &&
-        !view.hidden && view.alpha > 0.01 && !*image) *image = ((UIImageView *)view).image;
-    for (UIView *sub in view.subviews) {
-        sgScanArt(sub, depth + 1, image, placeholder);
-        // The first native bitmap and the presence of any placeholder are all
-        // the fallback state machine needs; the remaining tree cannot alter them.
-        if (*image && *placeholder) break;
-    }
+static BOOL sgIsVitrineOverlay(UIView *view) {
+    NSString *identifier = view.accessibilityIdentifier;
+    return [identifier hasPrefix:@"SG.DJArtwork"] ||
+           [identifier hasPrefix:@"SGR.DJArtwork"];
 }
 
-// Spotify 9.1.90 presents some DJ cards with an accessible "DJ, Playlist"
-// label and no exposed model URI. For that ambiguous case, fall back only if
-// the native art was actually unresolved for 0.8 s. If Encore then removes
-// its PlaceholderView but keeps the *same* temporary UIImage, retain the
-// overlay. Drop it when a different source image arrives (or the card is
-// reused), so a user playlist's eventual cover takes precedence.
-// A playlist named DJ with permanently absent artwork remains ambiguous.
+static BOOL sgIsPlaceholder(UIView *view) {
+    return [NSStringFromClass(view.class) containsString:@"Placeholder"];
+}
+
+// The Spotify cover may be backed by UIImageView.image *or* by a layer with
+// contents (Encore and SwiftUI do not always expose a UIImageView to callers).
+// Never count our own overlay or Spotify's placeholder as native artwork.
+static BOOL sgNativeRasterLayer(CALayer *layer, NSUInteger depth) {
+    if (!layer || depth > 8) return NO;
+    id delegate = layer.delegate;
+    if ([delegate isKindOfClass:UIView.class]) {
+        UIView *view = (UIView *)delegate;
+        if (sgIsVitrineOverlay(view) || sgIsPlaceholder(view)) return NO;
+    }
+    if (layer.contents) return YES;
+    for (CALayer *child in layer.sublayers)
+        if (sgNativeRasterLayer(child, depth + 1)) return YES;
+    return NO;
+}
+static BOOL sgNativeUIImage(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8 || sgIsVitrineOverlay(view) || sgIsPlaceholder(view)) return NO;
+    if ([view isKindOfClass:UIImageView.class] && ((UIImageView *)view).image &&
+        !view.hidden && view.alpha > 0.01) return YES;
+    for (UIView *child in view.subviews)
+        if (sgNativeUIImage(child, depth + 1)) return YES;
+    return NO;
+}
+
+// A playlist named DJ is only a *candidate*. Spotify's actual native cover
+// always wins, including when it is present on the first layout pass while
+// PlaceholderView is still mounted. The old fallback assumed an initial bitmap
+// was temporary, allowing it to obscure a user's playlist indefinitely.
+// A truly artless user playlist is indistinguishable from an artless official
+// DJ in the accessible UI; such a case requires Spotify model URI provenance.
 BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
     if (retry) *retry = NO;
     if (!holder) return NO;
@@ -152,43 +163,20 @@ BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
         state.card = card;
         objc_setAssociatedObject(holder, &kMissingArtStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    UIImage *nativeImage = nil;
-    BOOL placeholder = NO;
-    sgScanArt(holder, 0, &nativeImage, &placeholder);
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    // The first placeholder is allowed to linger for a short time while Encore
-    // resolves artwork. An image arriving later is *authoritative*, even if
-    // Encore has not yet taken its PlaceholderView out of the hierarchy.
-    // Previously `placeholder == YES` kept the DJ overlay active over a real
-    // cover in a user-created playlist also named "DJ".
-    if (!state.resolvedNativeArtwork && state.firstMissing > 0 && nativeImage &&
-        nativeImage != state.nativeImage) {
+    if (state.resolvedNativeArtwork) return NO;
+    if (sgNativeUIImage(holder, 0) || sgNativeRasterLayer(holder.layer, 0)) {
+        // Native art is authoritative even if a stale PlaceholderView remains.
+        // The caller removes any previously attached Vitrine overlay.
         state.resolvedNativeArtwork = YES;
-        state.fallbackActive = NO;
         state.firstMissing = 0;
-        state.nativeImage = nil;
+        return NO;
     }
-    BOOL missing = !nativeImage || placeholder;
-    if (!state.resolvedNativeArtwork && missing && state.firstMissing <= 0) {
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (state.firstMissing <= 0) {
         state.firstMissing = now;
-        state.nativeImage = nativeImage;
         if (retry) *retry = YES;
     }
-    // PlaceholderView often disappears before its temporary bitmap is replaced.
-    // Keep the DJ image only if the *same* source image is still displayed.
-    BOOL sameTemporary = state.firstMissing > 0 && nativeImage &&
-        nativeImage == state.nativeImage;
-    if (!state.resolvedNativeArtwork && !missing && !sameTemporary) {
-        state.firstMissing = 0;
-        state.fallbackActive = NO;
-        state.nativeImage = nil;
-    }
-    if (!state.resolvedNativeArtwork && state.firstMissing > 0 &&
-        now - state.firstMissing >= 0.8 && (missing || sameTemporary))
-        state.fallbackActive = YES;
-    BOOL useFallback = !state.resolvedNativeArtwork && state.fallbackActive &&
-        (missing || sameTemporary);
-    return useFallback;
+    return now - state.firstMissing >= 0.8;
 }
 
 // Frame-scoped identity results avoid traversing the same DJ card's accessibility
