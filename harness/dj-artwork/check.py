@@ -16,9 +16,10 @@ assert 'if (playlistLabel(card.accessibilityLabel))' not in identity
 assert 'spotify:playlist:37i9dQZF1EYkqdzj48dyYq' in identity
 assert '[holder isDescendantOfView:cache.card]' in identity, 'cached parent card may be stale on cell reuse'
 assert 'state.card != card' in identity, 'fallback state must not leak to a new card'
-assert 'state.nativeImage = nativeImage;' in identity
-assert 'nativeImage == state.nativeImage' in identity
-assert 'nativeImage != state.nativeImage' in identity and 'state.resolvedNativeArtwork = YES;' in identity, 'native image resolution must permanently suppress fallback on this card'
+assert 'if (state.resolvedNativeArtwork) return NO;' in identity
+assert 'if (sgNativeUIImage(holder, 0) || sgNativeRasterLayer(holder.layer, 0)) {' in identity, 'existing Spotify artwork must outrank the title-based fallback'
+assert 'sgIsVitrineOverlay(view) || sgIsPlaceholder(view)' in identity, 'exclude synthetic DJ overlays and native placeholders'
+assert 'state.resolvedNativeArtwork = YES;' in identity
 assert 'now - state.firstMissing >= 0.8' in identity
 for look in ('Native', 'Redesigned'):
     art = (root / f'tweak/Sources/{look}/Home/DJArtwork.x').read_text()

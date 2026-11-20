@@ -1,63 +1,57 @@
 #!/usr/bin/env python3
-"""Behavioral reference tests for the 9.1.90 placeholder-continuity policy.
+"""Reference behavior for native-first DJ artwork fallback (Spotify 9.1.90).
 
-The runtime implementation remains Objective-C; check.py verifies its relevant
-conditions. The reference cases spell out the expected transition behavior.
+This models the Objective-C state transitions; on-device verification still
+needs both the real AI DJ card and a user playlist named DJ.
 """
 from dataclasses import dataclass
+
 
 @dataclass
 class Slot:
     card: object = None
-    start: float = 0.0
-    image: object = None
-    active: bool = False
-    resolved: bool = False
+    first_missing: float = 0.0
+    native_resolved: bool = False
 
-    def step(self, card, candidate, image, placeholder, at):
+    def step(self, card, candidate, at, native_image=False, layer_image=False):
         if not candidate:
-            self.__dict__.update(card=None, start=0.0, image=None, active=False, resolved=False)
+            self.card, self.first_missing, self.native_resolved = None, 0.0, False
             return False
         if card is not self.card:
-            self.__dict__.update(card=card, start=0.0, image=None, active=False, resolved=False)
-        if not self.resolved and self.start > 0 and image is not None and image is not self.image:
-            self.resolved = True
-            self.active = False
-            self.start = 0.0
-            self.image = None
-        missing = image is None or placeholder
-        if not self.resolved and missing and self.start == 0:
-            self.start = at
-            self.image = image
-        same_temporary = self.start > 0 and image is not None and image is self.image
-        if not self.resolved and not missing and not same_temporary:
-            self.start, self.active, self.image = 0.0, False, None
-        if not self.resolved and self.start > 0 and at - self.start >= 0.8 and (missing or same_temporary):
-            self.active = True
-        return not self.resolved and self.active and (missing or same_temporary)
+            self.card, self.first_missing, self.native_resolved = card, 0.0, False
+        if self.native_resolved:
+            return False
+        if native_image or layer_image:
+            self.native_resolved, self.first_missing = True, 0.0
+            return False
+        if self.first_missing <= 0:
+            self.first_missing = at
+        return at - self.first_missing >= 0.8
+
 
 def verify():
-    a, b = object(), object()
-    bitmap, real = object(), object()
+    official, user, recycled = object(), object(), object()
     slot = Slot()
-    assert not slot.step(a, True, bitmap, True, 1.0)
-    assert not slot.step(a, True, bitmap, False, 1.3)
-    assert slot.step(a, True, bitmap, False, 1.9), 'same temporary bitmap must not reset the grace period'
-    assert slot.step(a, True, bitmap, False, 2.3)
-    assert not slot.step(a, True, real, True, 2.5), 'new real image must win even if Spotify keeps its placeholder visible'
-    assert not slot.step(a, True, real, True, 4.0), 'new native artwork must remain authoritative'
-    assert not slot.step(b, True, None, True, 5.0), 'cell reuse must reset the timer'
-    assert slot.step(b, True, None, False, 5.85)
-    assert not slot.step(None, False, None, False, 6.0), 'non-DJ card must reset state'
-    assert not slot.step(a, True, real, False, 7.0), 'a loaded ordinary playlist must be preserved'
-    assert not slot.step(a, True, real, False, 8.0)
-    # User playlist with a real cover arriving after its placeholder.
-    user = Slot()
-    assert not user.step('user-dj', True, bitmap, True, 10.0)
-    assert user.step('user-dj', True, bitmap, True, 10.9)
-    assert not user.step('user-dj', True, real, True, 11.0)
-    assert not user.step('user-dj', True, real, True, 12.0), 'do not override its newly loaded cover'
-    print('DJ artwork continuity policy: 10 reference checks PASS')
+    # A genuinely artless official DJ card is still eligible after the grace period.
+    assert not slot.step(official, True, 1.0)
+    assert slot.step(official, True, 1.9)
+    assert slot.step(official, True, 2.1)
+    # Native cover arriving after fallback must remove the overlay immediately.
+    assert not slot.step(official, True, 2.2, native_image=True)
+    assert not slot.step(official, True, 3.1)
+    # A recycled view must not inherit either the fallback or native-art verdict.
+    assert not slot.step(recycled, True, 4.0)
+    assert slot.step(recycled, True, 4.9)
+    # User playlist's real artwork wins even if seen on the *first* observation.
+    assert not slot.step(user, True, 5.0, native_image=True)
+    assert not slot.step(user, True, 6.0, native_image=True)
+    # An Encore/SwiftUI layer-backed bitmap is authoritative too.
+    assert not slot.step(recycled, True, 7.0, layer_image=True)
+    assert not slot.step(recycled, True, 8.0, layer_image=True)
+    # Removing the candidate resets the cell state.
+    assert not slot.step(None, False, 9.0)
+    print('DJ artwork native-first continuity: 12 reference checks PASS')
+
 
 if __name__ == '__main__':
     verify()
