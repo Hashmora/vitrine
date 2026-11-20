@@ -28,6 +28,10 @@
 #import "Redesigned/NowPlayingBar/NowPlayingBar.h"
 #import "Player.h"
 
+// Defined by Legacy TabBar (Redesigned/Navbar/TabBarLegacy.x). Keep the
+// player independent of the navbar's private implementation/header.
+extern BOOL SGRLegacyTabBarMinimized(void);
+
 @interface SPTBarOverlayPresentationTransition : NSObject
 - (id<UIViewControllerContextTransitioning>)transitioningContext;
 - (UIView *)overlayView;
@@ -386,10 +390,6 @@ static SGRPlayerMorph *morphFor(SPTBarOverlayPresentationTransition *transition,
 // transition is no longer interactive and the player has no animation left and holds still a few frames.
 static const CFTimeInterval kGiveUp = 0.9;   // ticking with no move this long; UIKit's whole presentation runs about 0.5 s
 static const float kCloseSpeed = 1.5;         // how much faster than Spotify's a close it runs on its own plays
-
-// Defined by Legacy TabBar (Redesigned/Navbar/TabBarLegacy.x). Keep the
-// player independent of the navbar's private implementation/header.
-extern BOOL SGRLegacyTabBarMinimized(void);
 
 @interface SGRMorphFollower : NSObject
 @property (nonatomic, strong) SGRPlayerMorph *morph;
