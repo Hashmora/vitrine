@@ -103,11 +103,7 @@ static BOOL isNewSegmentItem(SPTPlayerTrack *track) {
 }
 
 static void endNextSegmentSkip(BOOL changed, NSString *problem, BOOL contextChanged) {
-    SGDJ_TRACE(@"segment.skip.end", (@{@"changed": @(changed), @"error": @(problem.length > 0),
-                                     @"contextChanged": @(contextChanged),
-                                     @"elapsedMs": @((NSInteger)((CACurrentMediaTime() - sNextSegmentStarted) * 1000)),
-                                     @"physicalAdvances": @(sNextSegmentPhysicalAdvances),
-                                     @"userPaused": @(sUserPauseRevision != sLandingPauseRevision)}));
+
     [sNextSegmentTimer invalidate];
     sNextSegmentTimer = nil;
     sNextSegmentContext = nil;
@@ -167,8 +163,7 @@ static void pollNextSegmentSkip(NSTimer *timer) {
             return;
         }
         sNextSegmentAnchorSent = YES;
-        SGDJ_TRACE(sNextSegmentRemote ? @"segment.skip.remoteAdvance" : @"segment.skip.pauseAck",
-                   (@{@"elapsedMs": @((NSInteger)(elapsed * 1000))}));
+
         SPTPlayerTrack *anchor = sNextSegmentAnchor;
         if (anchor && !sameGroup(state.track, anchor)) {
             SGLog(@"queue: skipping silently to the segment's last song %@ [%@]", SGURIString(anchor.URI), anchor.UID);
@@ -186,7 +181,7 @@ static void pollNextSegmentSkip(NSTimer *timer) {
     // A prefetched new page can become the current track before we see it in
     // future. Conversely, an old voice after the anchor is not a new page.
     if (isNewSegmentItem(state.track)) {
-        SGDJ_TRACE(@"segment.skip.newPage", (@{@"elapsedMs": @((NSInteger)(elapsed * 1000))}));
+
         SGLog(@"queue: skipped to the next DJ segment at %@ [%@]", SGURIString(state.track.URI), state.track.UID);
         endNextSegmentSkip(YES, nil, NO);
         return;
@@ -203,7 +198,7 @@ static void pollNextSegmentSkip(NSTimer *timer) {
         if ([SGURIString(next.URI) isEqualToString:@"spotify:delimiter"]) break;
         if (!isNewSegmentItem(next)) continue;
         sNextSegmentJumpSent = YES; // one targeted jump, never a run of Next presses
-        SGDJ_TRACE(@"segment.skip.jump", (@{@"elapsedMs": @((NSInteger)(elapsed * 1000))}));
+
         SGLog(@"queue: the next DJ segment arrived; jumping to %@ [%@]", SGURIString(next.URI), next.UID);
         skipForward(next);
         return;
@@ -216,8 +211,7 @@ static void pollNextSegmentSkip(NSTimer *timer) {
         CACurrentMediaTime() - sNextSegmentLastProgress < 2.5) return;
     for (SPTPlayerTrack *next in state.future) if (isCoreQueued(next)) return;
     sNextSegmentPhysicalAdvances++;
-    SGDJ_TRACE(@"segment.skip.physical", (@{@"elapsedMs": @((NSInteger)(elapsed * 1000)),
-                                            @"count": @(sNextSegmentPhysicalAdvances)}));
+
     sNextSegmentLastProgress = CACurrentMediaTime();
     SGLog(@"queue: next DJ page still absent; advancing one physical item (%lu/2), on %@ [%@]",
           (unsigned long)sNextSegmentPhysicalAdvances, SGURIString(state.track.URI), state.track.UID);
@@ -234,8 +228,7 @@ static void skipToNextDJSegment(void) {
     // synthetic remote Pause/Resume or a local mute that cannot affect it.
     BOOL remote = SGPlayerMusicOutput() == NULL;
     if (!remote && !canMuteDJLocally()) {
-        SGDJ_TRACE(@"segment.skip.blocked", (@{@"localAudioReady": @YES,
-                                               @"speedAllowed": @(SGPlayerSpeedAllowed())}));
+
         [SGAlbumQueueNotice showIn:sQueuePageView.window title:@"Next DJ Set unavailable"
                             detail:@"Local playback isn't ready for the transition yet."
                             symbol:@"exclamationmark.circle"];
@@ -283,9 +276,7 @@ static void skipToNextDJSegment(void) {
     sHandOverDisplayTrack = asDJTrack(state.track) ?: state.track;
     sHandOverAnchorUID = anchor ? historyUID(anchor) : historyUID(state.track);
     sHandingOver = YES; // disable the automatic end-of-segment bridge
-    SGDJ_TRACE(@"segment.skip.begin", (@{@"paused": @(state.isPaused),
-                                        @"oldCount": @(old.count), @"hasAnchor": @(anchor != nil),
-                                        @"remote": @(remote)}));
+
     if (!remote) SGPlayerSetDJTransitionMuted(YES);
     SGLog(@"queue: Next DJ Set in %@ skip mode: moving across the segment without sending a request",
           remote ? @"Connect" : @"local");
@@ -467,7 +458,7 @@ static id landAtSegmentEnd(SPTPlayerTrack *play) {
     sHandingOver = YES;
     sLandingPauseRevision = sUserPauseRevision;
     sHandOverAnchorUID = historyUID(last);
-    SGDJ_TRACE(@"segment.land.begin", (@{@"queuedNext": @(play != nil), @"paused": @(state.isPaused)}));
+
     SGPlayerSetDJTransitionMuted(YES);
     if (play) {
         SPTPlayerTrack *existing = queuedCopyOf(play, state, NULL);
@@ -555,7 +546,7 @@ static void holdAtEnd(void) {
     sHandingOver = YES;
     sLandingPauseRevision = sUserPauseRevision;
     sHandOverAnchorUID = historyUID(state.track);
-    SGDJ_TRACE(@"segment.hold.begin", (@{@"paused": @(state.isPaused)}));
+
     SGPlayerSetDJTransitionMuted(YES);
     id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
     NSString *from = trackKey(state.track);
@@ -664,7 +655,7 @@ static void skipRepeatedCurrentIntoOutro(SPTPlayerTrack *voice) {
     sHandingOver = YES;
     sLandingPauseRevision = sUserPauseRevision;
     sHandOverAnchorUID = historyUID(voice);
-    SGDJ_TRACE(@"segment.outro.begin", (@{}));
+
     SGPlayerSetDJTransitionMuted(YES);
     id<SPTPlayer> player = (id<SPTPlayer>)queuePlayer();
     NSString *from = trackKey(SGPlayerState().track);
@@ -715,26 +706,4 @@ static void scheduleHandOver(void) {
         if ((now.duration - now.position) / speed > kHandOverLead) return;
         if (needsHandOver(now)) handOver();
     }];
-}
-
-// A rate-limited diagnostic on non-DJ state snapshots. The baseline subscription
-// requested two previous and two next tracks; count the extra references actually
-// received rather than assuming that the core always returns 16 of each.
-static void sampleDJCapCost(SPTPlayerState *state) {
-    if (!state || isDJSession(state)) return;
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    if (now - sCapLastSampleAt < 5) return;
-    sCapLastSampleAt = now;
-    NSUInteger next = state.future.count > 2 ? state.future.count - 2 : 0;
-    NSUInteger prev = state.reverse.count > 2 ? state.reverse.count - 2 : 0;
-    sCapNonDJSamples++;
-    sCapNonDJExtraNext += next;
-    sCapNonDJExtraPrev += prev;
-    sCapNonDJPeakNext = MAX(sCapNonDJPeakNext, next);
-    sCapNonDJPeakPrev = MAX(sCapNonDJPeakPrev, prev);
-    if (sCapNonDJSamples == 1 || sCapNonDJSamples % 12 == 0)
-        SGLog(@"queue: non-DJ state cap samples=%lu extra tracks (average next %.1f, prev %.1f; peak next %lu, prev %lu)",
-              (unsigned long)sCapNonDJSamples,
-              (double)sCapNonDJExtraNext / sCapNonDJSamples, (double)sCapNonDJExtraPrev / sCapNonDJSamples,
-              (unsigned long)sCapNonDJPeakNext, (unsigned long)sCapNonDJPeakPrev);
 }

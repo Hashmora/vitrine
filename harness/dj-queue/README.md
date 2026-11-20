@@ -43,8 +43,8 @@ Shared-UID outro regression: the core may land on a spent song before a
 and the muted bridge advances over a context original and its known queue copy
 before releasing the voice. The checks assert that the gate stays closed while
 those songs are current and that the displayed song/clock remain the held snapshot.
-`dj.state` in driver builds exposes raw/shown items and the render gate's muted
-buffer count for simulator diagnosis.
+The temporary `dj.state` recorder was removed before the PR review; use
+the normal player and queue checks for runtime validation.
 
 Logical-final-song prefetch regression: an owned queued copy is ignored when
 checking whether only that logical song remains, reused rather than queued twice,

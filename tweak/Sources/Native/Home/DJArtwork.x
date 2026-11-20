@@ -4,7 +4,6 @@
 #import "Core/SGCore.h"
 #import "Shared/Player/DJQueue.h"
 #import "Shared/Player/DJArtworkIdentity.h"
-#import "Core/SGDJProbe.h"
 #import <objc/runtime.h>
 
 static UIImage *SGDJCover;
@@ -12,9 +11,6 @@ static NSHashTable<UIView *> *SGDJHolders;
 static NSInteger const SGDJCoverTag = 0x444a43;
 static char SGDJOverlayKey;
 static char SGDJRegisteredHolderKey;
-#if SG_DRIVER
-static char SGDJDrawProbeKey;
-#endif
 static NSString *SGDJCoverPath(void) {
     return [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject
         stringByAppendingPathComponent:@"SG-DJ-cover-v2.png"];
@@ -30,10 +26,10 @@ static void SGDJLoad(void) {
     [[NSURLSession.sharedSession dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         UIImage *cover = data.length && data.length < 8 * 1024 * 1024 ? [UIImage imageWithData:data] : nil;
         if (!cover) {
-            SGDJ_TRACE(@"artwork.cover", (@{ @"loaded": @NO, @"redesigned": @(0) }));
+
             return;
         }
-        SGDJ_TRACE(@"artwork.cover", (@{ @"loaded": @YES, @"redesigned": @(0) }));
+
         dispatch_async(dispatch_get_main_queue(), ^{
             if (SGDJCover) return;
             SGDJCover = cover;
@@ -58,21 +54,11 @@ static void SGDJDraw(UIView *holder) {
             if (current.window) SGDJDraw(current);
         });
     }
-#if SG_DRIVER
-    NSString *drawing = [NSString stringWithFormat:@"%d-%d-%d-%d", !!row, confirmed,
-                          placeholderFallback, !!SGDJCover];
-    if (![objc_getAssociatedObject(holder, &SGDJDrawProbeKey) isEqualToString:drawing]) {
-        objc_setAssociatedObject(holder, &SGDJDrawProbeKey, drawing, OBJC_ASSOCIATION_COPY_NONATOMIC);
-        SGDJ_TRACE(@"artwork.draw", (@{ @"card": @(!!row), @"confirmed": @(confirmed),
-                 @"fallback": @(placeholderFallback), @"coverReady": @(!!SGDJCover),
-                 @"redesigned": @(0) }));
-    }
-#endif
     if (!confirmed && !placeholderFallback) {
         [overlay removeFromSuperview];
         // A reused Spotify cell must not retain the previous DJ overlay.
         if (overlay) objc_setAssociatedObject(holder, &SGDJOverlayKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        SGDJArtworkTracePaint(holder, overlay, row, NO, !!SGDJCover, NO);
+
         return;
     }
     if (!SGDJHolders) SGDJHolders = [NSHashTable weakObjectsHashTable];
@@ -83,7 +69,7 @@ static void SGDJDraw(UIView *holder) {
     if (!SGDJCover) SGDJCover = [UIImage imageWithContentsOfFile:SGDJCoverPath()];
     if (!SGDJCover) {
         SGDJLoad();
-        SGDJArtworkTracePaint(holder, overlay, row, YES, NO, NO);
+
         return;
     }
     if (!overlay) {
@@ -108,7 +94,7 @@ static void SGDJDraw(UIView *holder) {
     CGFloat radius = MAX(4, holder.layer.cornerRadius);
     if (overlay.layer.cornerRadius != radius) overlay.layer.cornerRadius = radius;
     if (holder.subviews.lastObject != overlay) [holder bringSubviewToFront:overlay];
-    SGDJArtworkTracePaint(holder, overlay, row, YES, YES, NO);
+
 }
 %hook SGDJCardImage
 - (void)didMoveToWindow {

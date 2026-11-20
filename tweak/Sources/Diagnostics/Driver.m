@@ -23,8 +23,6 @@
 #import "Core/SGCore.h"
 #import "Diagnostics.h"
 #import "Headers/SPTPlayer.h"
-#import "Core/SGDJDiagnostics.h"
-#import "Core/SGDJProbe.h"
 #import <dlfcn.h>
 #import <mach/mach_time.h>
 #import <objc/message.h>
@@ -745,41 +743,6 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         all = @{
-            @"dj.state" : ^NSDictionary *(NSDictionary *p) { return onMain(^id { return SGDJQueueDiagnostics(); }); },
-            @"dj.trace" : ^NSDictionary *(NSDictionary *p) {
-                uint64_t since = p[@"since"] ? (uint64_t)MAX(0LL, [p[@"since"] longLongValue]) : 0;
-                NSUInteger limit = p[@"limit"] ? (NSUInteger)MAX(1LL, [p[@"limit"] longLongValue]) : 256;
-                return SGDJProbeRead(since, limit);
-            },
-            @"dj.ui" : ^NSDictionary *(NSDictionary *p) {
-                // One traversal instead of four separate "find" calls while
-                // the simulator is diagnosing a possible Home layout stall.
-                return onMain(^id {
-                    NSMutableDictionary *counts = [NSMutableDictionary dictionary];
-                    NSDictionary *names = @{ @"queue-edit-button": @"edit",
-                                             @"vitrine-dj-new-segment": @"nextSet",
-                                             @"SG.DJArtwork": @"nativeArt",
-                                             @"SGR.DJArtwork": @"redesignedArt" };
-                    for (UIWindow *window in windows()) {
-                        SGForEachView(window, ^(UIView *view) {
-                            NSString *identifier = view.accessibilityIdentifier;
-                            if (!identifier.length) return;
-                            NSString *key = names[identifier];
-                            if (!key) return;
-                            NSMutableDictionary *d = counts[key];
-                            if (!d) { d = [@{ @"total": @0, @"shown": @0, @"enabled": @0 } mutableCopy]; counts[key] = d; }
-                            BOOL shown = isShown(view);
-                            d[@"total"] = @([d[@"total"] unsignedIntegerValue] + 1);
-                            if (shown) {
-                                d[@"shown"] = @([d[@"shown"] unsignedIntegerValue] + 1);
-                                if (![view isKindOfClass:UIControl.class] || ((UIControl *)view).enabled)
-                                    d[@"enabled"] = @([d[@"enabled"] unsignedIntegerValue] + 1);
-                            }
-                        });
-                    }
-                    return @{ @"controls": counts };
-                });
-            },
             @"tap" : ^NSDictionary *(NSDictionary *p) {
                 return touchAt(target(p), 0.08);
             },
@@ -1168,7 +1131,7 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
 }
 
 static NSSet<NSString *> *readOnly(void) {
-    return [NSSet setWithArray:@[@"find", @"state", @"dj.state", @"dj.trace", @"dj.ui", @"screenshot", @"log", @"wait", @"get", @"layers"]];
+    return [NSSet setWithArray:@[@"find", @"state", @"screenshot", @"log", @"wait", @"get", @"layers"]];
 }
 
 BOOL SGDriverHandles(NSString *command) {

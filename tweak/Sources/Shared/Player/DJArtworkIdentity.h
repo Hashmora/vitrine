@@ -14,11 +14,3 @@ BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry);
 // Cache the nearest Home/Recents card, invalidating it when the image holder
 // moves under a different card even if the immediate parent stays unchanged.
 UIView *SGDJArtworkEnclosingCard(UIView *holder);
-
-// Read-only, redacted overlay geometry probe, compiled out of release builds.
-#if SG_DRIVER
-void SGDJArtworkTracePaint(UIView *holder, UIImageView *overlay, UIView *card,
-                           BOOL requested, BOOL coverReady, BOOL redesigned);
-#else
-#define SGDJArtworkTracePaint(holder, overlay, card, requested, coverReady, redesigned) do {} while (0)
-#endif
