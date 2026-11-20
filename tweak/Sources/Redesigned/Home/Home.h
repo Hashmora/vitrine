@@ -103,6 +103,8 @@ UIControl *SGRHomeTopPicksShowAll(NSString **title);
 // The page's color from the first large card's cover (HomeHeader.x draws it behind the title, fading to black);
 // nil for none.
 void SGRHomeSetPageTint(UIColor *color);
+// Legacy Friday Music filter only: derive its gradient from the banner asset, never tint the parent Home feed.
+void SGRHomeTintFridayBanner(UIView *banner, UIImage *image);
 
 // FLEX builds only (HomePerf.x): a hook takes the time as it starts and hands it back as it ends; outside
 // a FLEX build Begin returns 0 and End does nothing.

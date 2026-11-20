@@ -346,10 +346,12 @@ static CGFloat layoutPill(UIView *header, UIStackView *stack, UIView *face) {
 
 static UIColor *sg_pageTint;
 static __weak SGRHomeTintView *sg_tintView;
+static char kFridayImageKey, kFridayColorKey;
 
 static void paintTint(SGRHomeTintView *tint, BOOL animated) {
     CAGradientLayer *layer = (CAGradientLayer *)tint.layer;
-    UIColor *top = sg_pageTint ?: UIColor.blackColor;
+    UIColor *friday = tint.superview ? objc_getAssociatedObject(tint.superview, &kFridayColorKey) : nil;
+    UIColor *top = friday ?: (sg_pageTint ?: UIColor.blackColor);
     NSArray *colors = @[(id)top.CGColor, (id)[top colorWithAlphaComponent:0].CGColor];
     if ([layer.colors isEqualToArray:colors]) return;
     if (animated && tint.window) {
@@ -365,6 +367,27 @@ void SGRHomeSetPageTint(UIColor *color) {
     if (color == sg_pageTint || [color isEqual:sg_pageTint]) return;
     sg_pageTint = color;
     if (sg_tintView) paintTint(sg_tintView, YES);
+}
+
+// Music's full-bleed Friday banner isn't a large Top Picks shelf. Without a
+// page-specific tint its new HomePageView gets a black-to-transparent layer.
+// Use the *existing* async cover-color sampler and keep the result on Music's
+// own page: returning to the unfiltered Home must not inherit the banner tint.
+void SGRHomeTintFridayBanner(UIView *banner, UIImage *image) {
+    if (!SGBelowiOS26() || !SGUseLegacyGlass() || !banner || !image) return;
+    UIView *page = banner;
+    while (page && ![page.accessibilityIdentifier hasPrefix:@"HomePageView-"]) page = page.superview;
+    if (!page) return;
+    if (objc_getAssociatedObject(page, &kFridayImageKey) == image) return;
+    objc_setAssociatedObject(page, &kFridayImageKey, image, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(page, &kFridayColorKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    __weak UIView *weakPage = page;
+    SGRHomeTintForCover(image, ^(UIColor *color) {
+        UIView *strongPage = weakPage;
+        if (!strongPage || objc_getAssociatedObject(strongPage, &kFridayImageKey) != image || !color) return;
+        objc_setAssociatedObject(strongPage, &kFridayColorKey, color, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (sg_tintView.superview == strongPage) paintTint(sg_tintView, YES);
+    });
 }
 
 // The filter's HomePageView is replaced by Spotify when entering Music; the
@@ -407,7 +430,26 @@ static void layoutTint(UIView *view) {
     CGRect frame = CGRectMake(0, 0, page.bounds.size.width, kTintHeight);
     if (!CGRectEqualToRect(tint.frame, frame)) tint.frame = frame;
     for (UIView *sub in page.subviews) {
-        if ([sub isKindOfClass:UICollectionView.class] && ![sub.backgroundColor isEqual:UIColor.clearColor]) sub.backgroundColor = UIColor.clearColor;
+        if (![sub isKindOfClass:UICollectionView.class]) continue;
+        if (![sub.backgroundColor isEqual:UIColor.clearColor]) sub.backgroundColor = UIColor.clearColor;
+        // On the Friday Music filter the visible full-bleed banner has no
+        // accessibilityLabel on its UIImageView in Stage 55, although the
+        // earlier section classifier sometimes saw one. Read the *visible*
+        // banner image directly, once per image, as a reliable fallback.
+        if (!SGBelowiOS26() || !SGUseLegacyGlass()) continue;
+        for (UICollectionViewCell *cell in ((UICollectionView *)sub).visibleCells) {
+            UIView *root = cell.contentView.subviews.firstObject.subviews.firstObject;
+            if (![NSStringFromClass(root.class) containsString:@"Discovery_BannerKit.FullBleedBannerElementView"]
+                || cell.hidden || cell.contentView.hidden) continue;
+            __block UIImageView *bannerImage = nil;
+            SGForEachView(root, ^(UIView *part) {
+                if (!bannerImage && [part isKindOfClass:UIImageView.class] &&
+                    part.bounds.size.width >= 100 && ((UIImageView *)part).image)
+                    bannerImage = (UIImageView *)part;
+            });
+            if (bannerImage) SGRHomeTintFridayBanner(root, bannerImage.image);
+            break;
+        }
     }
 }
 
