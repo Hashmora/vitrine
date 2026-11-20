@@ -371,14 +371,24 @@ static BOOL bubbles(void);
     CGRect arc = CGRectInset(bounds, 0.6, 0.6);
     CGFloat w = CGRectGetWidth(arc), h = CGRectGetHeight(arc), r = h / 2;
     UIBezierPath *specular = [UIBezierPath bezierPath];
-    [specular moveToPoint:CGPointMake(arc.origin.x, arc.origin.y + r)];
-    [specular addQuadCurveToPoint:CGPointMake(arc.origin.x + r, arc.origin.y)
-                  controlPoint:CGPointMake(arc.origin.x, arc.origin.y)];
-    [specular addLineToPoint:CGPointMake(arc.origin.x + w * 0.58, arc.origin.y)];
-    [specular moveToPoint:CGPointMake(arc.origin.x + w * 0.42, arc.origin.y + h)];
-    [specular addLineToPoint:CGPointMake(arc.origin.x + w - r, arc.origin.y + h)];
-    [specular addQuadCurveToPoint:CGPointMake(arc.origin.x + w, arc.origin.y + r)
-                  controlPoint:CGPointMake(arc.origin.x + w, arc.origin.y + h)];
+    // The older outline traced the horizontal top/bottom rails for most
+    // of its length. Native highlights instead sweep diagonally out of the
+    // top-left and bottom-right curved shoulders, fading into the glass.
+    // Keep the all-around 0.85pt perimeter independent from these streaks.
+    [specular moveToPoint:CGPointMake(arc.origin.x + 0.6, arc.origin.y + h * 0.57)];
+    [specular addCurveToPoint:CGPointMake(arc.origin.x + r * 0.92, arc.origin.y + 0.9)
+               controlPoint1:CGPointMake(arc.origin.x + 0.3, arc.origin.y + h * 0.19)
+               controlPoint2:CGPointMake(arc.origin.x + r * 0.27, arc.origin.y + 0.5)];
+    [specular addCurveToPoint:CGPointMake(arc.origin.x + w * 0.60, arc.origin.y + h * 0.22)
+               controlPoint1:CGPointMake(arc.origin.x + w * 0.32, arc.origin.y - 1.5)
+               controlPoint2:CGPointMake(arc.origin.x + w * 0.48, arc.origin.y + h * 0.11)];
+    [specular moveToPoint:CGPointMake(arc.origin.x + w * 0.40, arc.origin.y + h * 0.78)];
+    [specular addCurveToPoint:CGPointMake(arc.origin.x + w - r * 0.92, arc.origin.y + h - 0.9)
+               controlPoint1:CGPointMake(arc.origin.x + w * 0.52, arc.origin.y + h * 0.89)
+               controlPoint2:CGPointMake(arc.origin.x + w * 0.68, arc.origin.y + h + 1.5)];
+    [specular addCurveToPoint:CGPointMake(arc.origin.x + w - 0.6, arc.origin.y + h * 0.43)
+               controlPoint1:CGPointMake(arc.origin.x + w - r * 0.27, arc.origin.y + h - 0.5)
+               controlPoint2:CGPointMake(arc.origin.x + w - 0.3, arc.origin.y + h * 0.81)];
     _longSpecular.frame = bounds;
     _longSpecular.path = specular.CGPath;
     _fingerHighlight.frame = bounds;
@@ -420,12 +430,28 @@ static BOOL bubbles(void);
     NSUInteger generation = _pulseGeneration;
     NSUInteger count = _playback.length / sizeof(SGLensSample);
     NSTimeInterval duration = count > 1 ? (count - 1) * kPlayStep : 0.10;
+    // The final ~1 second of the calculated spring is visually imperceptible.
+    // On iOS 26 the raised material disappears once its *visible* travel is
+    // over, not after the last 0.003pt of simulation settles. Use the exact
+    // render-server samples to find that moment, including on long tab jumps.
+    // Never drop while the lens is still lifted or away from its final slot.
+    const SGLensSample *samples = _playback.bytes;
+    for (NSUInteger i = 1; i < count; i++) {
+        SGLensSample st = samples[i];
+        if (fabs(st.lift) > 0.075 || fabs(st.vLift) > 0.9 ||
+            fabs(st.L - _tL) > 2.2 || fabs(st.R - _tR) > 2.2 ||
+            fabs(st.sq) > 0.055) continue;
+        duration = i * kPlayStep;
+        break;
+    }
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         typeof(self) strongSelf = weakSelf;
         if (!strongSelf || strongSelf->_pulseGeneration != generation || strongSelf->_touching ||
             strongSelf->_liftTarget > 0.001) return;
-        [strongSelf showGlass:NO animated:YES];
+        // Do not run a second 0.35s material fade after the movement ends:
+        // that was the remaining visible "hanging" lens on ordinary taps.
+        [strongSelf showGlass:NO animated:NO];
     });
 }
 
@@ -629,11 +655,18 @@ static BOOL bubbles(void) {
     [self moveTouchToX:x];
 }
 
+// The recognizer and the glass MUST choose a hovered tab using the same
+// anchored position. With off-centre touches, raw finger X can cross an item
+// boundary while the bubble is still over the previous item's glyph.
+- (CGFloat)trackingCenterForFingerX:(CGFloat)x {
+    if (!_touching) return x;
+    return rubber(_touchAnchorX + (x - _touchStartX), _minCenter, _maxCenter);
+}
+
 - (void)moveTouchToX:(CGFloat)x {
     if (!_touching) return;
     _touchLastX = x;
-    CGFloat anchoredX = _touchAnchorX + (x - _touchStartX);
-    CGFloat center = rubber(anchoredX, _minCenter, _maxCenter);
+    CGFloat center = [self trackingCenterForFingerX:x];
     CGFloat width = _restFrame.size.width + (bubbles() ? kLensGrow : 0);
     _tL = center - width / 2;
     _tR = center + width / 2;
