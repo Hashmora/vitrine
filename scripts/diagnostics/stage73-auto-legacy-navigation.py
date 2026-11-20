@@ -46,6 +46,19 @@ class Collector(stage72.Collector):
         self.report['automation'] = 'SG_DRIVER only; zero manual prompts'
         self.saved_prefs = {}
 
+    def call(self, tag, command, **kwargs):
+        # /get reports nil for animationKeys when a layer is at rest. That is
+        # an expected optional value, not an error in the captured UI state.
+        if command == 'get' and kwargs.get('path') == 'layer.animationKeys':
+            try:
+                return self.driver.call(command, **kwargs)
+            except RuntimeError as exc:
+                if 'animationKeys is nil' in str(exc):
+                    return {'ok': True, 'value': None,
+                            'note': 'no active layer animations (expected at rest)'}
+                raise
+        return super().call(tag, command, **kwargs)
+
     def strict(self, what, cmd, **kw):
         response = self.driver.call(cmd, **kw)
         stage72.dump(self.root / 'commands' / (what + '.json'), {'command':cmd,'args':kw,'response':response})
@@ -265,6 +278,19 @@ def self_test():
     assert suitable_point({'shown':False,'frame':[10,700,280,56]}) is None
     assert suitable_point({'shown':True,'frame':[10,700,0,0]}) is None
     assert HIDE_LABELS != ACCENT
+    class NilAnimationDriver:
+        def call(self, command, **kwargs):
+            raise RuntimeError("get: {'error': 'animationKeys is nil', 'ok': False}")
+    test_capture = Collector.__new__(Collector)
+    test_capture.driver = NilAnimationDriver()
+    optional = test_capture.call('rest', 'get', **{'class': 'SGRLegacyTabBar', 'path': 'layer.animationKeys'})
+    assert optional['ok'] and optional['value'] is None
+    driver_source = Path(__file__).resolve().parents[2] / 'tweak/Sources/Diagnostics/Driver.m'
+    if driver_source.is_file():
+        source = driver_source.read_text(encoding='utf-8')
+        assert 'legacyGlassTabItems(titles)' in source
+        assert 'UITabBarButton' in source
+        assert 'Legacy tab bar is visible but has' in source
     print('SELF-TEST: OK')
 
 
