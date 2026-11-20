@@ -27,6 +27,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Redesigned/NowPlayingBar/NowPlayingBar.h"
 #import "Player.h"
+#import "Core/SGLegacyGlass.h"
 
 // Defined by Legacy TabBar (Redesigned/Navbar/TabBarLegacy.x). Keep the
 // player independent of the navbar's private implementation/header.
@@ -42,6 +43,7 @@ extern BOOL SGRLegacyTabBarMinimized(void);
 @end
 
 static const CGFloat kScreenRadiusFallback = 55;
+static char kMorphCardDimKey;
 
 static CGFloat lerp(CGFloat a, CGFloat b, CGFloat t) {
     return a + (b - a) * t;
@@ -83,7 +85,14 @@ static CGFloat screenRadius(void) {
 @implementation SGRPlayerMorph {
     __weak UIView *_container, *_overlay, *_bar;
     UIView *_sheet;
+    // The minimized transition grows a live Legacy Glass surface that matches
+    // the *real* NPV capsule, not a rendered image or a flat painted proxy.
+    SGLegacyGlassView *_miniGlass;
+    UIView *_fieldFill;
+    UIView *_miniDim;
+    BOOL _miniMorph;
     UIImageView *_cover;
+    UIView *_coverClip;
     CALayer *_mask;
     // In a Jam (follow mode only): the mask on the stand-in or its picture, its strip part fading on the way open, and
     // a close's copy of the strip's glass, which fades by alpha.
@@ -183,11 +192,45 @@ static CGFloat screenRadius(void) {
     _barArtwork = SGRNowPlayingArtworkFrameIn(container);
     _spotifyAlpha = overlay.alpha;
 
+    // followFrom: runs AFTER init, so do not gate creation on _follows.
+    _miniMorph = SGUseLegacyGlass() && SGRLegacyTabBarMinimized();
     _sheet = [[UIView alloc] initWithFrame:card];
     _sheet.userInteractionEnabled = NO;
-    _sheet.backgroundColor = SGRPlayerField().fieldColor ?: UIColor.blackColor;
+    _sheet.backgroundColor = _miniMorph ? UIColor.clearColor : (SGRPlayerField().fieldColor ?: UIColor.blackColor);
     _sheet.layer.cornerCurve = kCACornerCurveContinuous;
+    _sheet.layer.cornerRadius = radius;
     _sheet.clipsToBounds = YES;
+    if (_miniMorph) {
+        // Preserve the SAME live glass material and darkening used by the
+        // inline player. Only the presentation view is separate: reparenting
+        // Spotify's real bar would break its own interactive transition.
+        UIView *sourcePane = SGRNowPlayingBarGlassPane();
+        SGLegacyGlassView *source = [sourcePane isKindOfClass:SGLegacyGlassView.class] ? (SGLegacyGlassView *)sourcePane : nil;
+        _miniGlass = [[SGLegacyGlassView alloc] initWithFrame:_sheet.bounds];
+        _miniGlass.userInteractionEnabled = NO;
+        _miniGlass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        _miniGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _miniGlass.capsule = NO;
+        _miniGlass.cornerRadius = radius;
+        _miniGlass.clear = source ? source.clear : NO;
+        _miniGlass.blurRadius = source ? source.blurRadius : 2;
+        _miniGlass.magnification = source ? source.magnification : 1;
+        _miniGlass.lensScale = source ? source.lensScale : 1;
+        _miniGlass.sharp = source ? source.sharp : NO;
+        _miniGlass.rimless = source ? source.rimless : NO;
+        [_sheet addSubview:_miniGlass];
+        _miniDim = SGRDarkenGlass(_miniGlass, &kMorphCardDimKey, radius, 0.63);
+        // The player's colour takes over as the capsule becomes the NPV;
+        // the live refracting glass is what is visible on the first frames.
+        _fieldFill = [[UIView alloc] initWithFrame:_sheet.bounds];
+        _fieldFill.backgroundColor = SGRPlayerField().fieldColor ?: UIColor.blackColor;
+        _fieldFill.userInteractionEnabled = NO;
+        _fieldFill.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _fieldFill.layer.cornerCurve = kCACornerCurveContinuous;
+        _fieldFill.layer.cornerRadius = radius;
+        _fieldFill.alpha = 0;
+        [_sheet addSubview:_fieldFill];
+    }
     [container insertSubview:_sheet belowSubview:overlay];
 
     // The player's own paint is not a sublayer, so the content's transform would leave it where Spotify
@@ -209,7 +252,19 @@ static CGFloat screenRadius(void) {
         _cover.contentMode = UIViewContentModeScaleAspectFill;
         _cover.clipsToBounds = YES;
         _cover.layer.cornerCurve = kCACornerCurveContinuous;
-        [container addSubview:_cover];
+        if (_miniMorph) {
+            // The moving artwork belongs to the SAME morphing capsule as the
+            // material. Without this clip it can appear outside its glass.
+            _coverClip = [[UIView alloc] initWithFrame:card];
+            _coverClip.clipsToBounds = YES;
+            _coverClip.layer.cornerCurve = kCACornerCurveContinuous;
+            _coverClip.layer.cornerRadius = radius;
+            _coverClip.userInteractionEnabled = NO;
+            [container addSubview:_coverClip];
+            [_coverClip addSubview:_cover];
+        } else {
+            [container addSubview:_cover];
+        }
     }
 
     static NSUInteger logged;
@@ -256,20 +311,31 @@ static CGFloat screenRadius(void) {
         overlay.layer.sublayerTransform = CATransform3DScale(CATransform3DMakeTranslation(shift.x, shift.y, 0), scale, scale, 1);
         self->_mask.frame = CGRectMake(target.x, target.y, sheet.size.width, sheet.size.height);
         self->_mask.cornerRadius = radius;
-        // A reversed interactive drag starts within the inline mini capsule.
-        // Avoid exposing a wide, square-looking player surface while the
-        // original glass snapshot is still the visible control. The mask
-        // follows the same geometry, only its reveal is held back briefly.
-        CGFloat miniReveal = (self->_follows && SGUseLegacyGlass() && SGRLegacyTabBarMinimized())
-            ? ramp(0.06, 0.30, t) : 1;
-        self->_mask.opacity = miniReveal;
+        // The player always clips to the growing capsule. The old
+        // miniReveal=0..1 hid the entire player until 6..30% of the gesture:
+        // Stage 95 measured 25 almost-invisible frames and no glass surface.
+        self->_mask.opacity = 1;
         if (!self->_follows) overlay.alpha = ramp(0.08, 0.55, t);
 
         self->_sheet.frame = sheet;
         self->_sheet.layer.cornerRadius = radius;
-        // The sheet is the player's own paint, so it fades with Spotify's
-        // bar stand-in, *and* stays inside the mini control at the start.
-        self->_sheet.alpha = (self->_follows ? self->_spotifyAlpha : ramp(0, 0.15, t)) * miniReveal;
+        if (self->_miniMorph) {
+            // Do NOT fade the entire sheet: it now contains real glass. Keep
+            // its corner radius and the overlay's clipping mask identical.
+            self->_miniGlass.frame = self->_sheet.bounds;
+            self->_miniGlass.cornerRadius = radius;
+            self->_miniGlass.alpha = 1 - ramp(0.20, 0.65, t);
+            self->_fieldFill.frame = self->_sheet.bounds;
+            self->_fieldFill.layer.cornerRadius = radius;
+            self->_fieldFill.alpha = ramp(0.12, 0.55, t);
+            self->_sheet.alpha = 1;
+            self->_coverClip.frame = sheet;
+            self->_coverClip.layer.cornerRadius = radius;
+            self->_miniDim.frame = self->_miniGlass.contentView.bounds;
+            self->_miniDim.layer.cornerRadius = radius;
+        } else {
+            self->_sheet.alpha = self->_follows ? self->_spotifyAlpha : ramp(0, 0.15, t);
+        }
 
         // The card's top edge is the sheet's.
         CGFloat rise = sheet.origin.y - self->_card.origin.y;
@@ -303,14 +369,16 @@ static CGFloat screenRadius(void) {
                                        coverInPlayer.size.width * scale, coverInPlayer.size.height * scale);
                 self->_cover.hidden = NO;
                 to = CGRectOffset(to, -sheet.origin.x, -sheet.origin.y);
-                self->_cover.frame = CGRectOffset(lerpRect(from, to, t), sheet.origin.x, sheet.origin.y);
+                CGRect flying = CGRectOffset(lerpRect(from, to, t), sheet.origin.x, sheet.origin.y);
+                self->_cover.frame = self->_coverClip
+                    ? CGRectOffset(flying, -sheet.origin.x, -sheet.origin.y) : flying;
                 // The cover's corners are drawn under its paused shrink too.
                 self->_cover.layer.cornerRadius = lerp(from.size.width / 2, SGRRadiusArtwork * SGRPlayerCoverScale() * scale, t);
                 // Over an animated artwork the player's cover is hidden: the flown one fades out on the
                 // way there instead of landing on an empty slot.
-                self->_cover.alpha = (SGRPlayerMotionShowing() ? 1 - ramp(0.6, 1, t) : 1) *
-                    ((self->_follows && SGUseLegacyGlass() && SGRLegacyTabBarMinimized())
-                     ? ramp(0.06, 0.30, t) : 1);
+                // The moving artwork already lives inside the growing sheet;
+                // never hide it alongside the old miniReveal gate.
+                self->_cover.alpha = SGRPlayerMotionShowing() ? 1 - ramp(0.6, 1, t) : 1;
             }
         }
     }];
@@ -332,6 +400,9 @@ static CGFloat screenRadius(void) {
               @"maskModelOpacity": @(_mask.opacity),
               @"sheetOpacity": @(sheet.opacity),
               @"sheetAlpha": @(_sheet.alpha),
+              @"liveMiniGlass": @(_miniGlass != nil),
+              @"liveMiniGlassOpacity": @(_miniGlass ? _miniGlass.alpha : 0),
+              @"playerFieldOpacity": @(_fieldFill ? _fieldFill.alpha : 0),
               @"sheetInWindow": @(_sheet.window != nil),
               @"overlayOpacity": @(overlay.opacity),
               @"overlayAlpha": @(_overlay.alpha),
@@ -362,6 +433,7 @@ static CGFloat screenRadius(void) {
     CGColorRelease(_overlayColor);
     _overlayColor = NULL;
     [_sheet removeFromSuperview];
+    [_coverClip removeFromSuperview];
     [_cover removeFromSuperview];
     [CATransaction commit];
     if (_coverHidden) SGRPlayerSetCoverHidden(NO);
