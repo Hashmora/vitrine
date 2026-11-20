@@ -933,27 +933,12 @@ subscription must still ask for 16 future and 16 previous tracks if DJ Queue is
 on. Lowering it without a supported subscription refresh causes missing DJ
 queue rows. This is a known outside-DJ exception, **not** a claim of zero cost.
 
-The standalone `scripts/dj-cap-occupancy.py CAPTURE.zip` reports non-DJ *snapshot* occupancy
-(number of future and previous references in excess of the original caps of
-two) rather than the number of messages/bytes. In the captured 2026-11-20
-60-second non-DJ sample, all 78 polled snapshots contained 16 future references
-(14 above baseline). Those 78 snapshots describe a single sustained state;
-**they do not represent 78 network responses**, and no byte, CPU, latency or
-battery cost is inferred. An actual request/response byte measurement needs
-instrumentation of the ESP transport on the supported Spotify build. This
-exception should be discussed with the PR owner before merge.
-
-### AI DJ regression recorder (driver builds)
-
-For PR #227, `SG_DRIVER=1` provides the read-only `dj.trace` event ring and the
-existing `dj.state` snapshot (now with queue/order counts, button state and
-pseudonymous track IDs). Capture them automatically with
-`python3 scripts/dj-diagnose.py --port 8086 --seconds 240` while reproducing
-issues in the simulator. The generated ZIP has a Markdown report and redacted
-JSON timelines; see `harness/dj-diagnostics/README.md`. Release builds do not
-record these events. `dj.trace` is memory-only, so the recorder must be running
-*before* a crash to preserve the lead-up.
-
+The simulator A/B run on 20 November 2026 found 16 versus 2 future
+references and 10 additional previous references in an ordinary playback
+state (**+24 track references**) over a stable one-minute sample. These were
+one distinct sampled state per run; network bytes, CPU and heap were **not**
+measured. The compatibility trade-off and details for review are in
+`docs/pr227-getstate-cap-measurement.md`.
 
 A build with FLEX in it (`make build`, `make install FLEX=1`) runs `Diagnostics/`: the tree server, the hang
 sampler, and the phone driver, which lets an agent on the Mac work the app without anyone touching the phone.

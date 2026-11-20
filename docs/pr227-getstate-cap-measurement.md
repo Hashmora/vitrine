@@ -17,59 +17,52 @@ free subscription still requests 16 next and 16 previous tracks. This is a
 **deliberate compatibility limitation**, not a claim that non-DJ behavior is
 fully unchanged. The extra data must be measured and disclosed to the reviewer.
 
-## Evidence already collected (simulator, DJ Queue enabled)
+## Simulator A/B result — 20 November 2026
 
-The user-supplied `dj-diagnostics-20261120-010846.zip` recorded **78 non-DJ
-snapshots across 59.43 seconds**. They contained **one distinct state
-signature** repeated across the recording, not 78 distinct ESP responses.
-The state exposed **16 future references** in each sample, compared with the
-original request cap of 2: **14 additional future-track references** visible
-in the reported state. Previous-track counts were not present in this capture.
+The user recorded matching roughly one-minute non-DJ playback runs with the
+DJ Queue setting enabled and disabled and supplied `dj-cap-comparison.json`.
+The script returned `comparison.valid=true`; values below are **sampled
+player-state occupancy**, not transport-level request measurements.
 
-These are counts of references in sampled state, **not** measured network bytes,
-number of server requests, allocations, CPU time, power consumption, or a
-memory-retention estimate. A single repeated state cannot establish a request
-rate or energy cost. No baseline with the DJ switch disabled has been collected.
+| | Enabled | Disabled | Difference |
+|---|---:|---:|---:|
+| Duration | 59.59 s | 59.61 s | — |
+| Polls | 74 | 75 | — |
+| Distinct state signatures | 1 | 1 | — |
+| Future-track references, average/peak | 16 / 16 | 2 / 2 | **+14** |
+| Additional previous-track references | 10 | 0 | **+10** |
 
-## Reproducible A/B procedure
+Thus the observed non-DJ player state holds **24 additional track references**
+relative to the setting-off control: 14 future and 10 previous. This is a
+real change to ordinary playback state, not a negligible zero-overhead claim.
+The extra references *can* increase state size and processing work, but the
+sample does not quantify memory bytes, CPU time, network traffic or energy.
+These repeated polls describe one unchanged state, not 74 ESP responses.
 
-1. Build Spotify 9.1.90 with `SG_DRIVER=1`, then enable **Player → DJ → DJ Queue**,
-   restart Spotify, and play an **ordinary, non-DJ playlist**. Record at least
-   60 seconds of stable playback:
+The callback's context-free subscription is initialized before the player has
+selected a context, and Spotify 9.1.90 does not provide a verified, safe way
+for this tweak to refresh that subscription when DJ begins. Using the current
+context to lower its cap may permanently deprive DJ of upcoming tracks in
+that session. Requests with an **explicit non-DJ context** already pass the
+original caps through. This remaining context-free exception is deliberate,
+measured as far as the exposed player-state data permits, and should be
+reviewed with the PR owner rather than hidden behind a claim of isolation.
 
-   ```bash
-   python3 scripts/dj-cap-capture.py --port 8086 --seconds 60 --out out/with-dj-queue.zip
-   ```
+A true allocation/time/network cost benchmark would require an instrumented
+pair of matching device runs (e.g., Instruments Allocations and Time Profiler,
+plus an ESP request/response-size probe). No such measurements are available;
+we must not invent them.
 
-2. Turn the **DJ Queue** switch **off**, restart Spotify, select the same
-   playlist and (if possible) the same track and position, and record 60
-   seconds without changing playback:
+## Reproducing the measurement
 
-   ```bash
-   python3 scripts/dj-cap-capture.py --port 8086 --seconds 60 --out out/without-dj-queue.zip
-   ```
-
-   This recorder uses existing `dj.state` data, including `reverseCount` when
-   the driver returns it. It is independent of `scripts/dj-diagnose.py` and
-   never sends playback actions.
-
-3. Compare the anonymized captures:
-
-   ```bash
-   python3 scripts/dj-cap-occupancy.py \
-       out/with-dj-queue.zip \
-       --baseline out/without-dj-queue.zip \
-       --output out/dj-cap-comparison.json
-   ```
-
-4. Compare average, peak and 95th-percentile future-track counts and the number
-   of **distinct sampled states**. Repeat on a few ordinary playlists. Report
-   the results with the explicit limitation that these are sampled state sizes,
-   not traffic or CPU samples. For an actual performance claim, separately
-   profile the simulator/device with Instruments (Allocations, Time Profiler,
-   and network capture), using matching scenarios.
-
-**Do not infer** “78 requests × 14 extra tracks” from 78 sampled rows.
+In a debug/FLEX build with `SG_DRIVER=1`, capture the future and reverse
+arrays of a stable ordinary-playlist `SPTPlayerState` every second for a minute;
+repeat with the DJ Queue switch disabled and Spotify restarted. Compare the
+number of distinct state signatures, next/previous-track references and the
+excess over the setting-off baseline. Never multiply repeated snapshots by the
+reference difference to infer bytes or request rates. Before PR merge, the
+one-off `dj-cap-*` scripts and their driver endpoints are removed; the
+anonymized summary above remains as review evidence.
 
 ## Next DJ Set UI clarification for the PR response
 
