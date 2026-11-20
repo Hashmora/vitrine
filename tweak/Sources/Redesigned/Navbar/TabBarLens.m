@@ -20,9 +20,8 @@ static const CGFloat kLensHeldBend = 1.14;
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
 static const CGFloat kLensGrow = 20, kLensOverscroll = 8;
-// The leftmost gesture should be able to pull the raised bubble farther out
-// than the capsule edge. Keep the right bound unchanged.
-static const CGFloat kLensLeftOverscroll = 16;
+// Keep the same 8pt optical limit on both outer ends.
+static const CGFloat kLensLeftOverscroll = 8;
 // Optical glass, black base, selected-colour mask and inverse white cutout
 // must share precisely one outline even when two adjacent icons fit inside it.
 // The held lens keeps one width across the full tab row: no gap-dependent growth.
@@ -898,7 +897,29 @@ static BOOL bubbles(void) {
     CGFloat held = 1 + 2 * _heldOutset / baseHeight * st.lift;
     *sx = width * (1 + d) / baseWidth;
     *sy = held * (1 - kLensVolume * d);
-    *center = CGPointMake((st.L + st.R) / 2, CGRectGetMidY(_restFrame));
+    CGPoint pose = CGPointMake((st.L + st.R) / 2, CGRectGetMidY(_restFrame));
+    // At Home/Create the system lens already leans outside the capsule as
+    // soon as it lifts; it does not require an outward finger drag first.
+    // Set its outward tip to 8pt beyond the platter at full lift, even when
+    // directional squash changes the visible width. Never reach 16pt.
+    if (st.lift > 0.001 && _minCenter > 0 && _maxCenter > _minCenter &&
+        _normalContent && self.superview) {
+        CGRect platter = [_normalContent convertRect:_normalContent.bounds toView:self.superview];
+        CGFloat half = baseWidth * *sx / 2;
+        CGFloat minX = CGRectGetMinX(platter) - kLensOverscroll + half;
+        CGFloat maxX = CGRectGetMaxX(platter) + kLensOverscroll - half;
+        if (maxX >= minX) {
+            CGFloat lift = MIN(1, MAX(0, st.lift));
+            CGFloat nearLeft = MIN(1, MAX(0, (_minCenter + 14 - pose.x) / 14));
+            CGFloat nearRight = MIN(1, MAX(0, (pose.x - (_maxCenter - 14)) / 14));
+            if (nearLeft > 0 && pose.x < _minCenter + 14)
+                pose.x += (minX - pose.x) * lift * nearLeft;
+            else if (nearRight > 0 && pose.x > _maxCenter - 14)
+                pose.x += (maxX - pose.x) * lift * nearRight;
+            pose.x = MAX(minX, MIN(maxX, pose.x));
+        }
+    }
+    *center = pose;
 }
 
 - (SGLensSample)state {
@@ -1017,7 +1038,12 @@ static BOOL bubbles(void) {
     BOOL moving = fabs(dir) > 0.75;
     // Slightly lazier travel for short and long taps; directional drag still
     // gets the tighter leading / softer trailing edge.
-    SGRSpring front = spring(625, 0.83), back = spring(205, 0.72), even = spring(295, 0.78);
+    // Make a released selection move a touch more leisurely than the live
+    // finger-following spring. The held drag stays 1:1 and responsive.
+    BOOL freeFlight = !_touching && fabs(dir) > 2;
+    SGRSpring front = spring(freeFlight ? 570 : 625, 0.83);
+    SGRSpring back = spring(freeFlight ? 190 : 205, 0.72);
+    SGRSpring even = spring(freeFlight ? 275 : 295, 0.78);
     SGRSpring forL = !moving ? even : (dir < 0 ? front : back);
     SGRSpring forR = !moving ? even : (dir > 0 ? front : back);
     SGSpring lift = _liftTarget > 0.5 ? SGGlassLiftOn : SGGlassLiftOff;   // the press's own
