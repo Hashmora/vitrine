@@ -7,6 +7,7 @@
 #import "Redesigned/Kit/SGRTokens.h"
 #import "Redesigned/Kit/SGRGlass.h"
 #import "Redesigned/Kit/SGRKit.h"
+#import "Redesigned/Pages/Pages.h"
 
 // What "Add a tab" offers: URIs Spotify's own router resolves to a page of its own, each with the
 // name of the SPTEncoreIcon class method that draws its glyph. Playlists was spotify:collection:playlists
@@ -686,32 +687,46 @@ typedef NS_ENUM(NSInteger, SGRNavbarSection) {
 
 @end
 
-// The Tab bar editor is a mod SGPage, not one of the Spotify-hosted pages
-// dressed by PageBar.m. Its native navigation title otherwise remains a bare
-// UILabel even in Legacy Glass. Wrap only this title, without replacing Back
-// or taking over the shared UINavigationBar used by the next settings page.
-static char kNavbarTitleGlass;
-static void glassNavbarTitle(UIViewController *page) {
-    if (!SGBelowiOS26() || !SGUseLegacyGlass() || !page.viewIfLoaded.window) return;
-    UIView *bar = page.navigationController.navigationBar;
-    UIView *content = SGRChildNamed(bar, @"_UINavigationBarContentView");
-    UIView *title = SGRChildNamed(content, @"_UINavigationBarTitleControl");
-    if (!title) return;
-    __block UILabel *label = nil;
-    SGForEachView(title, ^(UIView *view) {
-        if (!label && [view isKindOfClass:UILabel.class] && [((UILabel *)view).text isEqualToString:@"Tab bar"])
-            label = (UILabel *)view;
-    });
-    if (!label || label.bounds.size.width < 1) return;
-    SGRGlassTitleCapsule(title, &kNavbarTitleGlass, SGRTitleWidth(label),
-                         MAX(0, bar.bounds.size.width - 140),
-                         ^BOOL(UIView *v) { return v.superview == bar; });
+// This is an SGPage (not an SGModPage), so ModPageBar.x does not dress it.
+// Use the SAME bar implementation as other Legacy Glass pages: it removes
+// Spotify's blur, pins a working glass Back and adds one title capsule.
+// Do not keep Stage 46's second capsule attached to the UIKit title control.
+static char kNavbarHiddenBarBackground;
+static BOOL navbarLegacyBar(UIViewController *page) {
+    return page && SGBelowiOS26() && SGUseLegacyGlass() &&
+           [NSStringFromClass(page.navigationController.class) isEqualToString:@"SPNavigationController"];
 }
 
-static void dropNavbarTitle(UIViewController *page) {
+static void clearNavbarBackground(UIViewController *page) {
+    if (!navbarLegacyBar(page) || !page.viewIfLoaded.window ||
+        page.navigationController.topViewController != page) return;
     UIView *bar = page.navigationController.navigationBar;
-    UIView *title = SGRChildNamed(SGRChildNamed(bar, @"_UINavigationBarContentView"), @"_UINavigationBarTitleControl");
-    [(UIView *)objc_getAssociatedObject(title, &kNavbarTitleGlass) removeFromSuperview];
+    UIView *background = SGRChildNamed(bar, @"_UIBarBackground");
+    // The pinned Back is OUTSIDE the bar. Its opaque UIKit background can
+    // therefore be masked out completely, rather than having just a hole
+    // punched over the button (as most pages do).
+    if (background) {
+        if (!objc_getAssociatedObject(background, &kNavbarHiddenBarBackground))
+            objc_setAssociatedObject(background, &kNavbarHiddenBarBackground, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (![background.layer.mask isMemberOfClass:CALayer.class])
+            background.layer.mask = [CALayer layer];
+    }
+}
+
+static void dressNavbarBar(UIViewController *page) {
+    if (!navbarLegacyBar(page) || !page.viewIfLoaded.window) return;
+    SGRDressBarPageBackOnly(page);
+    clearNavbarBackground(page);
+}
+
+static void undressNavbarBar(UIViewController *page) {
+    if (!navbarLegacyBar(page)) return;
+    UIView *background = SGRChildNamed(page.navigationController.navigationBar, @"_UIBarBackground");
+    if (objc_getAssociatedObject(background, &kNavbarHiddenBarBackground)) {
+        background.layer.mask = nil;
+        objc_setAssociatedObject(background, &kNavbarHiddenBarBackground, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    SGRUndressBarPage(page);
 }
 
 // The tab editor: a preview of the bar, how it labels its tabs, the tabs in the order the bar shows them
@@ -771,17 +786,17 @@ static void dropNavbarTitle(UIViewController *page) {
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     SGInsetForBars(self.tableView);
-    glassNavbarTitle(self);
+    dressNavbarBar(self);
 }
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    glassNavbarTitle(self);
+    dressNavbarBar(self);
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
     [super viewDidDisappear:animated];
-    dropNavbarTitle(self);
+    undressNavbarBar(self);
 }
 
 // The preview and the cards, from the list as it stands.
@@ -1089,10 +1104,32 @@ static void dropNavbarTitle(UIViewController *page) {
 
 @end
 
+static void registerNavbarLegacyBar(void);
+
 UIViewController *SGRNavbarSettingsPage(void) {
+    registerNavbarLegacyBar();
     return [SGRNavbarPage new];
 }
 
 UIViewController *SGRNavbarEditorPage(void) {
+    registerNavbarLegacyBar();
     return [SGRNavbarPage new];
+}
+
+// Register before the navigation push, so the blurred header is concealed
+// during the transition, not just after the page's first layout pass.
+static void registerNavbarLegacyBar(void) {
+    if (!SGRedesignedUI() || !SGBelowiOS26()) return;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        SGRDressBarPagesFound(^UIViewController *(UINavigationController *nav) {
+            UIViewController *page = nav.topViewController;
+            return [page isKindOfClass:SGRNavbarPage.class] && navbarLegacyBar(page) ? page : nil;
+        }, SGRBarStyleBackOnly);
+        SGRObserveBarPasses(^(UIView *bar) {
+            UINavigationController *nav = SGRNavigationOf(bar);
+            UIViewController *page = nav.topViewController;
+            if ([page isKindOfClass:SGRNavbarPage.class]) clearNavbarBackground(page);
+        });
+    });
 }
