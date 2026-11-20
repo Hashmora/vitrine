@@ -18,11 +18,13 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Search.h"
+#import "Settings/SGModPage.h"
+#import "Redesigned/Kit/SGRGlass.h"
 
 // Layout passes without the header before that is logged.
 static const NSUInteger kMissesLogged = 60;
 
-static char kTitleKey, kFaceGlassKey, kFollowerKey;
+static char kTitleKey, kFaceGlassKey, kFollowerKey, kScannablesGlassKey;
 
 static __weak UICollectionView *sg_list;
 static __weak UIStackView *sg_row;
@@ -171,10 +173,15 @@ static void layoutHeader(UIStackView *row) {
     vanish(sg_scrim);
 
     UIView *face = nil;
+    UIView *camera = nil;
+    BOOL codesEnabled = SGFlag(SGRKeySearchSpotifyCodes, NO);
     NSString *text = titleText(row);
     for (UIView *part in row.arrangedSubviews) {
         if (SGRIsAvatar(part) && !face) face = part;
-        else vanish(part);
+        else if ([part.accessibilityIdentifier isEqualToString:@"SearchToolBar.AccessoryItem.ScannablesButton"]) {
+            camera = part;
+            if (!codesEnabled) vanish(part);
+        } else vanish(part);
     }
     if (row.semanticContentAttribute != UISemanticContentAttributeForceRightToLeft) {
         row.semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
@@ -194,7 +201,30 @@ static void layoutHeader(UIStackView *row) {
     UIFont *font = SGRFont(UIFontTextStyleLargeTitle, UIFontWeightBold, UIContentSizeCategoryLarge);
     if (![title.font isEqual:font]) title.font = font;
 
+    // Retain Spotify's original button and action. Its arranged slot is off
+    // the left edge after we reverse the row to put the avatar on the right;
+    // translate the *button* beside the avatar without altering the stack.
+    // A transform preserves hit testing and survives the next SwiftUI layout.
+    if (camera) {
+        if (codesEnabled && face) {
+            CGFloat x = CGRectGetMinX(face.frame) - SGRGrid - camera.bounds.size.width;
+            // The arrangeable's own x remains stable before the transform.
+            // A different transform from a previous pass is not included in center.
+            CGFloat baseX = camera.center.x - camera.bounds.size.width / 2;
+            CGAffineTransform translation = CGAffineTransformMakeTranslation(x - baseX, 0);
+            if (!CGAffineTransformEqualToTransform(camera.transform, translation)) camera.transform = translation;
+            camera.alpha = 1;
+            camera.hidden = NO;
+            camera.userInteractionEnabled = YES;
+            camera.accessibilityElementsHidden = NO;
+            if (SGBelowiOS26()) SGRGlassInside(camera, &kScannablesGlassKey, 44);
+            [row bringSubviewToFront:camera];
+        } else {
+            camera.transform = CGAffineTransformIdentity;
+        }
+    }
     CGFloat trailing = face ? CGRectGetMinX(face.frame) - SGRGrid : row.bounds.size.width;
+    if (camera && codesEnabled && face) trailing = MIN(trailing, CGRectGetMinX(camera.frame) - SGRGrid);
     CGFloat height = ceil(font.lineHeight);
     CGRect frame = CGRectMake(0, round(CGRectGetMidY(row.bounds) - height / 2), MAX(0, trailing), height);
     if (!CGRectEqualToRect(title.frame, frame)) title.frame = frame;
@@ -235,4 +265,18 @@ static void layoutHeader(UIStackView *row) {
         @"_TtC21Browse_BrowsePageImpl24BrowsePageViewController",
         @"_TtC29ListeningActivity_ElementsKit21AdaptiveFaceContainer",
     ]);
+}
+
+// The Search page did not previously have settings of its own. Keep Spotify's
+// original scannables navigation intact; the sheet it opens is a later task.
+UIViewController *SGRSearchSettingsPage(void) {
+    SGModRow *codes = SGOptionRow(@"Spotify Codes", @"Show Spotify's original camera action in Search", SGRKeySearchSpotifyCodes);
+    codes.changed = ^(BOOL enabled) {
+        SGPrefsChanged();
+        [sg_row setNeedsLayout];
+        [sg_row.superview setNeedsLayout];
+    };
+    return [[SGModPage alloc] initWithTitle:@"Search" intro:nil sections:@[
+        SGSection(nil, @[codes]),
+    ] footer:nil];
 }

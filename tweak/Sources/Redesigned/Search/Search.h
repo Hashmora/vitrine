@@ -24,3 +24,7 @@ extern NSString *const SGRSearchListIdentifier;
 // SearchSections.x: measures how far the cards sit below the top of the list because of the sections collapsed above
 // them, and moves every cell of the list up by that much. Cheap to call on every layout pass of the page.
 void SGRSearchCloseGap(UICollectionView *list);
+
+// Original Browse header camera/Spotify Codes action; optional in Redesigned, off by default.
+#define SGRKeySearchSpotifyCodes @"spotifyglass.redesign.search.spotifyCodes"
+UIViewController *SGRSearchSettingsPage(void);
