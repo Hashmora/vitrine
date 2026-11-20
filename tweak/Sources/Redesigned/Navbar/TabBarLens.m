@@ -186,19 +186,40 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _longSpecular.opacity = 0;
     _longSpecular.zPosition = 4;
     [self.layer addSublayer:_longSpecular];
-    // A very subtle brightened glass patch under the finger, not a flat white
-    // overlay over the entire selected capsule. It disappears on release.
+    // The press feedback follows the touch's highlighted state, as in
+    // Telegram's GlassBarButtonComponent. Unlike its non-glass button scale,
+    // this is a local luminance cue: the tab bar already animates its scale.
     _fingerHighlight = [CAGradientLayer layer];
     _fingerHighlight.name = @"Vitrine.LegacyLensFingerHighlight";
     _fingerHighlight.type = kCAGradientLayerRadial;
-    _fingerHighlight.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.13].CGColor,
-                                 (id)[UIColor colorWithWhite:1 alpha:0.05].CGColor,
+    _fingerHighlight.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.22].CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.09].CGColor,
                                  (id)UIColor.clearColor.CGColor];
-    _fingerHighlight.locations = @[@0, @0.46, @1];
+    _fingerHighlight.locations = @[@0, @0.42, @1];
     _fingerHighlight.opacity = 0;
     _fingerHighlight.zPosition = 1;
     [self.layer addSublayer:_fingerHighlight];
     return self;
+}
+
+// Keep touch feedback independent of the lift spring. A quick tap can
+// finish before the glass reaches full height; the light must still appear
+// immediately and fade from its *current* value when the finger lifts.
+- (void)setFingerHighlightPressed:(BOOL)pressed {
+    CGFloat from = _fingerHighlight.presentationLayer
+        ? _fingerHighlight.presentationLayer.opacity : _fingerHighlight.opacity;
+    CGFloat to = pressed ? 1.0 : 0.0;
+    [_fingerHighlight removeAnimationForKey:@"vitrine.legacyFingerHighlight"];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _fingerHighlight.opacity = to;
+    [CATransaction commit];
+    CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    fade.fromValue = @(from);
+    fade.toValue = @(to);
+    fade.duration = pressed ? 0.11 : 0.19;
+    fade.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    [_fingerHighlight addAnimation:fade forKey:@"vitrine.legacyFingerHighlight"];
 }
 
 - (BOOL)refracting { return _glassOn; }
@@ -411,6 +432,8 @@ static BOOL bubbles(void);
         [self stop];
         [self dropPlayback];
         _touching = NO;
+        [_fingerHighlight removeAnimationForKey:@"vitrine.legacyFingerHighlight"];
+        _fingerHighlight.opacity = 0;
         _lift = _vLift = _liftTarget = 0;
         [self showGlass:NO animated:NO];
         [self snapToRest];
@@ -653,6 +676,10 @@ static BOOL bubbles(void) {
         [self showGlass:YES animated:YES];
     }
     [self moveTouchToX:x];
+    // Touch-down drives the local highlight directly, rather than waiting
+    // for the lifted-lens spring to reach a visible fraction of its height.
+    [self applyPose];
+    [self setFingerHighlightPressed:bubbles()];
 }
 
 // The recognizer and the glass MUST choose a hovered tab using the same
@@ -676,6 +703,7 @@ static BOOL bubbles(void) {
 - (void)endTouch {
     if (!_touching) return;
     _touching = NO;
+    [self setFingerHighlightPressed:NO];
     ++_pulseGeneration;
     _liftTarget = 0;
     _tL = CGRectGetMinX(_restFrame);
@@ -823,10 +851,14 @@ static BOOL bubbles(void) {
     if (_touching) {
         CGFloat localX = self.bounds.size.width / 2 + (_touchLastX - center.x) / MAX(0.1, sx);
         CGFloat unitX = MAX(0.15, MIN(0.85, localX / MAX(1, self.bounds.size.width)));
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
         _fingerHighlight.startPoint = CGPointMake(unitX, 0.5);
         _fingerHighlight.endPoint = CGPointMake(unitX + 0.35, 0.5);
+        [CATransaction commit];
     }
-    _fingerHighlight.opacity = _touching ? MIN(1, MAX(0, _lift)) : 0;
+    // Opacity is owned solely by setFingerHighlightPressed: display-link
+    // frames must not override the touch-down / touch-up animation.
     [self updateGlyphSourceMasksAt:center sx:sx];
     if (_tintMask) {
         [CATransaction begin];
