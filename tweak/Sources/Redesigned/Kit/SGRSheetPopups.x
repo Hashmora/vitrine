@@ -327,7 +327,15 @@ static BOOL isShareActionRow(UIView *row) {
            row.bounds.size.width >= 300 && row.bounds.size.height >= 90 && row.bounds.size.height < 130;
 }
 
+// SwiftUI owns PlatformGroupContainer.subviews. Inserting UIKit backing views
+// directly among the graphics makes SwiftUI discard/reconcile a native icon;
+// Stage 50 showed the fourth (More) _UIGraphicsView disappearing completely.
+// Keep the glass as a sibling BEHIND the entire SwiftUI group, in the scroll
+// view that owns it. This also lets the glass move with horizontal scrolling.
 static UIView *backingInShareRow(UIView *row, const void *key, CGRect frame) {
+    UIView *scroll = row.superview;
+    if (!scroll || ![NSStringFromClass(scroll.class) containsString:@"HostingScrollView"])
+        return nil;
     UIView *backing = objc_getAssociatedObject(row, key);
     if (!backing) {
         backing = [UIView new];
@@ -335,21 +343,22 @@ static UIView *backingInShareRow(UIView *row, const void *key, CGRect frame) {
         backing.accessibilityElementsHidden = YES;
         objc_setAssociatedObject(row, key, backing, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    backing.frame = frame;
-    if (backing.superview != row) [row insertSubview:backing atIndex:0];
-    else if (key != &kShareMore && row.subviews.firstObject != backing)
-        [row sendSubviewToBack:backing];
-    // A backing belongs only to its own button, stays inside the 390pt
-    // viewport and can never multiply during repeated SwiftUI layout passes.
+    CGRect inScroll = [row convertRect:frame toView:scroll];
+    if (!CGRectEqualToRect(backing.frame, inScroll)) backing.frame = inScroll;
+    if (backing.superview != scroll) [scroll insertSubview:backing belowSubview:row];
+    else if ([scroll.subviews indexOfObject:backing] > [scroll.subviews indexOfObject:row])
+        [scroll insertSubview:backing belowSubview:row];
+    // Glass stays behind the native SwiftUI ImageLayer and cannot consume
+    // touches. Only our backdrop view is under the row; the original glyph
+    // is neither moved nor hidden, even on the very first Share presentation.
     UIView *glass = SGRGlassFlatBox(backing, key, NO);
     if (glass) SGRDarkenGlass(glass, &kNativeShareActionDim, frame.size.height / 2, 0.38);
     return backing;
 }
 
-// On the native Share sheet's second row the four graphics occupy x=16,
-// 96, 176, 256. The last one is More, NOT x=336 (that coordinate belongs to
-// a graphics item in the *first* row). Attach glass directly below its bitmap
-// when SwiftUI creates it, without disturbing the interactive image.
+// The off-platform More is the fourth SwiftUI graphics item at x256, y8.
+// Its bitmap must be left alone; attach the underlay to the parent scroller,
+// never to PlatformGroupContainer's dynamically reconciled subview array.
 static void shareMoreGraphicsGlass(UIView *image) {
     UIView *row = image.superview;
     if (!isShareActionRow(row) || !inNativeShareSection(row, NO) ||
@@ -358,15 +367,7 @@ static void shareMoreGraphicsGlass(UIView *image) {
         fabs(CGRectGetMinY(image.frame) - 8) > 3 ||
         fabs(image.bounds.size.width - 56) > 3 ||
         fabs(image.bounds.size.height - 56) > 3) return;
-    // x256..312 stays inside the actual 328pt row. Preserve the original
-    // SwiftUI drawing in front of the glass and do not change its hit test.
-    UIView *backing = backingInShareRow(row, &kShareMore, CGRectMake(256, 8, 56, 56));
-    if (backing && backing.superview == row) {
-        NSUInteger backingIndex = [row.subviews indexOfObject:backing];
-        NSUInteger imageIndex = [row.subviews indexOfObject:image];
-        if (imageIndex != NSNotFound && backingIndex + 1 != imageIndex)
-            [row insertSubview:backing belowSubview:image];
-    }
+    backingInShareRow(row, &kShareMore, image.frame);
 }
 
 static void shareActionGlass(UIView *circle) {
@@ -406,8 +407,9 @@ static void shareRowChrome(UIView *row) {
         // The graphics for More can be installed after the first row pass.
         // When present, put the backdrop immediately below that glyph.
         BOOL foundMore = NO;
-        // Reordering the lens changes row.subviews; iterate a snapshot.
-        for (UIView *sub in [row.subviews copy]) {
+        // Keep the original SwiftUI row untouched; the backing lives in its
+        // scrolling parent and cannot replace a native graphics view.
+        for (UIView *sub in row.subviews) {
             if ([NSStringFromClass(sub.class) containsString:@"_UIGraphicsView"] &&
                 fabs(CGRectGetMinX(sub.frame) - 256) < 3 &&
                 fabs(CGRectGetMinY(sub.frame) - 8) < 3) {
@@ -690,8 +692,8 @@ static void connectMenuChrome(UIViewController *controller) {
     if (actionCircle) SGRPassView(actionCircle, ^(UIView *v) { shareActionGlass(v); });
     Class actionRow = NSClassFromString(@"_TtCC7SwiftUI17HostingScrollView22PlatformGroupContainer");
     if (actionRow) SGRPassView(actionRow, ^(UIView *v) { shareRowChrome(v); });
-    // The off-platform More icon is created independently by SwiftUI. Watch
-    // its actual graphics view, so its lens is positioned on that first pass.
+    // More is created independently by SwiftUI. Inspect its native graphics
+    // view but never add siblings to that view's managed row.
     Class graphics = SGRSwiftClass(@"SwiftUI", @"_UIGraphicsView");
     if (graphics) SGRPassView(graphics, ^(UIView *v) { shareMoreGraphicsGlass(v); });
     SGRPassView(SGRSwiftClass(@"Share_MenuImpl", @"BottomAutoScrollingScrollView"), ^(UIView *view) { shareScrollChrome(view); });
