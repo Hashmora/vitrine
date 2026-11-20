@@ -16,6 +16,15 @@ static void dress(UIViewController *page) {
         SGRUnclipUpTo(button, ^BOOL(UIView *v) { return v.superview == page.navigationController.navigationBar; });
         SGRGlassInside(button, &kShareGlass, 44);
     }
+    // The compact sticky title is vertically independent of the pinned Back.
+    // Align their visual centres instead of assuming Spotify's 65pt label
+    // position matches the 62pt/44pt glass Back at every screen size.
+    __block UIView *pinnedBack = nil;
+    SGForEachView(page.viewIfLoaded, ^(UIView *item) {
+        if (!pinnedBack && [item isKindOfClass:SGRMirrorButton.class] &&
+            [item.accessibilityLabel isEqualToString:@"Back"] &&
+            fabs(item.bounds.size.height - 44) < 2) pinnedBack = item;
+    });
     SGForEachView(page.viewIfLoaded, ^(UIView *view) {
         if (![NSStringFromClass(view.class) hasSuffix:@"HeaderView"] ||
             ![NSStringFromClass(view.class) containsString:@"Browse_GenrePageImpl"]) return;
@@ -37,6 +46,17 @@ static void dress(UIViewController *page) {
             if (![NSStringFromClass(label.class) hasSuffix:@"EncoreLabel"] || label.bounds.size.height > 25) return;
             UILabel *text = (UILabel *)SGRChildNamed(label, @"UILabel");
             if (![text.text isEqualToString:@"Genres"]) return;
+            if (label.hidden || label.alpha < 0.05) return;
+            // Measure an unshifted label on each pass: UIKit can move the
+            // sticky header while scrolling and repeated passes must not
+            // accumulate translations.
+            label.transform = CGAffineTransformIdentity;
+            if (pinnedBack) {
+                CGFloat backY = CGRectGetMidY([pinnedBack convertRect:pinnedBack.bounds toView:page.viewIfLoaded]);
+                CGFloat titleY = CGRectGetMidY([label convertRect:label.bounds toView:page.viewIfLoaded]);
+                CGFloat delta = round(backY - titleY);
+                if (fabs(delta) < 24) label.transform = CGAffineTransformMakeTranslation(0, delta);
+            }
             SGRGlassTitleCapsule(label, &kTitleGlass, SGRTitleWidth(text), label.bounds.size.width, ^BOOL(UIView *v) { return v == view; });
         });
     });
