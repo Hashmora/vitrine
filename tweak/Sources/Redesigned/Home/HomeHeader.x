@@ -241,8 +241,7 @@ static void place(UIView *view, CGRect frame) {
     if (!CGPointEqualToPoint(view.center, center)) view.center = center;
 }
 
-// New Music Friday: on a Friday the pill wears a thin ring of pinks and purples, turning slowly round it, as a nod to the
-// week's new releases. A layer of the pill's glass holder, cut to a capsule's outline. It goes and comes back with the
+// New Music Friday: the Friday ring follows the accent sampled from Spotify's live banner (or the current first card until the banner is available). A layer of the pill's glass holder, cut to a capsule's outline. It goes and comes back with the
 // pill's material as the title row scrolls away (riseGlass), and its turn is taken off the rest of the week and under
 // Reduce Motion, so the next layout stops it after midnight or as Reduce Motion goes on. A turn of 6 s needs no more
 // than 30 frames a second.
@@ -251,6 +250,11 @@ static const CGFloat kFridayRing = 1.5;
 static const CFTimeInterval kFridayTurn = 6;
 
 static BOOL sg_glassShown = YES;
+static UIColor *sg_pageTint;
+static UIColor *sg_fridayAccent;
+static __weak UIImage *sg_fridayAccentImage;
+static NSUInteger sg_fridayAccentPriority; // 2: Friday banner; 1: NMF cover card.
+static char kFridayPaletteKey;
 
 static BOOL isFriday(void) {
     return [NSCalendar.currentCalendar component:NSCalendarUnitWeekday fromDate:NSDate.date] == 6;
@@ -291,9 +295,6 @@ static void layoutFriday(UIView *holder, CGSize size) {
         colors.type = kCAGradientLayerConic;
         colors.startPoint = CGPointMake(0.5, 0.5);
         colors.endPoint = CGPointMake(0.5, 0);
-        UIColor *pink = [UIColor colorWithRed:1 green:0.36 blue:0.72 alpha:1], *violet = [UIColor colorWithRed:0.62 green:0.36 blue:1 alpha:1];
-        UIColor *magenta = [UIColor colorWithRed:0.92 green:0.3 blue:1 alpha:1], *rose = [UIColor colorWithRed:1 green:0.55 blue:0.8 alpha:1];
-        colors.colors = @[(id)pink.CGColor, (id)violet.CGColor, (id)magenta.CGColor, (id)rose.CGColor, (id)pink.CGColor];
         [ring addSublayer:colors];
         CAShapeLayer *outline = [CAShapeLayer layer];
         outline.fillColor = nil;
@@ -305,6 +306,25 @@ static void layoutFriday(UIView *holder, CGSize size) {
         objc_setAssociatedObject(holder, &kFridayKey, ring, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     colors = (CAGradientLayer *)ring.sublayers.firstObject;
+    // No fixed Friday palette: use the same sampled banner accent as Music's
+    // background. Until the banner is loaded use Home's first-card tint.
+    UIColor *base = sg_fridayAccent ?: sg_pageTint;
+    if (!base) base = UIColor.whiteColor;
+    UIColor *previous = objc_getAssociatedObject(ring, &kFridayPaletteKey);
+    if (![previous isEqual:base]) {
+        CGFloat hue = 0, saturation = 0, brightness = 0, alpha = 0;
+        if (![base getHue:&hue saturation:&saturation brightness:&brightness alpha:&alpha]) {
+            hue = 0; saturation = 0; brightness = 1;
+        }
+        CGFloat bright = MAX(0.66, brightness), vivid = saturation > 0.08 ? MAX(0.42, saturation) : 0;
+        UIColor *primary = [base colorWithAlphaComponent:1];
+        UIColor *light = [UIColor colorWithHue:hue saturation:vivid * 0.55 brightness:MIN(1, bright * 1.16) alpha:1];
+        UIColor *deep = [UIColor colorWithHue:hue saturation:vivid brightness:MAX(0.42, bright * 0.74) alpha:1];
+        // A conic light/shade sweep of one hue, not a pink-violet rainbow.
+        colors.colors = @[(id)primary.CGColor, (id)light.CGColor,
+                          (id)primary.CGColor, (id)deep.CGColor, (id)primary.CGColor];
+        objc_setAssociatedObject(ring, &kFridayPaletteKey, base, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     if (ring.superlayer != holder.layer) [holder.layer addSublayer:ring];
     ring.hidden = NO;
     CGRect bounds = (CGRect){CGPointZero, size};
@@ -344,14 +364,14 @@ static CGFloat layoutPill(UIView *header, UIStackView *stack, UIView *face) {
 
 #pragma mark - the page's color
 
-static UIColor *sg_pageTint;
 static __weak SGRHomeTintView *sg_tintView;
-static char kFridayImageKey, kFridayColorKey;
+static char kFridayImageKey, kFridayColorKey, kMusicCardImageKey, kMusicCardColorKey;
 
 static void paintTint(SGRHomeTintView *tint, BOOL animated) {
     CAGradientLayer *layer = (CAGradientLayer *)tint.layer;
     UIColor *friday = tint.superview ? objc_getAssociatedObject(tint.superview, &kFridayColorKey) : nil;
-    UIColor *top = friday ?: (sg_pageTint ?: UIColor.blackColor);
+    UIColor *musicCard = tint.superview ? objc_getAssociatedObject(tint.superview, &kMusicCardColorKey) : nil;
+    UIColor *top = friday ?: (musicCard ?: (sg_pageTint ?: UIColor.blackColor));
     NSArray *colors = @[(id)top.CGColor, (id)[top colorWithAlphaComponent:0].CGColor];
     if ([layer.colors isEqualToArray:colors]) return;
     if (animated && tint.window) {
@@ -363,10 +383,53 @@ static void paintTint(SGRHomeTintView *tint, BOOL animated) {
     layer.colors = colors;
 }
 
+static BOOL musicFilterSelected(void) {
+    for (UIControl *chip in chips(sg_stack))
+        if ([chip.accessibilityIdentifier isEqualToString:@"home-feed-music-chip"])
+            return chosen(chip);
+    return NO;
+}
+
+// Spotify colors the selected Music filter itself; on the Friday page this
+// gives us the same live accent as its NMF text/button, not a guessed hue.
+// Reject neutral/dim fills and fall back to the sampled banner artwork.
+static UIColor *selectedMusicAccent(void) {
+    for (UIControl *chip in chips(sg_stack)) {
+        if (![chip.accessibilityIdentifier isEqualToString:@"home-feed-music-chip"] || !chosen(chip)) continue;
+        UIColor *color = chip.backgroundColor;
+        CGFloat hue = 0, sat = 0, brightness = 0, alpha = 0;
+        if ([color getHue:&hue saturation:&sat brightness:&brightness alpha:&alpha] &&
+            sat > 0.16 && brightness > 0.32 && alpha > 0.4) return color;
+    }
+    return nil;
+}
+
+static void repaintFridayRing(void) {
+    UIView *glass = sg_header ? objc_getAssociatedObject(sg_header, &kGlassKey) : nil;
+    if (glass && glass.bounds.size.width > 1 && isFriday()) layoutFriday(glass, glass.bounds.size);
+}
+
+// The cover sampling path is already asynchronous and cached. Prioritize the
+// actual Friday logo over a carousel cover; an older async result must never
+// replace the accent of a newer image/page.
+static void sampleFridayAccent(UIImage *image, NSUInteger priority) {
+    if (!image || !isFriday() || !SGBelowiOS26() || !SGUseLegacyGlass() ||
+        priority < sg_fridayAccentPriority) return;
+    if (sg_fridayAccentImage == image && priority == sg_fridayAccentPriority) return;
+    sg_fridayAccentImage = image;
+    sg_fridayAccentPriority = priority;
+    SGRHomeTintForCover(image, ^(UIColor *color) {
+        if (!color || sg_fridayAccentImage != image || sg_fridayAccentPriority != priority) return;
+        sg_fridayAccent = color;
+        repaintFridayRing();
+    });
+}
+
 void SGRHomeSetPageTint(UIColor *color) {
     if (color == sg_pageTint || [color isEqual:sg_pageTint]) return;
     sg_pageTint = color;
     if (sg_tintView) paintTint(sg_tintView, YES);
+    if (!sg_fridayAccent) repaintFridayRing();
 }
 
 // Music's full-bleed Friday banner isn't a large Top Picks shelf. Without a
@@ -378,8 +441,20 @@ void SGRHomeTintFridayBanner(UIView *banner, UIImage *image) {
     UIView *page = banner;
     while (page && ![page.accessibilityIdentifier hasPrefix:@"HomePageView-"]) page = page.superview;
     if (!page) return;
-    if (objc_getAssociatedObject(page, &kFridayImageKey) == image) return;
+    BOOL sameImage = objc_getAssociatedObject(page, &kFridayImageKey) == image;
+    UIColor *nativeAccent = isFriday() ? selectedMusicAccent() : nil;
+    if (sameImage && (!nativeAccent || [nativeAccent isEqual:objc_getAssociatedObject(page, &kFridayColorKey)])) return;
     objc_setAssociatedObject(page, &kFridayImageKey, image, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (nativeAccent) {
+        // Source of truth: Spotify's current Music filter, which follows NMF.
+        sg_fridayAccent = nativeAccent;
+        sg_fridayAccentPriority = 3;
+        repaintFridayRing();
+        objc_setAssociatedObject(page, &kFridayColorKey, nativeAccent, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (sg_tintView.superview == page) paintTint(sg_tintView, YES);
+        return;
+    }
+    sampleFridayAccent(image, 2);
     objc_setAssociatedObject(page, &kFridayColorKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     __weak UIView *weakPage = page;
     SGRHomeTintForCover(image, ^(UIColor *color) {
@@ -429,10 +504,12 @@ static void layoutTint(UIView *view) {
     // Both pointers must follow the new HomePageView; before Stage 59 the
     // stale pointer stopped the gradient being created for Music and Home.
     sg_tintView = tint;
-    paintTint(tint, NO);
     if (tint.superview != page) [page insertSubview:tint atIndex:0];
+    paintTint(tint, NO);
     CGRect frame = CGRectMake(0, 0, page.bounds.size.width, kTintHeight);
     if (!CGRectEqualToRect(tint.frame, frame)) tint.frame = frame;
+    BOOL bannerVisible = NO;
+    __block UIImage *musicCover = nil;
     for (UIView *sub in page.subviews) {
         if (![sub isKindOfClass:UICollectionView.class]) continue;
         if (![sub.backgroundColor isEqual:UIColor.clearColor]) sub.backgroundColor = UIColor.clearColor;
@@ -441,8 +518,35 @@ static void layoutTint(UIView *view) {
         // earlier section classifier sometimes saw one. Read the *visible*
         // banner image directly, once per image, as a reliable fallback.
         if (!SGBelowiOS26() || !SGUseLegacyGlass()) continue;
-        for (UICollectionViewCell *cell in ((UICollectionView *)sub).visibleCells) {
+        UICollectionView *collection = (UICollectionView *)sub;
+        NSArray<UICollectionViewCell *> *cells = [collection.visibleCells sortedArrayUsingComparator:^NSComparisonResult(UICollectionViewCell *a, UICollectionViewCell *b) {
+            return [[collection indexPathForCell:a] compare:[collection indexPathForCell:b]];
+        }];
+        for (UICollectionViewCell *cell in cells) {
+            if (cell.hidden || cell.contentView.hidden) continue;
             UIView *root = cell.contentView.subviews.firstObject.subviews.firstObject;
+            if (musicFilterSelected() && !musicCover &&
+                ![NSStringFromClass(root.class) containsString:@"Discovery_BannerKit.FullBleedBannerElementView"]) {
+                SGForEachView(cell.contentView, ^(UIView *v) {
+                    if (!musicCover && [v isKindOfClass:UIImageView.class] &&
+                        v.bounds.size.width >= 90 && ((UIImageView *)v).image)
+                        musicCover = ((UIImageView *)v).image;
+                });
+            }
+            // On Friday, Home itself may show the NMF carousel cover before
+            // Music's logo banner has loaded. Use it only as a temporary ring
+            // accent; never give Home the banner-specific background override.
+            if (isFriday() && sg_fridayAccentPriority < 2 && !sg_fridayAccentImage) {
+                __block UIImage *cover = nil;
+                SGForEachView(cell.contentView, ^(UIView *v) {
+                    if (cover || ![v.accessibilityLabel hasPrefix:@"New Music Friday"]) return;
+                    SGForEachView(v, ^(UIView *child) {
+                        if (!cover && [child isKindOfClass:UIImageView.class])
+                            cover = ((UIImageView *)child).image;
+                    });
+                });
+                if (cover) sampleFridayAccent(cover, 1);
+            }
             if (![NSStringFromClass(root.class) containsString:@"Discovery_BannerKit.FullBleedBannerElementView"]
                 || cell.hidden || cell.contentView.hidden) continue;
             __block UIImageView *bannerImage = nil;
@@ -451,9 +555,36 @@ static void layoutTint(UIView *view) {
                     part.bounds.size.width >= 100 && ((UIImageView *)part).image)
                     bannerImage = (UIImageView *)part;
             });
-            if (bannerImage) SGRHomeTintFridayBanner(root, bannerImage.image);
+            if (bannerImage) {
+                bannerVisible = YES;
+                SGRHomeTintFridayBanner(root, bannerImage.image);
+            }
             break;
         }
+    }
+    // On an ordinary Music day there is no Friday banner. Sample that page's
+    // first card instead of borrowing Home's last tint (which can be stale).
+    if (!bannerVisible && musicFilterSelected() && musicCover) {
+        if (objc_getAssociatedObject(page, &kMusicCardImageKey) != musicCover) {
+            objc_setAssociatedObject(page, &kMusicCardImageKey, musicCover, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(page, &kMusicCardColorKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            __weak UIView *weakPage = page;
+            SGRHomeTintForCover(musicCover, ^(UIColor *color) {
+                UIView *strongPage = weakPage;
+                if (!strongPage || !color || objc_getAssociatedObject(strongPage, &kMusicCardImageKey) != musicCover) return;
+                objc_setAssociatedObject(strongPage, &kMusicCardColorKey, color, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                if (sg_tintView.superview == strongPage) paintTint(sg_tintView, YES);
+            });
+        }
+        // Filter data may replace the existing page without replacing its
+        // identity. Clear its old Friday override only at the top of the feed;
+        // scrolling the Friday banner offscreen must never clear its color.
+        UIScrollView *feed = nil;
+        for (UIView *v in page.subviews) if ([v isKindOfClass:UIScrollView.class]) { feed = (UIScrollView *)v; break; }
+        if (feed && feed.contentOffset.y <= -feed.adjustedContentInset.top + 12) {
+            objc_setAssociatedObject(page, &kFridayColorKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        paintTint(tint, YES);
     }
 }
 
