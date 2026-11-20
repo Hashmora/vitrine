@@ -377,6 +377,10 @@ static SGRPlayerMorph *morphFor(SPTBarOverlayPresentationTransition *transition,
 static const CFTimeInterval kGiveUp = 0.9;   // ticking with no move this long; UIKit's whole presentation runs about 0.5 s
 static const float kCloseSpeed = 1.5;         // how much faster than Spotify's a close it runs on its own plays
 
+// Defined by Legacy TabBar (Redesigned/Navbar/TabBarLegacy.x). Keep the
+// player independent of the navbar's private implementation/header.
+extern BOOL SGRLegacyTabBarMinimized(void);
+
 @interface SGRMorphFollower : NSObject
 @property (nonatomic, strong) SGRPlayerMorph *morph;
 @property (nonatomic, weak) UIView *container, *overlay;
@@ -424,6 +428,18 @@ static void runAtSpeed(CALayer *layer, float speed) {
     }
     CALayer *drawn = overlay.layer.presentationLayer;
     CGFloat rest = self.morph.restY > 0 ? self.morph.restY : container.bounds.size.height;
+    // Spotify 9.1.90 still parks its CompactOverlayTransition at the *expanded*
+    // now-playing bar when a gesture is reversed. The legacy minimized card,
+    // however, has been moved down into the tab row by InlineShift. Without
+    // removing this shift from the progress denominator the lowest Spotify
+    // presentation y (727 on the captured device) is read as progress 0.084,
+    // so our sheet/avatar hover 67pt above the real compact card (y=794).
+    // Use the real live inline shift, never a fixed 67pt correction.
+    if (SGRLegacyTabBarMinimized()) {
+        CGFloat inlineShift = SGRNowPlayingBarInlineShift();
+        if (inlineShift > 0 && inlineShift < rest * 0.25)
+            rest -= inlineShift;
+    }
     // An open's first frame has no presentation layer yet and its model already holds the end; Spotify starts it at the bar.
     CGFloat y = drawn ? drawn.frame.origin.y : rest;
     self.lastT = rest > 0 ? MIN(1, MAX(0, 1 - y / rest)) : 1;
@@ -436,7 +452,11 @@ static void runAtSpeed(CALayer *layer, float speed) {
     }
     self.wasInteractive = interactive;
     BOOL moved = fabs(y - self.lastY) > 0.5;
-    BOOL moving = overlay.layer.animationKeys.count > 0 || moved || interactive;
+    // A cancelled interactive open can leave a completed UIKit animation key
+    // attached even though its presentation has already reached the bar.
+    // Never wait for that stale key to disappear before restoring our masks.
+    BOOL atRest = !interactive && self.lastT < 0.003 && fabs(y - rest) < 1.5;
+    BOOL moving = moved || interactive || (!atRest && overlay.layer.animationKeys.count > 0);
     self.lastY = y;
     self.still = moving ? 0 : self.still + 1;
     // Let go once still, or kGiveUp after it last moved whatever the layer holds: a mask and a transform left on the player
