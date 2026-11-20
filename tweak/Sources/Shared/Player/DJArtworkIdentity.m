@@ -10,6 +10,38 @@ static BOOL djTitle(NSString *title) {
     return [title isEqualToString:@"DJ"] || [title hasPrefix:@"DJ,"] || [title hasPrefix:@"DJ."] ||
            [title hasPrefix:@"Your DJ"] || [title hasPrefix:@"AI DJ"];
 }
+// In Spotify 9.1.90, Home and Recents identify both the real AI DJ and a
+// user playlist as "DJ, Playlist". The FINAL accessibility publisher field is
+// different: "DJ, Playlist, Spotify" vs "DJ, Playlist, <owner>" (Recents may
+// include a play-count sentence before the playlist type). Do not infer the
+// publisher from an arbitrary occurrence of the word "Spotify" in the title.
+typedef NS_ENUM(NSInteger, SGDJArtworkPublisher) {
+    SGDJArtworkPublisherUnknown = 0,
+    SGDJArtworkPublisherSpotify,
+    SGDJArtworkPublisherOther,
+};
+static NSString *sgDJTrim(NSString *value) {
+    return [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+static SGDJArtworkPublisher sgDJCardPublisher(UIView *card) {
+    if (!card || !djTitle(card.accessibilityLabel)) return SGDJArtworkPublisherUnknown;
+    NSString *kind = card.accessibilityIdentifier;
+    if (![kind isEqualToString:@"Components.UI.HomeCard"] &&
+        ![kind isEqualToString:@"Components.UI.RecentsListRow"] &&
+        ![kind isEqualToString:@"Shortcut.Card.Home"]) return SGDJArtworkPublisherUnknown;
+    NSArray<NSString *> *parts = [card.accessibilityLabel componentsSeparatedByString:@","];
+    if (parts.count < 2) return SGDJArtworkPublisherUnknown;
+    NSString *category = sgDJTrim(parts[parts.count - 2]);
+    // Recents sometimes uses "DJ. Playlist, Publisher" (two comma fields).
+    BOOL playlistCategory = [category caseInsensitiveCompare:@"Playlist"] == NSOrderedSame ||
+        [category.lowercaseString hasSuffix:@". playlist"];
+    if (!playlistCategory) return SGDJArtworkPublisherUnknown;
+    NSString *publisher = sgDJTrim(parts.lastObject);
+    if (!publisher.length) return SGDJArtworkPublisherUnknown;
+    return [publisher caseInsensitiveCompare:@"Spotify"] == NSOrderedSame ?
+        SGDJArtworkPublisherSpotify : SGDJArtworkPublisherOther;
+}
+
 static BOOL containsDJIdentity(NSString *value) {
     if (!value.length) return NO;
     if ([value containsString:kSpotifyDJURI]) return YES;
@@ -95,8 +127,8 @@ UIView *SGDJArtworkEnclosingCard(UIView *holder) {
     return card;
 }
 
-// Only apply a missing-art fallback when Spotify has not provided a raster.
-// Accessibility titles alone cannot distinguish two playlists named "DJ".
+// The fallback is limited to cards published by Spotify; a DJ title and an
+// absent raster are never sufficient evidence for a user-created playlist.
 @interface SGDJArtworkPlaceholderState : NSObject
 @property (nonatomic, weak) UIView *card;
 @property (nonatomic) CFAbsoluteTime firstMissing;
@@ -140,19 +172,15 @@ static BOOL sgNativeUIImage(UIView *view, NSUInteger depth) {
     return NO;
 }
 
-// A playlist named DJ is only a *candidate*. Spotify's actual native cover
-// always wins, including when it is present on the first layout pass while
-// PlaceholderView is still mounted. The old fallback assumed an initial bitmap
-// was temporary, allowing it to obscure a user's playlist indefinitely.
-// A truly artless user playlist is indistinguishable from an artless official
-// DJ in the accessible UI; such a case requires Spotify model URI provenance.
+// The publisher (final accessibility field) is required for a generic Home or
+// Recents playlist card. Native artwork remains authoritative for fallbacks;
+// a user-created playlist titled DJ is rejected even if it has no bitmap.
 BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
     if (retry) *retry = NO;
     if (!holder) return NO;
-    BOOL candidate = card && djTitle(card.accessibilityLabel) &&
-        ([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"] ||
-         [card.accessibilityIdentifier isEqualToString:@"Components.UI.HomeCard"] ||
-         [card.accessibilityIdentifier isEqualToString:@"Shortcut.Card.Home"]);
+    // Fail closed for an unknown publisher. A custom playlist called "DJ" must
+    // never qualify solely because its own artwork is missing or delayed.
+    BOOL candidate = sgDJCardPublisher(card) == SGDJArtworkPublisherSpotify;
     SGDJArtworkPlaceholderState *state = objc_getAssociatedObject(holder, &kMissingArtStateKey);
     if (!candidate) {
         if (state) objc_setAssociatedObject(holder, &kMissingArtStateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -195,6 +223,10 @@ static char kDJArtworkIdentityFrameKey;
 
 BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     if (!card || !djTitle(card.accessibilityLabel)) return NO;
+    SGDJArtworkPublisher publisher = sgDJCardPublisher(card);
+    // A publisher other than Spotify is authoritative even if a generic DJ
+    // label or a descendant happens to contain an editorial phrase.
+    if (publisher == SGDJArtworkPublisherOther) return NO;
     NSString *label = card.accessibilityLabel;
     NSString *identifier = card.accessibilityIdentifier;
     UIWindow *window = card.window;
@@ -212,6 +244,7 @@ BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     BOOL editorial = !explicitIdentity && !dedicated &&
         (editorialDJIdentity(card.accessibilityLabel) || viewHasEditorialDJIdentity(card, 0));
     BOOL confirmed = explicitIdentity || dedicated || editorial;
+    if (publisher == SGDJArtworkPublisherSpotify) confirmed = YES;
     if (!frame) {
         frame = [SGDJArtworkIdentityFrame new];
         objc_setAssociatedObject(card, &kDJArtworkIdentityFrameKey, frame, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
