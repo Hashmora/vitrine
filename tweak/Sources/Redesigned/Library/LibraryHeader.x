@@ -102,12 +102,15 @@ void SGRLibraryClearScrim(UIView *header) {
         // opacity where "Your Library" was drawn. Keep the top dark through
         // the beginning of the title, then dissolve across its lower half.
         // The fade's frame is still clipped at the REAL chip-row origin.
-        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0.98].CGColor,
-                            (id)[UIColor colorWithWhite:0 alpha:0.96].CGColor,
-                            (id)[UIColor colorWithWhite:0 alpha:0.77].CGColor,
-                            (id)[UIColor colorWithWhite:0 alpha:0.35].CGColor,
+        // Reduce the heavy black cap, but let the softer darkening last
+        // farther through the title. Opacity still reaches zero at the
+        // actual top of the filter chips (fade.frame's bottom boundary).
+        gradient.colors = @[(id)[UIColor colorWithWhite:0 alpha:0.90].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.86].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.65].CGColor,
+                            (id)[UIColor colorWithWhite:0 alpha:0.28].CGColor,
                             (id)[UIColor colorWithWhite:0 alpha:0].CGColor];
-        gradient.locations = @[@0, @0.50, @0.68, @0.84, @1];
+        gradient.locations = @[@0, @0.53, @0.75, @0.93, @1];
         gradient.startPoint = CGPointMake(0.5, 0);
         gradient.endPoint = CGPointMake(0.5, 1);
         [fade.layer addSublayer:gradient];
