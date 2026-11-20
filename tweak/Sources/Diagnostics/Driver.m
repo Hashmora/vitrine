@@ -592,8 +592,49 @@ static UIView *firstResponder(void) {
     return nil;
 }
 
+// Legacy Glass draws its own tab bar. In icons-only mode it has no visible
+// UITabBarButtonLabel, so the ordinary UITabBar/title search cannot navigate.
+// Drive the *actual* four UITabBarButton views instead of toggling preferences
+// or tapping guessed coordinates. Prefer a visible, bottom-anchored bar only.
+static NSArray<UIView *> *legacyGlassTabItems(NSMutableArray<NSString *> *titles) {
+    static NSArray<NSString *> *names = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ names = @[@"Home", @"Search", @"Your Library", @"Create"]; });
+    for (UIWindow *window in windows()) {
+        __block UIView *bar = nil;
+        SGForEachView(window, ^(UIView *view) {
+            if (bar || !isShown(view) ||
+                ![NSStringFromClass(view.class) isEqualToString:@"SGRLegacyTabBar"]) return;
+            CGRect frame = screenFrame(view);
+            if (CGRectGetMidY(frame) < CGRectGetMidY(window.bounds)) return;
+            bar = view;
+        });
+        if (!bar) continue;
+        NSMutableArray<UIView *> *buttons = [NSMutableArray array];
+        SGForEachView(bar, ^(UIView *view) {
+            if ([NSStringFromClass(view.class) isEqualToString:@"UITabBarButton"] && isShown(view)) {
+                [buttons addObject:view];
+            }
+        });
+        [buttons sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+            CGFloat x1 = CGRectGetMidX(screenFrame(a)), x2 = CGRectGetMidX(screenFrame(b));
+            return x1 < x2 ? NSOrderedAscending : x1 > x2 ? NSOrderedDescending : NSOrderedSame;
+        }];
+        // Do not silently tap a wrong control when Spotify changes its layout.
+        if (buttons.count != names.count) {
+            fail(@"Legacy tab bar is visible but has %lu buttons (expected 4)",
+                 (unsigned long)buttons.count);
+        }
+        [titles addObjectsFromArray:names];
+        return buttons;
+    }
+    return @[];
+}
+
 // The tab bar's items, leading first: the redesign's UITabBar, or Spotify's own bar's row.
 static NSArray<UIView *> *tabItems(NSMutableArray<NSString *> *titles) {
+    NSArray<UIView *> *legacy = legacyGlassTabItems(titles);
+    if (legacy.count) return legacy;
     for (UIWindow *window in windows()) {
         __block UIView *bar = nil;
         SGForEachView(window, ^(UIView *view) {
