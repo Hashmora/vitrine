@@ -94,6 +94,9 @@ static const CGFloat kPlayStep = 1.0 / 120;
     CAShapeLayer *_longSpecular;
     CAGradientLayer *_fingerHighlight;
     CGFloat _touchStartX, _touchAnchorX, _touchLastX;
+    CFTimeInterval _touchDownTime;
+    BOOL _needsQuickTapLift;
+    NSUInteger _highlightGeneration;
     __weak UIView *_restAbove;
     CADisplayLink *_link;
     // The two edges: where they are, how fast they go and where they are going.
@@ -181,8 +184,13 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _longSpecular = [CAShapeLayer layer];
     _longSpecular.name = @"Vitrine.LegacyLensLongSpecular";
     _longSpecular.fillColor = nil;
-    _longSpecular.strokeColor = [UIColor colorWithWhite:1 alpha:0.48].CGColor;
-    _longSpecular.lineWidth = 0.78;
+    _longSpecular.strokeColor = [UIColor colorWithWhite:1 alpha:0.54].CGColor;
+    _longSpecular.lineWidth = 0.84;
+    _longSpecular.lineCap = kCALineCapRound;
+    _longSpecular.shadowColor = UIColor.whiteColor.CGColor;
+    _longSpecular.shadowRadius = 1.15;
+    _longSpecular.shadowOpacity = 0.22;
+    _longSpecular.shadowOffset = CGSizeZero;
     _longSpecular.opacity = 0;
     _longSpecular.zPosition = 4;
     [self.layer addSublayer:_longSpecular];
@@ -192,8 +200,8 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _fingerHighlight = [CAGradientLayer layer];
     _fingerHighlight.name = @"Vitrine.LegacyLensFingerHighlight";
     _fingerHighlight.type = kCAGradientLayerRadial;
-    _fingerHighlight.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.22].CGColor,
-                                 (id)[UIColor colorWithWhite:1 alpha:0.09].CGColor,
+    _fingerHighlight.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.27].CGColor,
+                                 (id)[UIColor colorWithWhite:1 alpha:0.10].CGColor,
                                  (id)UIColor.clearColor.CGColor];
     _fingerHighlight.locations = @[@0, @0.42, @1];
     _fingerHighlight.opacity = 0;
@@ -206,6 +214,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
 // finish before the glass reaches full height; the light must still appear
 // immediately and fade from its *current* value when the finger lifts.
 - (void)setFingerHighlightPressed:(BOOL)pressed {
+    ++_highlightGeneration;
     CGFloat from = _fingerHighlight.presentationLayer
         ? _fingerHighlight.presentationLayer.opacity : _fingerHighlight.opacity;
     CGFloat to = pressed ? 1.0 : 0.0;
@@ -217,7 +226,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
     fade.fromValue = @(from);
     fade.toValue = @(to);
-    fade.duration = pressed ? 0.11 : 0.19;
+    fade.duration = pressed ? 0.065 : 0.14;
     fade.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
     [_fingerHighlight addAnimation:fade forKey:@"vitrine.legacyFingerHighlight"];
 }
@@ -390,26 +399,28 @@ static BOOL bubbles(void);
     _perimeter.frame = bounds;
     _perimeter.path = outline;
     CGRect arc = CGRectInset(bounds, 0.6, 0.6);
-    CGFloat w = CGRectGetWidth(arc), h = CGRectGetHeight(arc), r = h / 2;
+    CGFloat w = CGRectGetWidth(arc), h = CGRectGetHeight(arc);
     UIBezierPath *specular = [UIBezierPath bezierPath];
-    // The older outline traced the horizontal top/bottom rails for most
-    // of its length. Native highlights instead sweep diagonally out of the
-    // top-left and bottom-right curved shoulders, fading into the glass.
-    // Keep the all-around 0.85pt perimeter independent from these streaks.
-    [specular moveToPoint:CGPointMake(arc.origin.x + 0.6, arc.origin.y + h * 0.57)];
-    [specular addCurveToPoint:CGPointMake(arc.origin.x + r * 0.92, arc.origin.y + 0.9)
-               controlPoint1:CGPointMake(arc.origin.x + 0.3, arc.origin.y + h * 0.19)
-               controlPoint2:CGPointMake(arc.origin.x + r * 0.27, arc.origin.y + 0.5)];
-    [specular addCurveToPoint:CGPointMake(arc.origin.x + w * 0.60, arc.origin.y + h * 0.22)
-               controlPoint1:CGPointMake(arc.origin.x + w * 0.32, arc.origin.y - 1.5)
-               controlPoint2:CGPointMake(arc.origin.x + w * 0.48, arc.origin.y + h * 0.11)];
-    [specular moveToPoint:CGPointMake(arc.origin.x + w * 0.40, arc.origin.y + h * 0.78)];
-    [specular addCurveToPoint:CGPointMake(arc.origin.x + w - r * 0.92, arc.origin.y + h - 0.9)
-               controlPoint1:CGPointMake(arc.origin.x + w * 0.52, arc.origin.y + h * 0.89)
-               controlPoint2:CGPointMake(arc.origin.x + w * 0.68, arc.origin.y + h + 1.5)];
-    [specular addCurveToPoint:CGPointMake(arc.origin.x + w - 0.6, arc.origin.y + h * 0.43)
-               controlPoint1:CGPointMake(arc.origin.x + w - r * 0.27, arc.origin.y + h - 0.5)
-               controlPoint2:CGPointMake(arc.origin.x + w - 0.3, arc.origin.y + h * 0.81)];
+    // Follow the OUTER contour: a long upper-left shoulder and top rail,
+    // then the lower rail and right shoulder. The previous Beziers ended at
+    // 22% / 78% of the bubble height, literally sending highlights inward.
+    // Cubic quarter-circles use the same 0.5522848 control factor as a circle.
+    CGFloat x0 = arc.origin.x + 0.5, y0 = arc.origin.y + 0.5;
+    CGFloat x1 = arc.origin.x + w - 0.5, y1 = arc.origin.y + h - 0.5;
+    CGFloat cr = MAX(1, (y1 - y0) / 2);
+    CGFloat k = cr * 0.55228475;
+    [specular moveToPoint:CGPointMake(x0, y0 + h * 0.83)];
+    [specular addLineToPoint:CGPointMake(x0, y0 + cr)];
+    [specular addCurveToPoint:CGPointMake(x0 + cr, y0)
+               controlPoint1:CGPointMake(x0, y0 + cr - k)
+               controlPoint2:CGPointMake(x0 + cr - k, y0)];
+    [specular addLineToPoint:CGPointMake(arc.origin.x + w * 0.76, y0)];
+    [specular moveToPoint:CGPointMake(arc.origin.x + w * 0.24, y1)];
+    [specular addLineToPoint:CGPointMake(x1 - cr, y1)];
+    [specular addCurveToPoint:CGPointMake(x1, y1 - cr)
+               controlPoint1:CGPointMake(x1 - cr + k, y1)
+               controlPoint2:CGPointMake(x1, y1 - cr + k)];
+    [specular addLineToPoint:CGPointMake(x1, y0 + h * 0.17)];
     _longSpecular.frame = bounds;
     _longSpecular.path = specular.CGPath;
     _fingerHighlight.frame = bounds;
@@ -459,11 +470,15 @@ static BOOL bubbles(void);
     // render-server samples to find that moment, including on long tab jumps.
     // Never drop while the lens is still lifted or away from its final slot.
     const SGLensSample *samples = _playback.bytes;
+    BOOL sawRaisedGlass = count > 0 && fabs(samples[0].lift) > 0.72;
     for (NSUInteger i = 1; i < count; i++) {
         SGLensSample st = samples[i];
-        if (fabs(st.lift) > 0.075 || fabs(st.vLift) > 0.9 ||
-            fabs(st.L - _tL) > 2.2 || fabs(st.R - _tR) > 2.2 ||
-            fabs(st.sq) > 0.055) continue;
+        if (st.lift > 0.72) sawRaisedGlass = YES;
+        // Quick-tap playback starts below full height: never replace the
+        // glass while it is still on the way UP.
+        if (!sawRaisedGlass || fabs(st.lift) > 0.12 || fabs(st.vLift) > 2.3 ||
+            fabs(st.L - _tL) > 3.0 || fabs(st.R - _tR) > 3.0 ||
+            fabs(st.sq) > 0.080) continue;
         duration = i * kPlayStep;
         break;
     }
@@ -499,11 +514,11 @@ static BOOL bubbles(void);
     ++_pulseGeneration; // invalidate any previous material-drop timer
     _tL = left;
     _tR = right;
-    // A tap on another tab also raises the native lens briefly. Never drop
-    // its glass on a fixed 0.22-second timer while its spring is still moving.
+    // A programmatic / non-held tab change gets the SAME full up-and-down
+    // pulse as a short touch. Previously forcing lift=1 jumped instantly to
+    // the raised height and skipped the visible rising half of the gesture.
     if (bubbles() && fabs((left + right - _L - _R) / 2) > 8 && !_touching) {
-        _lift = MAX(_lift, 1);
-        _vLift = 0;
+        _needsQuickTapLift = YES;
         _liftTarget = 0;
         [self showGlass:YES animated:NO];
     }
@@ -669,11 +684,14 @@ static BOOL bubbles(void) {
     // landing position. Only the subsequent horizontal finger delta moves it.
     _touchStartX = x;
     _touchLastX = x;
+    _touchDownTime = CACurrentMediaTime();
     _touchAnchorX = CGRectGetMidX(_restFrame);
     if (bubbles()) {
         _liftTarget = 1;
         _vSq -= kLensPoke;
-        [self showGlass:YES animated:YES];
+        // A tap may last less than the material fade. Show glass immediately;
+        // the physical height is still animated by the lens spring.
+        [self showGlass:YES animated:NO];
     }
     [self moveTouchToX:x];
     // Touch-down drives the local highlight directly, rather than waiting
@@ -702,9 +720,27 @@ static BOOL bubbles(void) {
 
 - (void)endTouch {
     if (!_touching) return;
+    // A quick tap can end before the 120Hz link has drawn even one lifted
+    // frame. Continue the press spring up to its full height in render-server
+    // keyframes, THEN release it, instead of cancelling the rise at touch-up.
+    BOOL quickTap = bubbles() && !SGRReduceMotion() &&
+        CACurrentMediaTime() - _touchDownTime < 0.18 && _lift < 0.96;
     _touching = NO;
-    [self setFingerHighlightPressed:NO];
+    if (quickTap) {
+        NSUInteger generation = _highlightGeneration;
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.13 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            typeof(self) strongSelf = weakSelf;
+            if (!strongSelf || strongSelf->_touching ||
+                strongSelf->_highlightGeneration != generation) return;
+            [strongSelf setFingerHighlightPressed:NO];
+        });
+    } else {
+        [self setFingerHighlightPressed:NO];
+    }
     ++_pulseGeneration;
+    _needsQuickTapLift = quickTap;
     _liftTarget = 0;
     _tL = CGRectGetMinX(_restFrame);
     _tR = CGRectGetMaxX(_restFrame);
@@ -854,7 +890,9 @@ static BOOL bubbles(void) {
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         _fingerHighlight.startPoint = CGPointMake(unitX, 0.5);
-        _fingerHighlight.endPoint = CGPointMake(unitX + 0.35, 0.5);
+        // Narrow enough to be a local fingertip reflection, not a washed-out
+        // white film across the lifted glass.
+        _fingerHighlight.endPoint = CGPointMake(unitX + 0.23, 0.5);
         [CATransaction commit];
     }
     // Opacity is owned solely by setFingerHighlightPressed: display-link
@@ -1027,6 +1065,20 @@ static BOOL bubbles(void) {
     NSMutableData *samples = [NSMutableData data];
     SGLensSample first = [self state];
     [samples appendBytes:&first length:sizeof(first)];
+    if (_needsQuickTapLift) {
+        _needsQuickTapLift = NO;
+        // On a short tap keep the upward spring going until the eye has seen
+        // the full 70pt-ish held bubble. The recorded movement stays smooth:
+        // no jump to lift=1, and the tab's horizontal spring keeps running.
+        _liftTarget = 1;
+        for (int i = 0; i < 26; i++) {
+            [self advance:kPlayStep];
+            SGLensSample raised = [self state];
+            [samples appendBytes:&raised length:sizeof(raised)];
+            if (i >= 17 && _lift >= 0.98) break;
+        }
+        _liftTarget = 0;
+    }
     // Settles inside a second and a half; the bound is for a spring that never would.
     for (int i = 0; i < 300 && ![self settled]; i++) {
         [self advance:kPlayStep];
