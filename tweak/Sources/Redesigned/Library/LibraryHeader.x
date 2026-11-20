@@ -455,7 +455,7 @@ static void clearBacking(UIView *header) {
 // behind the header while preserving Recents' original screen position:
 // compensate the moved viewport with the same amount of content inset and
 // content offset. Do not move the sort row independently of its list.
-static char kUnderHeaderKey, kListKey;
+static char kUnderHeaderKey, kListKey, kReserveKey;
 static void showListBehindHeader(UIView *page, UIView *header) {
     UIView *content = childNamed(page, @"YourLibraryContentView");
     if (!content || ![NSStringFromClass(content.class) hasSuffix:@"YourLibraryContentView"]) return;
@@ -465,30 +465,44 @@ static void showListBehindHeader(UIView *page, UIView *header) {
     NSNumber *raised = objc_getAssociatedObject(list, &kUnderHeaderKey);
     CGFloat shift = raised ? raised.doubleValue : content.frame.origin.y;
     if (shift < 1 || shift > 200) return;
-    if (!raised) {
-        // The content begins at the filter-row ORIGIN (110pt in Stage 38),
-        // not its BOTTOM (162pt). Compensating by `shift` alone leaves the
-        // 40pt Recents/sort supplementary row behind the filter chips.
-        // The collection viewport may go behind the header for scrolling,
-        // but its first content row must begin below the entire chip strip.
-        CGFloat reserve = shift;
-        UIView *filters = childNamed(header, @"YourLibraryHeaderContentFiltersView");
-        if (filters && filters.bounds.size.height > 1) {
-            CGRect filtersInPage = [filters convertRect:filters.bounds toView:page];
-            CGFloat chipBottom = CGRectGetMaxY(filtersInPage);
-            if (chipBottom > shift && chipBottom < 260) reserve = chipBottom;
-        }
-        // Measure BEFORE the frame change and adjust only once per list,
-        // keeping the original scroll position relative to the first row.
-        CGFloat oldOffset = list.contentOffset.y;
-        UIEdgeInsets inset = list.contentInset;
-        inset.top += reserve;
-        [UIView performWithoutAnimation:^{
-            list.contentInset = inset;
-            list.contentOffset = CGPointMake(list.contentOffset.x, oldOffset - reserve);
-        }];
-        objc_setAssociatedObject(list, &kUnderHeaderKey, @(shift), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    // The first pass often sees a 110pt title-only header. The filter chips
+    // finish their 52pt layout on a later pass (Stage 55 measured 162pt total).
+    // Remember the *reserved* height separately from the viewport lift: if
+    // we never revisit it, Recents remains at y110 behind the chips forever.
+    CGFloat reserve = shift;
+    UIView *filters = childNamed(header, @"YourLibraryHeaderContentFiltersView");
+    if (filters && filters.bounds.size.height > 1) {
+        CGRect filtersInPage = [filters convertRect:filters.bounds toView:page];
+        CGFloat chipBottom = CGRectGetMaxY(filtersInPage);
+        if (chipBottom > shift && chipBottom < 260) reserve = chipBottom;
     }
+    // A measured header is also a valid bound if its chip wrapper has not
+    // been attached yet. Never use a zero-height placeholder as evidence.
+    if (reserve <= shift && header.bounds.size.height > shift && header.bounds.size.height < 260)
+        reserve = header.bounds.size.height;
+
+    NSNumber *saved = objc_getAssociatedObject(list, &kReserveKey);
+    CGFloat beforeReserve = saved ? saved.doubleValue : (raised ? shift : 0);
+    CGFloat delta = reserve - beforeReserve;
+    if (!raised || fabs(delta) > 0.5) {
+        // Compensation may need to grow when Spotify finishes the chip row.
+        // At rest move the content's origin below the chips. If the user is
+        // already scrolling, leave it alone until the next resting layout to
+        // avoid a visible mid-scroll jump in the playlist rows.
+        BOOL atRest = list.contentOffset.y <= -list.adjustedContentInset.top + 1.5;
+        if (!raised || atRest) {
+            CGFloat oldOffset = list.contentOffset.y;
+            UIEdgeInsets inset = list.contentInset;
+            inset.top += delta;
+            [UIView performWithoutAnimation:^{
+                list.contentInset = inset;
+                list.contentOffset = CGPointMake(list.contentOffset.x, oldOffset - delta);
+            }];
+            objc_setAssociatedObject(list, &kReserveKey, @(reserve), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
+    if (!raised) objc_setAssociatedObject(list, &kUnderHeaderKey, @(shift), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (content.frame.origin.y > 0.5) {
         CGRect frame = content.frame;
         frame.origin.y = 0;
