@@ -249,12 +249,20 @@ static CGFloat screenRadius(void) {
         overlay.layer.sublayerTransform = CATransform3DScale(CATransform3DMakeTranslation(shift.x, shift.y, 0), scale, scale, 1);
         self->_mask.frame = CGRectMake(target.x, target.y, sheet.size.width, sheet.size.height);
         self->_mask.cornerRadius = radius;
+        // A reversed interactive drag starts within the inline mini capsule.
+        // Avoid exposing a wide, square-looking player surface while the
+        // original glass snapshot is still the visible control. The mask
+        // follows the same geometry, only its reveal is held back briefly.
+        CGFloat miniReveal = (self->_follows && SGUseLegacyGlass() && SGRLegacyTabBarMinimized())
+            ? ramp(0.06, 0.30, t) : 1;
+        self->_mask.opacity = miniReveal;
         if (!self->_follows) overlay.alpha = ramp(0.08, 0.55, t);
 
         self->_sheet.frame = sheet;
         self->_sheet.layer.cornerRadius = radius;
-        // The sheet is the player's own paint, so it fades with the player Spotify fades against its bar stand-in.
-        self->_sheet.alpha = self->_follows ? self->_spotifyAlpha : ramp(0, 0.15, t);
+        // The sheet is the player's own paint, so it fades with Spotify's
+        // bar stand-in, *and* stays inside the mini control at the start.
+        self->_sheet.alpha = (self->_follows ? self->_spotifyAlpha : ramp(0, 0.15, t)) * miniReveal;
 
         // The card's top edge is the sheet's.
         CGFloat rise = sheet.origin.y - self->_card.origin.y;
@@ -293,7 +301,9 @@ static CGFloat screenRadius(void) {
                 self->_cover.layer.cornerRadius = lerp(from.size.width / 2, SGRRadiusArtwork * SGRPlayerCoverScale() * scale, t);
                 // Over an animated artwork the player's cover is hidden: the flown one fades out on the
                 // way there instead of landing on an empty slot.
-                self->_cover.alpha = SGRPlayerMotionShowing() ? 1 - ramp(0.6, 1, t) : 1;
+                self->_cover.alpha = (SGRPlayerMotionShowing() ? 1 - ramp(0.6, 1, t) : 1) *
+                    ((self->_follows && SGUseLegacyGlass() && SGRLegacyTabBarMinimized())
+                     ? ramp(0.06, 0.30, t) : 1);
             }
         }
     }];
@@ -483,8 +493,11 @@ static void runAtSpeed(CALayer *layer, float speed) {
                   NSStringFromCGRect(self.morph.card), self.morph.restY, self.lastT);
         });
     }
+    BOOL cancelledIntoMini = SGUseLegacyGlass() && SGRLegacyTabBarMinimized() &&
+        self.lastT < 0.025 && self.morph != nil;
     [self.morph tearDown];
     self.morph = nil;
+    if (cancelledIntoMini) SGRNowPlayingBarRestoreLegacyCard();
 }
 @end
 

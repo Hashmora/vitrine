@@ -322,6 +322,9 @@ NSDictionary *SGRDiagnosticsBarTransition(void) {
 // A tab bar stand-in the player's morph has dropped (PlayerMorph.x): the real bar stays in view, so it is neither
 // backed with glass nor does it hold the real bar hidden.
 static char kDroppedKey;
+// A compact transition may enter animateTransition: after startInteractiveTransition:.
+// Its snapshot must only acquire one follower/glass copy.
+static char kBackedCompactSnapshotKey;
 
 void SGRTabBarStandInDropped(UIView *standIn) {
     if (!standIn) return;
@@ -334,10 +337,12 @@ void SGRTabBarStandInDropped(UIView *standIn) {
 
 static void backWithGlass(UIView *snapshot, UIView *source, NSString *what, BOOL hideRealBar) {
     if (!snapshot || !source) return;
-    if (objc_getAssociatedObject(snapshot, &kDroppedKey)) return;
+    if (objc_getAssociatedObject(snapshot, &kDroppedKey) ||
+        objc_getAssociatedObject(snapshot, &kBackedCompactSnapshotKey)) return;
     NSMutableArray<UIView *> *panes = [NSMutableArray array];
     collectPanes(source, panes);
     if (!panes.count) return;
+    objc_setAssociatedObject(snapshot, &kBackedCompactSnapshotKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     // The stand-in that follows the player and hides the real bar is for the legacy glass, whose backdrop a
     // snapshot loses. From iOS 26 the system's glass is kept by the snapshot, so nothing is done there.
@@ -396,14 +401,22 @@ static id ivarNamed(id object, const char *name) {
     return ivar ? object_getIvar(object, ivar) : nil;
 }
 
+static void backCompactSnapshots(id transition) {
+    backWithGlass(ivarNamed(transition, "npbSnapshotView"), ivarNamed(transition, "npbView"), @"bar", NO);
+    backWithGlass(ivarNamed(transition, "tabBarSnapshotView"), ivarNamed(transition, "tabBarView"), @"tab bar", YES);
+}
+
 %hook _TtC19MainUI_TabBarUIImpl24CompactOverlayTransition
 - (void)animateTransition:(id)context {
     %orig;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ SGLog(@"player transition: CompactOverlayTransition animates, snapshots %@ / %@",
-                                  [ivarNamed(self, "npbSnapshotView") class], [ivarNamed(self, "tabBarSnapshotView") class]); });
-    backWithGlass(ivarNamed(self, "npbSnapshotView"), ivarNamed(self, "npbView"), @"bar", NO);
-    backWithGlass(ivarNamed(self, "tabBarSnapshotView"), ivarNamed(self, "tabBarView"), @"tab bar", YES);
+    backCompactSnapshots(self);
+}
+- (void)startInteractiveTransition:(id)context {
+    %orig;
+    // Interactive NPV opens/cancels never pass through animateTransition:
+    // on every Spotify build. The snapshot must carry Legacy Glass *before*
+    // the finger reverses, otherwise only its avatar/title survive.
+    backCompactSnapshots(self);
 }
 %end
 
