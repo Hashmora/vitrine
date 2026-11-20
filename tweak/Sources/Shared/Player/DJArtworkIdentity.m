@@ -108,6 +108,7 @@ UIView *SGDJArtworkEnclosingCard(UIView *holder) {
 @property (nonatomic, weak) UIImage *nativeImage;
 @property (nonatomic) CFAbsoluteTime firstMissing;
 @property (nonatomic) BOOL fallbackActive;
+@property (nonatomic) BOOL resolvedNativeArtwork; // never override an image that replaced the placeholder
 @end
 @implementation SGDJArtworkPlaceholderState
 @end
@@ -163,37 +164,49 @@ BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
     UIImage *nativeImage = nil;
     BOOL placeholder = NO;
     sgScanArt(holder, 0, &nativeImage, &placeholder);
-    BOOL missing = !nativeImage || placeholder;
-    // The image pointer is weakly observed: Spotify owns its lifecycle.
-    // A different bitmap without PlaceholderView means Spotify resolved art.
-    BOOL unchangedTemporary = !missing && state.firstMissing > 0 &&
-        nativeImage == state.nativeImage && nativeImage != nil;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    if (missing) {
-        if (state.firstMissing <= 0) {
-            state.firstMissing = now;
-            state.nativeImage = nativeImage;
-            if (retry) *retry = YES;
-        }
-    } else if (!unchangedTemporary) {
+    // The first placeholder is allowed to linger for a short time while Encore
+    // resolves artwork. An image arriving later is *authoritative*, even if
+    // Encore has not yet taken its PlaceholderView out of the hierarchy.
+    // Previously `placeholder == YES` kept the DJ overlay active over a real
+    // cover in a user-created playlist also named "DJ".
+    if (!state.resolvedNativeArtwork && state.firstMissing > 0 && nativeImage &&
+        nativeImage != state.nativeImage) {
+        state.resolvedNativeArtwork = YES;
+        state.fallbackActive = NO;
+        state.firstMissing = 0;
+        state.nativeImage = nil;
+    }
+    BOOL missing = !nativeImage || placeholder;
+    if (!state.resolvedNativeArtwork && missing && state.firstMissing <= 0) {
+        state.firstMissing = now;
+        state.nativeImage = nativeImage;
+        if (retry) *retry = YES;
+    }
+    // PlaceholderView often disappears before its temporary bitmap is replaced.
+    // Keep the DJ image only if the *same* source image is still displayed.
+    BOOL sameTemporary = state.firstMissing > 0 && nativeImage &&
+        nativeImage == state.nativeImage;
+    if (!state.resolvedNativeArtwork && !missing && !sameTemporary) {
         state.firstMissing = 0;
         state.fallbackActive = NO;
         state.nativeImage = nil;
     }
-    // The 0.8 s grace period continues if Encore hides its placeholder but
-    // leaves the same bitmap in place. Do not reset it on that transient swap.
-    if (state.firstMissing > 0 && now - state.firstMissing >= 0.8 &&
-        (missing || unchangedTemporary)) state.fallbackActive = YES;
-    BOOL held = unchangedTemporary && state.fallbackActive;
-    BOOL useFallback = state.fallbackActive && (missing || unchangedTemporary);
+    if (!state.resolvedNativeArtwork && state.firstMissing > 0 &&
+        now - state.firstMissing >= 0.8 && (missing || sameTemporary))
+        state.fallbackActive = YES;
+    BOOL useFallback = !state.resolvedNativeArtwork && state.fallbackActive &&
+        (missing || sameTemporary);
+    BOOL held = sameTemporary && state.fallbackActive;
 #if SG_DRIVER
-    NSString *signature = [NSString stringWithFormat:@"%d-%d-%d-%d-%d", candidate,
-                           !!nativeImage, placeholder, useFallback, held];
+    NSString *signature = [NSString stringWithFormat:@"%d-%d-%d-%d-%d-%d", candidate,
+                           !!nativeImage, placeholder, useFallback, held, state.resolvedNativeArtwork];
     if (![objc_getAssociatedObject(holder, &kMissingArtProbeKey) isEqualToString:signature]) {
         objc_setAssociatedObject(holder, &kMissingArtProbeKey, signature, OBJC_ASSOCIATION_COPY_NONATOMIC);
         SGDJ_TRACE(@"artwork.placeholder", (@{ @"candidate": @(candidate),
              @"nativeArtwork": @(!!nativeImage), @"placeholder": @(placeholder),
              @"fallback": @(useFallback), @"held": @(held),
+             @"nativeResolved": @(state.resolvedNativeArtwork),
              @"holderSlot": @((unsigned long)(SGDJProbeTag([NSString stringWithFormat:@"%p", holder]).hash % 100000)),
              @"history": @([card.accessibilityIdentifier isEqualToString:@"Components.UI.RecentsListRow"])}));
     }

@@ -18,8 +18,8 @@ assert 'spotify:playlist:37i9dQZF1EYkqdzj48dyYq' in identity
 assert '[holder isDescendantOfView:cache.card]' in identity, 'cached parent card may be stale on cell reuse'
 assert 'state.card != card' in identity, 'fallback state must not leak to a new card'
 assert 'state.nativeImage = nativeImage;' in identity
-assert 'nativeImage == state.nativeImage && nativeImage != nil' in identity
-assert 'else if (!unchangedTemporary)' in identity, 'native image resolution must clear the fallback'
+assert 'nativeImage == state.nativeImage' in identity
+assert 'nativeImage != state.nativeImage' in identity and 'state.resolvedNativeArtwork = YES;' in identity, 'native image resolution must permanently suppress fallback on this card'
 assert 'now - state.firstMissing >= 0.8' in identity
 assert 'SGDJ_TRACE(@"artwork.placeholder"' in identity
 assert 'SGDJ_TRACE(@"artwork.draw"' in identity and '@"outcome": @YES' in identity
