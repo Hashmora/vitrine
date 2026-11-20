@@ -1,5 +1,6 @@
 #import "DJArtworkIdentity.h"
 #import <objc/runtime.h>
+#import <QuartzCore/QuartzCore.h>
 #import "Core/SGDJProbe.h"
 
 static NSString *const kSpotifyDJURI = @"spotify:playlist:37i9dQZF1EYkqdzj48dyYq";
@@ -119,7 +120,7 @@ static char kArtworkProbeSignature, kMissingArtProbeKey;
 // is non-nil: Encore can hide its placeholder view while leaving the same
 // temporary bitmap in the image slot. This must not erase our overlay.
 static void sgScanArt(UIView *view, NSUInteger depth, UIImage **image, BOOL *placeholder) {
-    if (!view || depth > 4) return;
+    if (!view || depth > 4 || (*image && *placeholder)) return;
     if ([view.accessibilityIdentifier hasPrefix:@"SG.DJArtwork"] ||
         [view.accessibilityIdentifier hasPrefix:@"SGR.DJArtwork"]) return;
     NSString *name = NSStringFromClass(view.class);
@@ -127,7 +128,12 @@ static void sgScanArt(UIView *view, NSUInteger depth, UIImage **image, BOOL *pla
         *placeholder = YES;
     if ([view isKindOfClass:UIImageView.class] && ((UIImageView *)view).image &&
         !view.hidden && view.alpha > 0.01 && !*image) *image = ((UIImageView *)view).image;
-    for (UIView *sub in view.subviews) sgScanArt(sub, depth + 1, image, placeholder);
+    for (UIView *sub in view.subviews) {
+        sgScanArt(sub, depth + 1, image, placeholder);
+        // The first native bitmap and the presence of any placeholder are all
+        // the fallback state machine needs; the remaining tree cannot alter them.
+        if (*image && *placeholder) break;
+    }
 }
 
 // Spotify 9.1.90 presents some DJ cards with an accessible "DJ, Playlist"
@@ -195,14 +201,49 @@ BOOL SGDJArtworkNeedsPlaceholder(UIView *card, UIView *holder, BOOL *retry) {
     return useFallback;
 }
 
+// Frame-scoped identity results avoid traversing the same DJ card's accessibility
+// subtree repeatedly during nested layoutSubviews callbacks. The short window
+// avoids keeping a stale negative result when Spotify finishes mounting a card.
+@interface SGDJArtworkIdentityFrame : NSObject
+@property (nonatomic, copy) NSString *label;
+@property (nonatomic, copy) NSString *identifier;
+@property (nonatomic, weak) UIWindow *window;
+@property (nonatomic) CFTimeInterval checkedAt;
+@property (nonatomic) BOOL confirmed;
+@end
+@implementation SGDJArtworkIdentityFrame
+@end
+static char kDJArtworkIdentityFrameKey;
+
 BOOL SGDJArtworkIsConfirmedCard(UIView *card) {
     if (!card || !djTitle(card.accessibilityLabel)) return NO;
+    NSString *label = card.accessibilityLabel;
+    NSString *identifier = card.accessibilityIdentifier;
+    UIWindow *window = card.window;
+    CFTimeInterval now = CACurrentMediaTime();
+    SGDJArtworkIdentityFrame *frame = objc_getAssociatedObject(card, &kDJArtworkIdentityFrameKey);
+    // One 120 Hz display frame is the maximum cache lifetime, and cell reuse,
+    // label changes and remounting immediately invalidate it.
+    if (frame && now >= frame.checkedAt && now - frame.checkedAt < (1.0 / 120.0) &&
+        frame.window == window &&
+        ((frame.label == label) || [frame.label isEqualToString:label]) &&
+        ((frame.identifier == identifier) || [frame.identifier isEqualToString:identifier]))
+        return frame.confirmed;
     BOOL explicitIdentity = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);
     BOOL dedicated = !explicitIdentity && isDedicatedDJComponent(card);
     BOOL editorial = !explicitIdentity && !dedicated &&
         (editorialDJIdentity(card.accessibilityLabel) || viewHasEditorialDJIdentity(card, 0));
     BOOL confirmed = explicitIdentity || dedicated || editorial;
     BOOL genericPlaylist = playlistLabel(card.accessibilityLabel) && !confirmed;
+    if (!frame) {
+        frame = [SGDJArtworkIdentityFrame new];
+        objc_setAssociatedObject(card, &kDJArtworkIdentityFrameKey, frame, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    frame.label = label;
+    frame.identifier = identifier;
+    frame.window = window;
+    frame.checkedAt = now;
+    frame.confirmed = confirmed;
     SGDJProbeArtworkDecision(confirmed, genericPlaylist);
 
 #if SG_DRIVER
