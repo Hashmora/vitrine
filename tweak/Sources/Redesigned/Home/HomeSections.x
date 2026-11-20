@@ -161,6 +161,38 @@ static SGRHomeKind shelfKind(UIView *shelf) {
     return SGRHomeShelfHidden(identity) ? SGRHomeKindDrop : SGRHomeKindKeep;
 }
 
+// Diagnostic builds only: class-only "dropped a section" lines cannot tell
+// whether the Friday New Music Friday playlist or a generic preview was cut.
+// Capture the content's *own* labels and identifiers before collapsing it;
+// nothing here alters a section or allows an unrelated preview through.
+#if SG_DRIVER
+static void traceHomeSection(UIView *content, SGRHomeKind kind, NSString *rootName) {
+    static NSMutableSet<NSString *> *seen;
+    if (!seen) seen = [NSMutableSet set];
+    if (seen.count >= 160 || !content || !SGBelowiOS26() || !SGUseLegacyGlass()) return;
+    NSMutableArray<NSString *> *evidence = [NSMutableArray array];
+    SGForEachView(content, ^(UIView *view) {
+        if (evidence.count >= 20) return;
+        NSString *name = NSStringFromClass(view.class);
+        NSString *label = [view isKindOfClass:UILabel.class] ? ((UILabel *)view).text : view.accessibilityLabel;
+        NSString *identifier = view.accessibilityIdentifier;
+        if (!label.length && !identifier.length) return;
+        if (label.length > 140) label = [label substringToIndex:140];
+        if (identifier.length > 140) identifier = [identifier substringToIndex:140];
+        // Cap diagnostic size; the complete /tree remains available separately.
+        [evidence addObject:[NSString stringWithFormat:@"%@ id=%@ label=%@",
+                             name, identifier ?: @"-", label ?: @"-"]];
+    });
+    NSString *key = [NSString stringWithFormat:@"%@|%ld|%@", rootName ?: @"pending",
+                     (long)kind, [evidence componentsJoinedByString:@";"]];
+    if ([seen containsObject:key]) return;
+    [seen addObject:key];
+    SGLog(@"redesign home section evidence: %@ kind=%ld views=%lu %@",
+          rootName ?: @"pending", (long)kind, (unsigned long)evidence.count,
+          [evidence componentsJoinedByString:@" | "]);
+}
+#endif
+
 // Before the cell is measured, so the height it reports is without the heading.
 static void dropDJHeading(UIView *content) {
     UIStackView *stack = (UIStackView *)content.subviews.firstObject.subviews.firstObject;
@@ -245,6 +277,9 @@ static void expand(UICollectionViewCell *cell) {
     NSString *rootName = nil;
     SGRHomeKind kind = kindOf(content, &rootName);
     BOOL collapsed = objc_getAssociatedObject(cell, &kCollapsedKey) != nil;
+#if SG_DRIVER
+    traceHomeSection(content, kind, rootName);
+#endif
     if (kind == SGRHomeKindDrop) {
         collapse(cell, MAX(1, result.size.height));
         result.size = CGSizeMake(result.size.width, 0);
