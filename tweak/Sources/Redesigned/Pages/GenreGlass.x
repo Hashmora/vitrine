@@ -29,9 +29,10 @@ static void dress(UIViewController *page) {
                 SGRConceal(sub);
             }
         }
-        // The compact 16pt heading is in the 91pt sticky header; the larger
-        // 32pt text in the scrolled content is deliberately left alone.
-        if (view.bounds.size.height > 96) return;
+        // On Spotify 9.1.90 the compact sticky HeaderView is 98pt high
+        // (Stage 38 tree), not <=96pt. The expanded 144.67pt header still
+        // carries the 32pt title and must not receive a second capsule.
+        if (view.bounds.size.height > 120) return;
         SGForEachView(view, ^(UIView *label) {
             if (![NSStringFromClass(label.class) hasSuffix:@"EncoreLabel"] || label.bounds.size.height > 25) return;
             UILabel *text = (UILabel *)SGRChildNamed(label, @"UILabel");
