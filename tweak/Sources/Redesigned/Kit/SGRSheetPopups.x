@@ -327,6 +327,35 @@ static BOOL isShareActionRow(UIView *row) {
            row.bounds.size.width >= 300 && row.bounds.size.height >= 90 && row.bounds.size.height < 130;
 }
 
+// First Share after launch builds its SwiftUI circles before their image
+// layers. Stage 61's video shows blank glass plates for several frames while
+// the native artwork is still loading; underlays must never be shown ahead of
+// the corresponding icons. Check the known first/second row geometry rather
+// than using an arbitrary time delay (which varies on a cold launch).
+static BOOL shareActionGraphicsReady(UIView *row) {
+    if (!row.window || !isShareActionRow(row)) return NO;
+    BOOL onPlatform = inNativeShareSection(row, YES);
+    BOOL offPlatform = inNativeShareSection(row, NO);
+    if (!onPlatform && !offPlatform) return NO;
+    const CGFloat positionsOn[] = {32, 112};
+    const CGFloat positionsOff[] = {16, 96, 176, 256};
+    const CGFloat *positions = onPlatform ? positionsOn : positionsOff;
+    NSUInteger expected = onPlatform ? 2 : 4;
+    CGFloat width = onPlatform ? 24 : 56;
+    CGFloat y = onPlatform ? 16 : 8;
+    NSUInteger mask = 0;
+    for (UIView *child in row.subviews) {
+        if (![NSStringFromClass(child.class) containsString:@"_UIGraphicsView"] ||
+            child.hidden || child.alpha < 0.5 || fabs(child.bounds.size.width - width) > 2 ||
+            fabs(child.bounds.size.height - width) > 2 || fabs(child.frame.origin.y - y) > 2)
+            continue;
+        for (NSUInteger i = 0; i < expected; i++) {
+            if (fabs(child.frame.origin.x - positions[i]) <= 2) mask |= (1U << i);
+        }
+    }
+    return mask == ((1U << expected) - 1U);
+}
+
 // SwiftUI owns PlatformGroupContainer.subviews. Inserting UIKit backing views
 // directly among the graphics makes SwiftUI discard/reconcile a native icon;
 // Stage 50 showed the fourth (More) _UIGraphicsView disappearing completely.
@@ -353,14 +382,26 @@ static UIView *backingInShareRow(UIView *row, const void *key, CGRect frame) {
     // is neither moved nor hidden, even on the very first Share presentation.
     UIView *glass = SGRGlassFlatBox(backing, key, NO);
     if (glass) SGRDarkenGlass(glass, &kNativeShareActionDim, frame.size.height / 2, 0.38);
+    // SwiftUI can create the hosting row well before its image views.
+    // Withhold the glass until those native graphics have been laid out.
+    backing.hidden = !shareActionGraphicsReady(row);
     return backing;
 }
+
+static void shareRowChrome(UIView *row);
 
 // The off-platform More is the fourth SwiftUI graphics item at x256, y8.
 // Its bitmap must be left alone; attach the underlay to the parent scroller,
 // never to PlatformGroupContainer's dynamically reconciled subview array.
 static void shareMoreGraphicsGlass(UIView *image) {
     UIView *row = image.superview;
+    // SwiftUI's glyph layouts arrive individually, after their hosting row
+    // was first measured. Once both Search and Create-group images exist,
+    // re-run the first row's chrome to reveal its already-created glass.
+    if (isShareActionRow(row) && inNativeShareSection(row, YES)) {
+        shareRowChrome(row);
+        return;
+    }
     if (!isShareActionRow(row) || !inNativeShareSection(row, NO) ||
         ![NSStringFromClass(image.class) containsString:@"_UIGraphicsView"] ||
         fabs(CGRectGetMinX(image.frame) - 256) > 3 ||
@@ -368,6 +409,11 @@ static void shareMoreGraphicsGlass(UIView *image) {
         fabs(image.bounds.size.width - 56) > 3 ||
         fabs(image.bounds.size.height - 56) > 3) return;
     backingInShareRow(row, &kShareMore, image.frame);
+    // The fourth icon is installed last on a cold sheet. At that moment the
+    // Copy link backing may still be hidden from the row's early layout pass:
+    // re-evaluate it without touching any SwiftUI-managed subviews.
+    if (objc_getAssociatedObject(row, &kShareCopyLink))
+        backingInShareRow(row, &kShareCopyLink, CGRectMake(16, 8, 56, 56));
 }
 
 static void shareActionGlass(UIView *circle) {
@@ -378,7 +424,10 @@ static void shareActionGlass(UIView *circle) {
     // buttons. Glass these native circles instead of placing a duplicate
     // plate behind Search's opaque #333 fill. Their glyphs stay on top.
     UIView *glass = SGRGlassFlatBox(circle, &kNativeShareActionGlass, NO);
-    if (glass) SGRDarkenGlass(glass, &kNativeShareActionDim, 28, 0.38);
+    if (glass) {
+        SGRDarkenGlass(glass, &kNativeShareActionDim, 28, 0.38);
+        glass.hidden = !shareActionGraphicsReady(circle.superview);
+    }
     circle.backgroundColor = UIColor.clearColor;
     circle.layer.backgroundColor = NULL;
     SGRHoldClear(circle);
