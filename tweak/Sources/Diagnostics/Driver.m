@@ -27,6 +27,8 @@
 #import <mach/mach_time.h>
 #import <objc/message.h>
 
+extern void SGRRefreshTabBar(void); // diagnostic-only re-layout after preference changes
+
 static const NSTimeInterval kMainTimeout = 5;
 
 // A command that cannot go on throws, and SGDriverRun answers with the reason.
@@ -199,6 +201,79 @@ static NSDictionary *finger(CGPoint from, CGPoint to, NSTimeInterval duration, N
         move(to, UITouchPhaseEnded);
     } @catch (NSException *exception) {
         // A finger left down would hold every later touch; lift it whatever happened.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [touch setPhase:UITouchPhaseCancelled];
+            deliver(touch);
+        });
+        @throw exception;
+    }
+    return down;
+}
+
+
+// A single unbroken touch: move upward, reverse direction, return to the
+// mini-player's starting point, optionally hold, and release. Unlike two
+// `swipe`s, this preserves the original UITouch and pan recognizer state.
+static NSDictionary *fingerReverse(CGPoint from, CGPoint via, CGPoint to,
+                                   NSTimeInterval upSeconds, NSTimeInterval backSeconds,
+                                   NSTimeInterval holdSeconds) {
+    if (upSeconds < 0.1 || backSeconds < 0.1 || upSeconds > 5 || backSeconds > 5 ||
+        holdSeconds < 0 || holdSeconds > 8) {
+        fail(@"invalid reverse gesture durations");
+    }
+    requireTouches();
+    __block UITouch *touch = nil;
+    NSDictionary *down = onMain(^id {
+        UIWindow *window = windowAt(from);
+        if (!window) fail(@"no window takes a touch at {%.0f, %.0f}", from.x, from.y);
+        CGPoint at = [window convertPoint:from fromWindow:nil];
+        UIView *view = [window hitTest:at withEvent:nil];
+        touch = [UITouch new];
+        [touch setWindow:window];
+        [touch _setLocationInWindow:at resetPrevious:YES];
+        [touch setView:view];
+        if ([touch respondsToSelector:@selector(setGestureView:)]) [touch setGestureView:view];
+        [touch setPhase:UITouchPhaseBegan];
+        [touch _setIsFirstTouchForView:YES];
+        [touch setTapCount:1];
+        [touch setTimestamp:NSProcessInfo.processInfo.systemUptime];
+        deliver(touch);
+        return @{ @"window": NSStringFromClass(window.class),
+                  @"hit": NSStringFromClass(view.class) ?: @"nil" };
+    });
+    void (^move)(CGPoint, UITouchPhase) = ^(CGPoint point, UITouchPhase phase) {
+        onMain(^id {
+            [touch setTimestamp:NSProcessInfo.processInfo.systemUptime];
+            [touch _setLocationInWindow:[touch.window convertPoint:point fromWindow:nil] resetPrevious:NO];
+            [touch setPhase:phase];
+            deliver(touch);
+            return nil;
+        });
+    };
+    @try {
+        NSArray<NSValue *> *destinations = @[[NSValue valueWithCGPoint:via], [NSValue valueWithCGPoint:to]];
+        NSArray<NSNumber *> *durations = @[@(upSeconds), @(backSeconds)];
+        CGPoint origin = from;
+        for (NSUInteger leg = 0; leg < destinations.count; leg++) {
+            CGPoint destination = destinations[leg].CGPointValue;
+            NSTimeInterval duration = durations[leg].doubleValue;
+            NSUInteger steps = MAX(2, (NSUInteger)round(duration * 60));
+            for (NSUInteger i = 1; i <= steps; i++) {
+                pause_(duration / (NSTimeInterval)steps);
+                CGFloat fraction = (CGFloat)i / (CGFloat)steps;
+                CGPoint point = CGPointMake(origin.x + (destination.x - origin.x) * fraction,
+                                            origin.y + (destination.y - origin.y) * fraction);
+                if (leg == 1 && i == steps && holdSeconds == 0) {
+                    move(point, UITouchPhaseEnded);
+                    return down;
+                }
+                move(point, UITouchPhaseMoved);
+            }
+            origin = destination;
+        }
+        if (holdSeconds > 0) pause_(holdSeconds);
+        move(to, UITouchPhaseEnded);
+    } @catch (NSException *exception) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [touch setPhase:UITouchPhaseCancelled];
             deliver(touch);
@@ -765,6 +840,47 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
                 result[@"to"] = pair(to);
                 if (start[@"target"]) result[@"target"] = start[@"target"];
                 return result;
+            },
+            @"swipe.reverse" : ^NSDictionary *(NSDictionary *p) {
+                NSDictionary *start = p[@"from"] ? @{ @"point": [NSValue valueWithCGPoint:parsePoint(p[@"from"], @"from")] } : target(p);
+                CGPoint from = [start[@"point"] CGPointValue];
+                CGPoint via = p[@"via"] ? parsePoint(p[@"via"], @"via") : CGPointMake(from.x, from.y - 130);
+                CGPoint to = p[@"to"] ? parsePoint(p[@"to"], @"to") : from;
+                NSTimeInterval up = number(p, @"up", 0.65);
+                NSTimeInterval back = number(p, @"back", 0.75);
+                NSTimeInterval hold = number(p, @"hold", 0);
+                NSMutableDictionary *result = [fingerReverse(from, via, to, up, back, hold) mutableCopy];
+                result[@"from"] = pair(from);
+                result[@"via"] = pair(via);
+                result[@"to"] = pair(to);
+                result[@"up"] = @(up);
+                result[@"back"] = @(back);
+                result[@"hold"] = @(hold);
+                if (start[@"target"]) result[@"target"] = start[@"target"];
+                return result;
+            },
+            @"settings.dismiss" : ^NSDictionary *(NSDictionary *p) {
+                // Leave only Vitrine's SGPage stack. Never pop Spotify pages.
+                return onMain(^id {
+                    UIViewController *top = topController([NSMutableArray array], [NSMutableArray array]);
+                    Class modPage = NSClassFromString(@"SGPage");
+                    UINavigationController *nav = top.navigationController;
+                    NSUInteger popped = 0;
+                    while (nav && modPage && [nav.topViewController isKindOfClass:modPage] &&
+                           nav.viewControllers.count > 1 && popped < 12) {
+                        [nav popViewControllerAnimated:NO];
+                        popped++;
+                    }
+                    return @{ @"popped": @(popped),
+                              @"top": NSStringFromClass(nav.topViewController.class) ?: @"nil" };
+                });
+            },
+            @"navbar.refresh" : ^NSDictionary *(NSDictionary *p) {
+                return onMain(^id {
+                    SGPrefsChanged();
+                    SGRRefreshTabBar();
+                    return @{ @"refreshed": @YES };
+                });
             },
             @"scroll" : ^NSDictionary *(NSDictionary *p) {
                 if (!p[@"by"]) fail(@"scroll takes by=dx,dy");
