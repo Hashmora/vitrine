@@ -256,6 +256,12 @@ static __weak UIImage *sg_fridayAccentImage;
 static NSUInteger sg_fridayAccentPriority; // 2: Friday banner; 1: NMF cover card.
 static char kFridayPaletteKey;
 
+// Spotify's PillView is a Swift view, not necessarily a UIControl. Resolve the
+// real colored Music chip from the header tree instead of relying on the menu's
+// UIControl-only selection helper.
+static UIColor *selectedMusicAccent(void);
+static BOOL musicFilterSelected(void);
+
 static BOOL isFriday(void) {
     return [NSCalendar.currentCalendar component:NSCalendarUnitWeekday fromDate:NSDate.date] == 6;
 }
@@ -309,7 +315,11 @@ static void layoutFriday(UIView *holder, CGSize size) {
     colors = (CAGradientLayer *)ring.sublayers.firstObject;
     // No fixed Friday palette: use the same sampled banner accent as Music's
     // background. Until the banner is loaded use Home's first-card tint.
-    UIColor *base = sg_fridayAccent ?: sg_pageTint;
+    // The selected Spotify Music pill already carries NMF's live accent
+    // (for example #A2D0FA). Read it directly even before artwork sampling
+    // finishes, so the ring never briefly falls back to white.
+    UIColor *nativeAccent = selectedMusicAccent();
+    UIColor *base = nativeAccent ?: (sg_fridayAccent ?: sg_pageTint);
     if (!base) base = UIColor.whiteColor;
     UIColor *previous = objc_getAssociatedObject(ring, &kFridayPaletteKey);
     if (![previous isEqual:base]) {
@@ -372,7 +382,10 @@ static void paintTint(SGRHomeTintView *tint, BOOL animated) {
     CAGradientLayer *layer = (CAGradientLayer *)tint.layer;
     UIColor *friday = tint.superview ? objc_getAssociatedObject(tint.superview, &kFridayColorKey) : nil;
     UIColor *musicCard = tint.superview ? objc_getAssociatedObject(tint.superview, &kMusicCardColorKey) : nil;
-    UIColor *top = friday ?: (musicCard ?: (sg_pageTint ?: UIColor.blackColor));
+    // Use exactly the same live Music accent as the Friday rim. Do not wait
+    // for the banner's asynchronous UIImage or the banner-specific callback.
+    UIColor *liveMusic = isFriday() ? selectedMusicAccent() : nil;
+    UIColor *top = liveMusic ?: (friday ?: (musicCard ?: (sg_pageTint ?: UIColor.blackColor)));
     NSArray *colors = @[(id)top.CGColor, (id)[top colorWithAlphaComponent:0].CGColor];
     if ([layer.colors isEqualToArray:colors]) return;
     if (animated && tint.window) {
@@ -384,25 +397,35 @@ static void paintTint(SGRHomeTintView *tint, BOOL animated) {
     layer.colors = colors;
 }
 
+// A selected Spotify Music chip is visibly tinted; the nonselected chip is
+// neutral gray (#333333 in the Stage 55 tree). Its native Swift PillView may
+// not be a UIControl, and `chosen` also looks for an older ChipGlassView that
+// is absent from this version of Spotify. Read the view's actual paint.
+static UIColor *selectedMusicAccent(void) {
+    if (!sg_stack) return nil;
+    __block UIColor *accent = nil;
+    SGForEachView(sg_stack, ^(UIView *view) {
+        if (accent || ![view.accessibilityIdentifier isEqualToString:@"home-feed-music-chip"]) return;
+        UIColor *color = view.backgroundColor;
+        if (!color && view.layer.backgroundColor)
+            color = [UIColor colorWithCGColor:view.layer.backgroundColor];
+        CGFloat hue = 0, saturation = 0, brightness = 0, alpha = 0;
+        // A neutral/inactive pill must not tint Home or a non-Music feed.
+        if ([color getHue:&hue saturation:&saturation brightness:&brightness alpha:&alpha] &&
+            saturation > 0.16 && brightness > 0.32 && alpha > 0.4)
+            accent = color;
+    });
+    return accent;
+}
+
 static BOOL musicFilterSelected(void) {
+    // The visible colored native pill is the authoritative selection state.
+    if (selectedMusicAccent()) return YES;
+    // Keep support for Spotify variants where PillView really is a control.
     for (UIControl *chip in chips(sg_stack))
         if ([chip.accessibilityIdentifier isEqualToString:@"home-feed-music-chip"])
             return chosen(chip);
     return NO;
-}
-
-// Spotify colors the selected Music filter itself; on the Friday page this
-// gives us the same live accent as its NMF text/button, not a guessed hue.
-// Reject neutral/dim fills and fall back to the sampled banner artwork.
-static UIColor *selectedMusicAccent(void) {
-    for (UIControl *chip in chips(sg_stack)) {
-        if (![chip.accessibilityIdentifier isEqualToString:@"home-feed-music-chip"] || !chosen(chip)) continue;
-        UIColor *color = chip.backgroundColor;
-        CGFloat hue = 0, sat = 0, brightness = 0, alpha = 0;
-        if ([color getHue:&hue saturation:&sat brightness:&brightness alpha:&alpha] &&
-            sat > 0.16 && brightness > 0.32 && alpha > 0.4) return color;
-    }
-    return nil;
 }
 
 static void repaintFridayRing(void) {
@@ -550,6 +573,16 @@ static void layoutTint(UIView *view) {
             }
             if (![NSStringFromClass(root.class) containsString:@"Discovery_BannerKit.FullBleedBannerElementView"]
                 || cell.hidden || cell.contentView.hidden) continue;
+            // Unlike Home shelves, this full-bleed banner is wrapped by an
+            // opaque section. Clear only its backgrounds, not the image or
+            // artwork, so Music's page-level color can reach the top edge.
+            if (musicFilterSelected()) {
+                for (UIView *wrapper = root; wrapper && wrapper != collection; wrapper = wrapper.superview) {
+                    wrapper.opaque = NO;
+                    if (![wrapper.backgroundColor isEqual:UIColor.clearColor])
+                        wrapper.backgroundColor = UIColor.clearColor;
+                }
+            }
             __block UIImageView *bannerImage = nil;
             SGForEachView(root, ^(UIView *part) {
                 if (!bannerImage && [part isKindOfClass:UIImageView.class] &&
@@ -963,6 +996,14 @@ static void scheduleHomeReflowForLoadedPage(UIView *loadedView) {
     BOOL missingTint = ![objc_getAssociatedObject(page, &kTintKey) isKindOfClass:SGRHomeTintView.class] ||
                        ((UIView *)objc_getAssociatedObject(page, &kTintKey)).superview != page;
     if (!displaced && !missingTint) {
+        // The selected pill's accent may arrive after the page's first
+        // layout. Its background can change without a new Funkis pass, so
+        // refresh the existing gradient on this page's own layout pass.
+        SGRHomeTintView *tint = objc_getAssociatedObject(page, &kTintKey);
+        if (tint.superview == page && isFriday() && selectedMusicAccent()) {
+            paintTint(tint, YES);
+            repaintFridayRing();
+        }
         objc_setAssociatedObject(page, &kHomeReflowTriesKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         return;
     }
