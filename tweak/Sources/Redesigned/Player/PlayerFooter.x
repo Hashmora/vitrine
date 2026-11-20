@@ -36,6 +36,9 @@
 #import <objc/message.h>
 
 static const CGFloat kLyricsGlyphSize = 20;
+// Only Spotify Encore quote glyphs need a smaller visual footprint. The
+// original Apple SF Symbol (and all other Encore glyphs) stays untouched.
+static const CGFloat kSpotifyQuoteVisualScale = 0.875;
 // Filled and at full strength while the lyrics are up, the way the Music app marks the control that is on.
 static NSString *const kLyricsSymbol = @"quote.bubble", *const kLyricsSymbolOpen = @"quote.bubble.fill";
 // Where the three glyphs sit, as parts of the footer's width.
@@ -135,6 +138,11 @@ UIView *SGRPlayerEncoreGlyphIn(SGRGlyphButton *button, NSString *name) {
     // Spotify icons preference is off. Other Encore buttons keep their ink.
     BOOL lyricsQuote = [name isEqualToString:@"quote"] || [name isEqualToString:@"quoteActive"];
     encore.foregroundColor = lyricsQuote ? SGRPrimary() : (button.glyph.tintColor ?: SGRPrimary());
+    // Encore's quote icon is 24pt; match the neighbouring footer glyphs
+    // without resizing the button's hit target or the Apple fallback.
+    CGAffineTransform scale = lyricsQuote ? CGAffineTransformMakeScale(kSpotifyQuoteVisualScale, kSpotifyQuoteVisualScale)
+                                          : CGAffineTransformIdentity;
+    if (!CGAffineTransformEqualToTransform(encore.transform, scale)) encore.transform = scale;
     return encore;
 }
 
