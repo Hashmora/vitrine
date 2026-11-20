@@ -6,6 +6,7 @@
 #import "Shared/Navigation/AddTabSheet.h"
 #import "Redesigned/Kit/SGRTokens.h"
 #import "Redesigned/Kit/SGRGlass.h"
+#import "Redesigned/Kit/SGRKit.h"
 
 // What "Add a tab" offers: URIs Spotify's own router resolves to a page of its own, each with the
 // name of the SPTEncoreIcon class method that draws its glyph. Playlists was spotify:collection:playlists
@@ -685,6 +686,34 @@ typedef NS_ENUM(NSInteger, SGRNavbarSection) {
 
 @end
 
+// The Tab bar editor is a mod SGPage, not one of the Spotify-hosted pages
+// dressed by PageBar.m. Its native navigation title otherwise remains a bare
+// UILabel even in Legacy Glass. Wrap only this title, without replacing Back
+// or taking over the shared UINavigationBar used by the next settings page.
+static char kNavbarTitleGlass;
+static void glassNavbarTitle(UIViewController *page) {
+    if (!SGBelowiOS26() || !SGUseLegacyGlass() || !page.viewIfLoaded.window) return;
+    UIView *bar = page.navigationController.navigationBar;
+    UIView *content = SGRChildNamed(bar, @"_UINavigationBarContentView");
+    UIView *title = SGRChildNamed(content, @"_UINavigationBarTitleControl");
+    if (!title) return;
+    __block UILabel *label = nil;
+    SGForEachView(title, ^(UIView *view) {
+        if (!label && [view isKindOfClass:UILabel.class] && [((UILabel *)view).text isEqualToString:@"Tab bar"])
+            label = (UILabel *)view;
+    });
+    if (!label || label.bounds.size.width < 1) return;
+    SGRGlassTitleCapsule(title, &kNavbarTitleGlass, SGRTitleWidth(label),
+                         MAX(0, bar.bounds.size.width - 140),
+                         ^BOOL(UIView *v) { return v.superview == bar; });
+}
+
+static void dropNavbarTitle(UIViewController *page) {
+    UIView *bar = page.navigationController.navigationBar;
+    UIView *title = SGRChildNamed(SGRChildNamed(bar, @"_UINavigationBarContentView"), @"_UINavigationBarTitleControl");
+    [(UIView *)objc_getAssociatedObject(title, &kNavbarTitleGlass) removeFromSuperview];
+}
+
 // The tab editor: a preview of the bar, how it labels its tabs, the tabs in the order the bar shows them
 // (the circle shows or hides one, the handle drags it, a tap on one of the mod's own opens it in the Add a
 // Tab sheet to edit or remove), then adding one, going back to Spotify's tabs and splitting tabs apart.
@@ -742,6 +771,17 @@ typedef NS_ENUM(NSInteger, SGRNavbarSection) {
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     SGInsetForBars(self.tableView);
+    glassNavbarTitle(self);
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    glassNavbarTitle(self);
+}
+
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    dropNavbarTitle(self);
 }
 
 // The preview and the cards, from the list as it stands.
