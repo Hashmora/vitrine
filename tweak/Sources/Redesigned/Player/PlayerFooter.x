@@ -151,7 +151,9 @@ void SGRPlayerLyricsChanged(void) {
     void (^mark)(void) = ^{
         glyph.enabled = enabled;
         glyph.glyph.tintColor = open ? SGRPrimary() : SGRSecondary();
-        if (objc_getAssociatedObject(glyph, &kEncoreKey))
+        // The Spotify symbols are opt-in. With the preference off, keep the
+        // original Apple quote.bubble / quote.bubble.fill glyph visible.
+        if (SGRPlayerSpotifyIcons())
             SGRPlayerEncoreGlyphIn(glyph, open ? @"quoteActive" : @"quote");
     };
     if (animated) SGRAnimate(SGRMotionFade, mark, nil);
@@ -167,10 +169,19 @@ SGRGlyphButton *SGRPlayerLyricsGlyphIn(UIView *host) {
         objc_setAssociatedObject(host, &kLyricsGlyphKey, glyph, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (glyph.superview != host) [host addSubview:glyph];
-    // The Lyrics control always uses Spotify's Encore icon in Legacy Glass;
-    // the Spotify's icons preference still governs the *other* player glyphs.
-    if ((SGBelowiOS26() && SGUseLegacyGlass()) || SGRPlayerSpotifyIcons())
+    // Match the same preference as the device and queue buttons. The default
+    // remains the original Apple Lyrics symbol, including its open state.
+    if (SGRPlayerSpotifyIcons()) {
         SGRPlayerEncoreGlyphIn(glyph, SGRPlayerLyricsOpen() ? @"quoteActive" : @"quote");
+    } else {
+        UIView *encore = objc_getAssociatedObject(glyph, &kEncoreKey);
+        if (encore) {
+            [encore removeFromSuperview];
+            objc_setAssociatedObject(glyph, &kEncoreKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(glyph, &kEncoreNameKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        glyph.glyph.hidden = NO;
+    }
     sg_lyricsGlyph = glyph;
     return glyph;
 }
@@ -307,18 +318,17 @@ static UIView *connectGlyphIn(UIView *holder) {
     return glyph;
 }
 
-// Compact now-playing bar only, on iOS 18 Legacy Glass: replace the drawing
-// within Spotify's original Connect button (not the button or its action).
-// Reuse the full player's image observer so a new output device / tint is
-// reflected without waiting for another mini-bar layout. This deliberately
-// overrides the "Spotify's icons" option for the mini bar alone.
+// Compact now-playing bar only, on iOS 18 Legacy Glass: draw Apple's AirPlay
+// glyph when "Spotify's icons" is OFF, just like the full player. Preserve
+// Spotify's original Connect graphic when the preference is ON. The original
+// button, action, device status and accessibility remain untouched.
 void SGRPlayerAppleMiniConnectIn(UIView *bar) {
-    if (!bar || !SGBelowiOS26() || !SGUseLegacyGlass()) return;
+    if (!bar || !SGBelowiOS26() || !SGUseLegacyGlass() || SGRPlayerSpotifyIcons()) return;
     static char kMiniConnectKey;
     UIView *connect = SGRFindByIdentifier(bar, @"Components.ConnectButtonOutputSwitcher", &kMiniConnectKey);
     if (!connect) return;
     UIImageView *image = (UIImageView *)connectGlyphIn(connect);
-    if ([image isKindOfClass:UIImageView.class]) standInForConnect(image, YES);
+    if ([image isKindOfClass:UIImageView.class]) standInForConnect(image, NO);
 }
 
 // Connect is Spotify's control as wide as the device's name, with the glyph near its leading edge. With the
