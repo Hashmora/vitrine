@@ -283,6 +283,42 @@ static void startWatch(void) {
     CFRunLoopAddObserver(CFRunLoopGetMain(), sg_watch, kCFRunLoopCommonModes);
 }
 
+#if SG_DRIVER
+// Stage 83: snapshot the actual ownership of hidden real bars in the same
+// main-thread frame as the injected finger gesture. Read-only; no timers or
+// cleanup behavior is changed by this debug export.
+NSDictionary *SGRDiagnosticsBarTransition(void) {
+    NSMutableArray *hidden = [NSMutableArray array];
+    for (UIView *view in sg_hiddenCounts.keyEnumerator) {
+        NSNumber *count = [sg_hiddenCounts objectForKey:view];
+        if (!count) continue;
+        [hidden addObject:@{ @"class": NSStringFromClass(view.class) ?: @"",
+                             @"id": view.accessibilityIdentifier ?: @"",
+                             @"count": count,
+                             @"alpha": @(view.alpha),
+                             @"hidden": @(view.hidden),
+                             @"frame": NSStringFromCGRect(view.frame) }];
+    }
+    NSMutableArray *followers = [NSMutableArray array];
+    for (SGStandInGlass *f in [sg_followers allObjects]) {
+        UIView *snap = f.snapshot;
+        CALayer *drawn = snap.layer.presentationLayer ?: snap.layer;
+        [followers addObject:@{ @"snapshot": snap ? NSStringFromClass(snap.class) : @"nil",
+                                @"snapshotInWindow": @(snap.window != nil),
+                                @"snapshotAlpha": @(snap ? snap.alpha : 0),
+                                @"snapshotFrame": snap ? NSStringFromCGRect(drawn.frame) : @"nil",
+                                @"hideRealBar": @(f.hideRealBar),
+                                @"watchOnly": @(f.watchOnly),
+                                @"seen": @(f.seen),
+                                @"holderInWindow": @(f.holder.window != nil),
+                                @"hiddenHostCount": @(f.hidden.count),
+                                @"age": @(CACurrentMediaTime() - f.born) }];
+    }
+    return @{ @"hiddenHosts": hidden, @"followers": followers,
+              @"hiddenHostCount": @(hidden.count), @"followerCount": @(followers.count) };
+}
+#endif
+
 // A tab bar stand-in the player's morph has dropped (PlayerMorph.x): the real bar stays in view, so it is neither
 // backed with glass nor does it hold the real bar hidden.
 static char kDroppedKey;

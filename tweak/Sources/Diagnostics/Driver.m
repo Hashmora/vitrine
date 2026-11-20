@@ -37,6 +37,11 @@ extern CGRect SGRNowPlayingArtworkFrameIn(UIView *host);
 #import <objc/message.h>
 
 extern void SGRRefreshTabBar(void); // diagnostic-only re-layout after preference changes
+// Read-only exports from the relevant feature implementation. Never import
+// feature headers here: Driver is at the diagnostics layer.
+extern NSDictionary *SGRDiagnosticsBarTransition(void);
+extern NSDictionary *SGRDiagnosticsPlayerMorph(void);
+
 
 static const NSTimeInterval kMainTimeout = 5;
 
@@ -857,6 +862,153 @@ static void dumpLayers(CALayer *layer, NSUInteger depth, NSUInteger maxDepth, NS
 
 typedef NSDictionary *(^SGCommand)(NSDictionary *p);
 
+#pragma mark - frame-synchronous Legacy navigation trace (Stage 83)
+
+// /tree and /get are handled by the driver server. Requesting them during a
+// long /swipe.reverse can be serialized until the finger is UP, which makes a
+// purported "held" state false evidence. This observer samples on the MAIN
+// display link, alongside UIKit's presentation layers, while the touch is down.
+// The server fetches these immutable dictionaries only after the gesture.
+static NSDictionary *sgNavRect(CGRect r) {
+    if (CGRectIsNull(r) || CGRectIsEmpty(r)) return @{ @"valid": @NO };
+    return @{ @"valid": @YES, @"x": @(r.origin.x), @"y": @(r.origin.y),
+              @"w": @(r.size.width), @"h": @(r.size.height) };
+}
+
+static NSDictionary *sgNavView(UIView *v, UIWindow *window) {
+    CALayer *base = v.layer;
+    CALayer *drawn = base.presentationLayer ?: base;
+    NSMutableDictionary *d = [@{ @"class": NSStringFromClass(v.class) ?: @"",
+        @"id": v.accessibilityIdentifier ?: @"", @"alpha": @(v.alpha),
+        @"hidden": @(v.hidden), @"shownInWindow": @(v.window != nil),
+        @"screen": sgNavRect([v convertRect:v.bounds toView:window]),
+        @"presentation": sgNavRect(drawn.frame),
+        @"layerOpacity": @(drawn.opacity),
+        @"layerHidden": @(drawn.hidden),
+        @"z": @(base.zPosition),
+        @"clip": @(base.masksToBounds),
+        @"animationKeys": base.animationKeys ?: @[],
+        @"maskClass": base.mask ? NSStringFromClass(base.mask.class) : @"nil",
+        @"filterCount": @(base.filters.count),
+        @"sublayerCount": @(base.sublayers.count) } mutableCopy];
+    if ([v respondsToSelector:NSSelectorFromString(@"touching")]) {
+        @try { d[@"touching"] = [v valueForKey:@"touching"] ?: [NSNull null]; }
+        @catch (__unused NSException *e) {}
+    }
+    if ([v respondsToSelector:NSSelectorFromString(@"refracting")]) {
+        @try { d[@"refracting"] = [v valueForKey:@"refracting"] ?: [NSNull null]; }
+        @catch (__unused NSException *e) {}
+    }
+    if ([NSStringFromClass(v.class) containsString:@"SGRLegacyLens"]) {
+        @try {
+            NSValue *rest = [v valueForKey:@"restFrame"];
+            if ([rest isKindOfClass:NSValue.class]) d[@"restFrame"] = sgNavRect(rest.CGRectValue);
+        } @catch (__unused NSException *e) {}
+        NSMutableArray *layers = [NSMutableArray array];
+        for (CALayer *sublayer in base.sublayers) {
+            if (layers.count >= 22) break;
+            CALayer *live = sublayer.presentationLayer ?: sublayer;
+            [layers addObject:@{ @"name": sublayer.name ?: @"",
+                @"class": NSStringFromClass(sublayer.class) ?: @"",
+                @"frame": sgNavRect(live.frame),
+                @"opacity": @(live.opacity),
+                @"hidden": @(live.hidden),
+                @"mask": sublayer.mask ? NSStringFromClass(sublayer.mask.class) : @"nil",
+                @"filters": @(sublayer.filters.count),
+                @"animations": sublayer.animationKeys ?: @[] }];
+        }
+        d[@"layers"] = layers;
+    }
+    return d;
+}
+
+// Resolve a small, weakly cached set of relevant views. An expensive whole
+// window traversal on every 120Hz tick would itself cause the stutter we are
+// trying to diagnose. Refresh references about 10 times per second instead.
+static NSArray<UIView *> *sgNavTargets(UIWindow *window) {
+    NSMutableArray<UIView *> *targets = [NSMutableArray array];
+    if (!window) return targets;
+    NSMutableArray<UIView *> *glass = [NSMutableArray array];
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:window];
+    NSUInteger visited = 0;
+    while (queue.count && visited++ < 2200) {
+        UIView *view = queue.lastObject;
+        [queue removeLastObject];
+        NSString *name = NSStringFromClass(view.class);
+        if ([name containsString:@"SGRLegacyLens"] ||
+            [name containsString:@"SGRLegacyTabBar"] ||
+            [name containsString:@"SGRNowPlaying"]) {
+            [targets addObject:view];
+        } else if ([name containsString:@"SGLegacyGlassView"] && glass.count < 20) {
+            [glass addObject:view];
+        }
+        for (UIView *child in view.subviews) [queue addObject:child];
+    }
+    // Never let a large number of irrelevant glass panes crowd out the lens.
+    [targets addObjectsFromArray:glass];
+    return targets;
+}
+
+static NSDictionary *sgNavSample(NSArray<UIView *> *targets) {
+    UIWindow *window = keyWindow();
+    NSMutableArray *objects = [NSMutableArray array];
+    for (UIView *view in targets) {
+        if (view.window && view.window == window) [objects addObject:sgNavView(view, window)];
+    }
+    CGRect card = window ? SGRNowPlayingCardFrameIn(window, NULL) : CGRectNull;
+    CGRect slot = window ? SGRTabBarInlineSlot(window, 54) : CGRectNull;
+    CGRect artwork = window ? SGRNowPlayingArtworkFrameIn(window) : CGRectNull;
+    return @{ @"minimized": @(SGRTabBarMinimized()),
+              @"held": @(SGRLegacyNowPlayingHeld()),
+              @"playerVisible": @(playerShown()),
+              @"card": sgNavRect(card), @"slot": sgNavRect(slot),
+              @"artwork": sgNavRect(artwork),
+              @"barTransition": SGRDiagnosticsBarTransition() ?: @{},
+              @"playerMorph": SGRDiagnosticsPlayerMorph() ?: @{},
+              @"objects": objects,
+              @"targetCount": @(targets.count) };
+}
+
+@interface SGNavTraceObserver : NSObject
+@property (nonatomic, strong) CADisplayLink *link;
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *frames;
+@property (nonatomic) CFTimeInterval began;
+@property (nonatomic) NSUInteger ticks;
+@property (nonatomic) BOOL capped;
+@property (nonatomic, strong) NSHashTable<UIView *> *targets;
+@end
+
+@implementation SGNavTraceObserver
+- (void)capture:(NSString *)phase {
+    CFTimeInterval t = CACurrentMediaTime() - self.began;
+    if (t > 18 || self.frames.count >= 1050) {
+        self.capped = YES;
+        [self stop];
+        return;
+    }
+    // Avoid retaining a removed Spotify view when controllers change during
+    // the gesture. A weak cache also permits the new tab bar to be discovered.
+    if (!self.targets || self.ticks % 12 == 0) {
+        self.targets = [NSHashTable weakObjectsHashTable];
+        for (UIView *view in sgNavTargets(keyWindow())) [self.targets addObject:view];
+    }
+    NSMutableDictionary *frame = [sgNavSample(self.targets.allObjects) mutableCopy];
+    frame[@"t"] = @(t);
+    frame[@"phase"] = phase;
+    [self.frames addObject:frame];
+}
+- (void)tick:(CADisplayLink *)link {
+    if (++self.ticks % 2) return; // roughly 60Hz at 120Hz display rate
+    [self capture:@"displayLink"];
+}
+- (void)stop {
+    [self.link invalidate];
+    self.link = nil;
+}
+@end
+
+static SGNavTraceObserver *sg_navTrace;
+
 // The log number when the last command that does something began: a log wait looks from there, so
 // `player.more` and then `wait log=...` sees a line that came before the wait did.
 static uint64_t sg_actionSeq;
@@ -866,6 +1018,51 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         all = @{
+            @"nav.trace.start" : ^NSDictionary *(NSDictionary *p) {
+                return onMain(^id {
+                    [sg_navTrace stop];
+                    sg_navTrace = [SGNavTraceObserver new];
+                    sg_navTrace.frames = [NSMutableArray array];
+                    sg_navTrace.began = CACurrentMediaTime();
+                    [sg_navTrace capture:@"start"];
+                    CADisplayLink *link = [CADisplayLink displayLinkWithTarget:sg_navTrace selector:@selector(tick:)];
+                    // An uncapped display link tracks the player's 120Hz timeline;
+                    // capture every other callback to keep observation lightweight.
+                    link.preferredFrameRateRange = CAFrameRateRangeMake(80, 120, 120);
+                    [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+                    sg_navTrace.link = link;
+                    return @{ @"capturing": @YES, @"initial": @(sg_navTrace.frames.count) };
+                });
+            },
+            @"nav.trace.stop" : ^NSDictionary *(NSDictionary *p) {
+                return onMain(^id {
+                    if (!sg_navTrace) fail(@"trace was never started");
+                    [sg_navTrace capture:@"stop"];
+                    [sg_navTrace stop];
+                    return @{ @"capturing": @NO, @"frames": @(sg_navTrace.frames.count),
+                              @"capped": @(sg_navTrace.capped) };
+                });
+            },
+            @"nav.trace.status" : ^NSDictionary *(NSDictionary *p) {
+                return onMain(^id {
+                    if (!sg_navTrace) return @{ @"present": @NO };
+                    return @{ @"present": @YES, @"capturing": @(sg_navTrace.link != nil),
+                              @"frames": @(sg_navTrace.frames.count),
+                              @"capped": @(sg_navTrace.capped) };
+                });
+            },
+            @"nav.trace.read" : ^NSDictionary *(NSDictionary *p) {
+                return onMain(^id {
+                    if (!sg_navTrace) fail(@"trace was never started");
+                    NSUInteger offset = MIN((NSUInteger)MAX(0, [p[@"offset"] integerValue]), sg_navTrace.frames.count);
+                    NSUInteger count = MIN(50, (NSUInteger)MAX(1, p[@"limit"] ? [p[@"limit"] integerValue] : 30));
+                    count = MIN(count, sg_navTrace.frames.count - offset);
+                    return @{ @"offset": @(offset), @"total": @(sg_navTrace.frames.count),
+                              @"frames": [sg_navTrace.frames subarrayWithRange:NSMakeRange(offset, count)],
+                              @"done": @(offset + count >= sg_navTrace.frames.count),
+                              @"capped": @(sg_navTrace.capped) };
+                });
+            },
             @"tap" : ^NSDictionary *(NSDictionary *p) {
                 return touchAt(target(p), 0.08);
             },
@@ -1317,7 +1514,7 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
 }
 
 static NSSet<NSString *> *readOnly(void) {
-    return [NSSet setWithArray:@[@"find", @"state", @"screenshot", @"log", @"wait", @"get", @"layers"]];
+    return [NSSet setWithArray:@[@"find", @"state", @"screenshot", @"log", @"wait", @"get", @"layers", @"nav.trace.status", @"nav.trace.read"]];
 }
 
 BOOL SGDriverHandles(NSString *command) {

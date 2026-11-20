@@ -391,6 +391,22 @@ static const float kCloseSpeed = 1.5;         // how much faster than Spotify's 
 @property (nonatomic) BOOL closing, wasInteractive;
 @end
 
+#if SG_DRIVER
+static __weak SGRMorphFollower *sg_diagnosticLastFollower;
+NSDictionary *SGRDiagnosticsPlayerMorph(void) {
+    SGRMorphFollower *f = sg_diagnosticLastFollower;
+    if (!f) return @{ @"present": @NO };
+    return @{ @"present": @YES, @"active": @(f.link != nil),
+              @"closing": @(f.closing), @"wasInteractive": @(f.wasInteractive),
+              @"currentlyInteractive": @(f.context.isInteractive),
+              @"lastProgress": @(f.lastT), @"stillFrames": @(f.still),
+              @"overlayY": @(f.lastY), @"sped": @(f.sped),
+              @"overlayInWindow": @(f.overlay.window != nil),
+              @"containerFrame": f.container ? NSStringFromCGRect(f.container.frame) : @"nil",
+              @"overlayFrame": f.overlay ? NSStringFromCGRect(f.overlay.frame) : @"nil" };
+}
+#endif
+
 // The container's clock runs at `speed` from now on, continuing from where its animations are.
 static void runAtSpeed(CALayer *layer, float speed) {
     CFTimeInterval now = CACurrentMediaTime(), local = [layer convertTime:now fromLayer:nil];
@@ -497,6 +513,9 @@ static void followTransition(id transition, id<UIViewControllerContextTransition
     SGRTabBarStandInDropped(tabStandIn);
     SGRMorphFollower *follower = [SGRMorphFollower new];
     follower.morph = morph;
+#if SG_DRIVER
+    sg_diagnosticLastFollower = follower;
+#endif
     follower.container = container;
     follower.overlay = overlay;
     follower.context = context;
