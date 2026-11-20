@@ -23,6 +23,7 @@
 #import "Core/SGCore.h"
 #import "Diagnostics.h"
 #import "Headers/SPTPlayer.h"
+#import "Headers/SPTEncoreIconView.h"
 #import <dlfcn.h>
 #import <mach/mach_time.h>
 #import <objc/message.h>
@@ -806,6 +807,197 @@ static NSDictionary *encoreGlyphBesideLabel(NSString *wanted) {
     return answer;
 }
 
+// Stage 44: Swift's Encore icon can be a value-typed field rather than an
+// Objective-C object. Stage 42 identified the *view* but its ObjC ivar search
+// returned [], so don't reinterpret absence as a wrong target. Report runtime
+// layout and compare drawn, read-only candidates from Spotify's *own* icon
+// factories. Never install a candidate into the live tab or change its state.
+static NSArray<NSDictionary *> *encoreRuntimeLayout(UIView *view) {
+    NSMutableArray *result = [NSMutableArray array];
+    for (Class cls = object_getClass(view); cls && cls != UIView.class; cls = class_getSuperclass(cls)) {
+        unsigned int count = 0;
+        Ivar *ivars = class_copyIvarList(cls, &count);
+        for (unsigned int i = 0; i < count && result.count < 90; i++) {
+            const char *rawName = ivar_getName(ivars[i]);
+            const char *rawType = ivar_getTypeEncoding(ivars[i]);
+            if (!rawName) continue;
+            NSMutableDictionary *entry = [@{ @"owner": NSStringFromClass(cls),
+                                             @"ivar": [NSString stringWithUTF8String:rawName],
+                                             @"type": rawType ? [NSString stringWithUTF8String:rawType] : @"?",
+                                             @"offset": @(ivar_getOffset(ivars[i])) } mutableCopy];
+            if (rawType && rawType[0] == '@') {
+                id value = object_getIvar(view, ivars[i]);
+                entry[@"objectClass"] = value ? NSStringFromClass([value class]) : @"nil";
+            }
+            [result addObject:entry];
+        }
+        free(ivars);
+    }
+    return result;
+}
+
+static NSArray<NSDictionary *> *encoreRuntimeMethods(UIView *view) {
+    NSMutableArray *result = [NSMutableArray array];
+    for (Class cls = object_getClass(view); cls && cls != UIView.class; cls = class_getSuperclass(cls)) {
+        unsigned int count = 0;
+        Method *methods = class_copyMethodList(cls, &count);
+        for (unsigned int i = 0; i < count && result.count < 80; i++) {
+            NSString *name = NSStringFromSelector(method_getName(methods[i]));
+            NSString *lower = name.lowercaseString;
+            if (![lower containsString:@"icon"] && ![lower containsString:@"glyph"] &&
+                ![lower containsString:@"image"] && ![lower containsString:@"symbol"]) continue;
+            const char *type = method_getTypeEncoding(methods[i]);
+            [result addObject:@{ @"owner": NSStringFromClass(cls), @"selector": name,
+                                 @"encoding": type ? [NSString stringWithUTF8String:type] : @"?" }];
+        }
+        free(methods);
+    }
+    return result;
+}
+
+// Transparent 24x24 layer-only RGBA: no screenshot backdrop, navigation, text,
+// colours outside the icon, or unrelated view is included in a comparison.
+static NSData *encoreRGBA(UIView *view) {
+    const NSUInteger side = 48;
+    NSMutableData *pixels = [NSMutableData dataWithLength:side * side * 4];
+    CGColorSpaceRef rgb = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(pixels.mutableBytes, side, side, 8, side * 4,
+                                            rgb, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(rgb);
+    if (!ctx) return nil;
+    CGContextClearRect(ctx, CGRectMake(0, 0, side, side));
+    CGContextScaleCTM(ctx, side / 24.0, side / 24.0);
+    [view.layer renderInContext:ctx];
+    CGContextRelease(ctx);
+    return pixels;
+}
+
+static NSUInteger encoreInk(NSData *rgba) {
+    if (!rgba || rgba.length != 48 * 48 * 4) return 0;
+    const uint8_t *data = rgba.bytes;
+    NSUInteger count = 0;
+    for (NSUInteger i = 0; i < 48 * 48; i++) if (data[i * 4 + 3] > 32) count++;
+    return count;
+}
+
+static double encoreDistance(NSData *a, NSData *b) {
+    if (!a || !b || a.length != b.length || a.length != 48 * 48 * 4) return 1e9;
+    const uint8_t *x = a.bytes, *y = b.bytes;
+    uint64_t total = 0;
+    for (NSUInteger i = 0; i < a.length; i++) total += (uint64_t)abs((int)x[i] - (int)y[i]);
+    return (double)total / (double)a.length; // 0 = pixel-identical, 255 = opposite
+}
+
+static NSArray<NSDictionary *> *encoreCandidates(NSData *reference, UIColor *color, BOOL active) {
+    Class iconClass = NSClassFromString(@"SPTEncoreIcon");
+    Class iconViewClass = NSClassFromString(@"SPTEncoreIconView");
+    if (!iconClass || !iconViewClass) return @[];
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(object_getClass(iconClass), &count);
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    NSArray<NSString *> *stems = @[@"lyric", @"sticker", @"quote", @"speech", @"chat", @"caption",
+                                   @"message", @"text", @"comment", @"square", @"note"];
+    for (unsigned int i = 0; i < count; i++) {
+        Method method = methods[i];
+        if (method_getNumberOfArguments(method) != 2) continue;
+        char *ret = method_copyReturnType(method);
+        BOOL returnsObject = ret && ret[0] == '@';
+        if (ret) free(ret);
+        if (!returnsObject) continue;
+        NSString *name = NSStringFromSelector(method_getName(method));
+        if ([name containsString:@":"]) continue;
+        NSString *lower = name.lowercaseString;
+        for (NSString *stem in stems) {
+            if ([lower containsString:stem]) { [names addObject:name]; break; }
+        }
+    }
+    free(methods);
+    // Sort narrow families first so broad "square" methods cannot consume the
+    // bounded scan before we get to sticker/quote/lyrics variants.
+    NSArray<NSString *> *priority = @[@"lyric", @"sticker", @"quote", @"caption", @"speech",
+                                      @"comment", @"message", @"chat", @"text", @"note", @"square"];
+    [names sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+        NSUInteger ai = priority.count, bi = priority.count;
+        for (NSUInteger i = 0; i < priority.count; i++) {
+            if (ai == priority.count && [a.lowercaseString containsString:priority[i]]) ai = i;
+            if (bi == priority.count && [b.lowercaseString containsString:priority[i]]) bi = i;
+        }
+        if (ai != bi) return ai < bi ? NSOrderedAscending : NSOrderedDescending;
+        return [a compare:b];
+    }];
+    NSMutableArray *scores = [NSMutableArray array];
+    // Intentionally cap expensive Swift UIKit rendering to avoid driver timeout.
+    for (NSString *name in names) {
+        if (scores.count >= 100) break;
+        @try {
+            SEL getter = NSSelectorFromString(name);
+            id object = ((id (*)(id, SEL))objc_msgSend)(iconClass, getter);
+            if (!object) continue;
+            SPTEncoreIconView *candidate = [(SPTEncoreIconView *)[iconViewClass alloc] initWithIcon:object];
+            if (!candidate) continue;
+            candidate.bounds = CGRectMake(0, 0, 24, 24);
+            if (color && [candidate respondsToSelector:@selector(setForegroundColor:)])
+                ((void (*)(id, SEL, id))objc_msgSend)(candidate, @selector(setForegroundColor:), color);
+            if ([candidate respondsToSelector:@selector(setIsActive:)])
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(candidate, @selector(setIsActive:), active);
+            [candidate setNeedsLayout];
+            [candidate layoutIfNeeded];
+            [candidate.layer displayIfNeeded];
+            NSData *pixels = encoreRGBA(candidate);
+            [scores addObject:@{ @"selector": name, @"meanAbsRGBA": @(encoreDistance(reference, pixels)),
+                                 @"ink": @(encoreInk(pixels)) }];
+        } @catch (NSException *exception) {
+            [scores addObject:@{ @"selector": name, @"error": exception.reason ?: @"render failed" }];
+        }
+    }
+    [scores sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        NSNumber *x = a[@"meanAbsRGBA"] ?: @(1e9), *y = b[@"meanAbsRGBA"] ?: @(1e9);
+        return [x compare:y];
+    }];
+    return scores;
+}
+
+static NSDictionary *encoreTraceBesideLabel(NSString *wanted) {
+    NSArray<UIView *> *labels = findAll(@{ @"class": @"SPTEncoreLabel", @"label": wanted }, nil);
+    NSMutableArray *matches = [NSMutableArray array];
+    Class iconClass = NSClassFromString(@"SPTEncoreIconView");
+    for (UIView *label in labels) {
+        if (!isShown(label)) continue;
+        UIView *icon = nil;
+        for (UIView *p = label.superview; p && p != label.window; p = p.superview) {
+            __block UIView *only = nil;
+            __block NSUInteger count = 0;
+            SGForEachView(p, ^(UIView *v) {
+                if ([v isKindOfClass:iconClass] && isShown(v)) { only = v; count++; }
+            });
+            if (count == 1) { icon = only; break; }
+            if (count > 1) break;
+        }
+        if (!icon) { [matches addObject:@{ @"error": @"Cannot identify unique icon", @"label": describe(label) }]; continue; }
+        NSMutableArray<NSString *> *layers = [NSMutableArray array];
+        dumpLayers(icon.layer, 0, 4, layers);
+        NSData *original = encoreRGBA(icon);
+        NSMutableDictionary *entry = [@{ @"label": describe(label), @"icon": describe(icon),
+                                           @"namedIvars": encoreNamedIvars(icon),
+                                           @"ivarLayout": encoreRuntimeLayout(icon),
+                                           @"iconMethods": encoreRuntimeMethods(icon),
+                                           @"layerTree": layers,
+                                           @"originalInk": @(encoreInk(original)) } mutableCopy];
+        // The score is evidence about shape, not an assertion that a similarly
+        // named selector is necessarily the backing Swift value-typed icon.
+        UIColor *fg = nil;
+        @try { id value = [icon valueForKey:@"foregroundColor"]; if ([value isKindOfClass:UIColor.class]) fg = value; }
+        @catch (__unused NSException *e) {}
+        BOOL active = [icon respondsToSelector:@selector(isActive)] ? [(SPTEncoreIconView *)icon isActive] : NO;
+        entry[@"nativeActive"] = @(active);
+        entry[@"candidateScores"] = encoreCandidates(original, fg, active);
+        [matches addObject:entry];
+    }
+    return @{ @"status": matches.count == 1 && matches.firstObject[@"candidateScores"] ? @"COMPLETE_DIAGNOSTICS" : @"INCOMPLETE_TARGET",
+              @"label": wanted, @"matches": matches,
+              @"note": @"A candidate's pixel distance is observational only; don't install one without verifying uniqueness." };
+}
+
 typedef NSDictionary *(^SGCommand)(NSDictionary *p);
 
 // The log number when the last command that does something began: a log wait looks from there, so
@@ -1146,6 +1338,11 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
                 });
                 return touchAt(where, 0.08);
             },
+            @"encore.trace" : ^NSDictionary *(NSDictionary *p) {
+                NSString *label = p[@"label"] ?: @"Lyric stickers";
+                if (!label.length || label.length > 80) fail(@"encore.trace takes a short label");
+                return onMain(^id { return encoreTraceBesideLabel(label); });
+            },
             @"encore.inspect" : ^NSDictionary *(NSDictionary *p) {
                 NSString *label = p[@"label"] ?: @"Lyric stickers";
                 if (!label.length || label.length > 80) fail(@"encore.inspect takes a short label");
@@ -1203,7 +1400,7 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
 }
 
 static NSSet<NSString *> *readOnly(void) {
-    return [NSSet setWithArray:@[@"find", @"state", @"screenshot", @"log", @"wait", @"get", @"layers", @"encore.inspect"]];
+    return [NSSet setWithArray:@[@"find", @"state", @"screenshot", @"log", @"wait", @"get", @"layers", @"encore.inspect", @"encore.trace"]];
 }
 
 BOOL SGDriverHandles(NSString *command) {
