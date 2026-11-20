@@ -35,6 +35,7 @@
 #import "App/Onboarding/Onboarding.h"
 #import "Redesigned/Album/Album.h"
 #import "Redesigned/Artist/Artist.h"
+#import "Redesigned/Search/Search.h"
 #import "Pages.h"
 
 static const CGFloat kRowHeight = 56;
@@ -85,8 +86,11 @@ static UIViewController *modSettingsPage(void) {
     home.visible = native;
     SGModRow *redesignedHome = pageRow(@"Home", @"house.fill", UIColor.systemBrownColor, ^UIViewController *{ return SGRHomeSettingsPage(); });
     redesignedHome.visible = redesigned;
+    SGModRow *redesignedSearch = pageRow(@"Search", @"magnifyingglass", UIColor.systemBlueColor, ^UIViewController *{ return SGRSearchSettingsPage(); });
+    redesignedSearch.visible = redesigned;
     [sections addObject:SGSection(nil, @[
         redesignedHome,
+        redesignedSearch,
         home,
         pageRow(@"Player", @"play.fill", UIColor.systemPinkColor, ^UIViewController *{ return SGPlayerSettingsPage(); }),
         pageRow(@"Lyrics", @"quote.bubble.fill", UIColor.systemOrangeColor, ^UIViewController *{ return SGLyricsSettingsPage(); }),
