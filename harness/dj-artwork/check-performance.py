@@ -30,7 +30,7 @@ assert 'frame.window == window' in identity
 assert 'frame.label isEqualToString:label' in identity
 assert 'frame.identifier isEqualToString:identifier' in identity
 assert 'if (*image && *placeholder) break;' in identity
-assert 'BOOL unchangedTemporary = ' in identity
+assert 'BOOL sameTemporary = ' in identity
 assert 'state.fallbackActive' in identity
 
 @dataclass
