@@ -10,7 +10,6 @@ identity = (root / 'tweak/Sources/Shared/Player/DJArtworkIdentity.m').read_text(
 header = (root / 'tweak/Sources/Shared/Player/DJArtworkIdentity.h').read_text()
 assert 'BOOL explicitIdentity = containsDJIdentity(card.accessibilityLabel) || viewIdentifiesDJ(card, 0);' in identity
 assert 'BOOL confirmed = explicitIdentity || dedicated || editorial;' in identity
-assert 'BOOL genericPlaylist = playlistLabel(card.accessibilityLabel) && !confirmed;' in identity
 assert 'editorialDJIdentity' in identity and 'isDedicatedDJComponent' in identity
 assert 'return confirmed;' in identity
 assert 'if (playlistLabel(card.accessibilityLabel))' not in identity
@@ -21,15 +20,11 @@ assert 'state.nativeImage = nativeImage;' in identity
 assert 'nativeImage == state.nativeImage' in identity
 assert 'nativeImage != state.nativeImage' in identity and 'state.resolvedNativeArtwork = YES;' in identity, 'native image resolution must permanently suppress fallback on this card'
 assert 'now - state.firstMissing >= 0.8' in identity
-assert 'SGDJ_TRACE(@"artwork.placeholder"' in identity
-assert 'SGDJ_TRACE(@"artwork.draw"' in identity and '@"outcome": @YES' in identity
-assert 'void SGDJArtworkTracePaint(' in header
 for look in ('Native', 'Redesigned'):
     art = (root / f'tweak/Sources/{look}/Home/DJArtwork.x').read_text()
     assert 'SGDJArtworkIsConfirmedCard(row)' in art
     assert 'SGDJArtworkNeedsPlaceholder(row, holder, &retry)' in art
     assert 'SGDJArtworkEnclosingCard(holder)' in art
     assert 'if (retry)' in art and 'dispatch_after(' in art
-    assert art.count('SGDJArtworkTracePaint(holder, overlay, row,') == 3
     assert 'SGDJLabel(' not in art and 'SGRDJLabel(' not in art
-print('DJ artwork: identity, cell reuse, placeholder continuity and overlay outcome probes PASS (static)')
+print('DJ artwork: identity, cell reuse, placeholder continuity and overlay updates PASS (static)')

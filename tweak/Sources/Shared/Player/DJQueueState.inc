@@ -41,13 +41,6 @@ static void skipToNextDJSegment(void);
 
 // The DJ's segment (five tracks, a voice before the first and one after the last) with room for the hand-queued.
 static const int64_t kFutureCap = 16;
-// The long-lived state subscription precedes context selection. Measure how many
-// additional TRACK REFERENCES are actually retained outside DJ, not a guessed
-// byte/CPU cost. A real latency/battery measurement needs device profiling.
-static NSUInteger sCapNonDJSamples, sCapNonDJExtraNext, sCapNonDJExtraPrev;
-static NSUInteger sCapNonDJPeakNext, sCapNonDJPeakPrev;
-static CFAbsoluteTime sCapLastSampleAt;
-static void sampleDJCapCost(SPTPlayerState *state);
 // How long the page keeps its rows while the core has no tracks to come.
 static const NSTimeInterval kGapSeconds = 3;
 // How long the core has to move to a track it was asked to skip back to.

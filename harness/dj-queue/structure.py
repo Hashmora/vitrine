@@ -15,14 +15,12 @@ for part in parts:
 assert 'SGDJQueueNextSetTapped' in main
 assert 'SGDJNativeDrawNextSet' in main and 'SGRDJQueueDrawNextSet' in main
 code = '\n'.join([main]+[(player/p).read_text() for p in parts])
-assert len(re.findall(r'^static void sampleDJCapCost\(.*\) \{',code,re.M)) == 1
 assert 'if (boundURI.length && ![boundURI isEqualToString:kDJContext])' in code
 assert 'id boundContext = [request respondsToSelector:@selector(contextURI)]' in code
 assert 'DJ future tracks when the user switches' in code
-assert 'state.future.count > 2' in code and 'state.reverse.count > 2' in code
-assert '@"nonDJExtraNextPeak"' in code
-assert 'playerStateDidReport:' in code
-print('DJ Queue split, cap accounting and hook ownership: PASS')
+assert 'sampleDJCapCost' not in code
+assert 'SGDJQueueDiagnostics' not in code
+print('DJ Queue split, scoped requests and hook ownership: PASS')
 
 # Spotify 9.1.90 never emits a snackbar for synthetic DJ Edit/Remove rows.
 # Hooking every UIControl to "undo" that hidden state can hijack a different

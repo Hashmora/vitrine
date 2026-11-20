@@ -23,7 +23,6 @@ for look, prefix in [('Native', 'SGDJ'), ('Redesigned', 'SGRDJ')]:
     assert 'if (overlay.superview != holder) [holder addSubview:overlay];' in source
     assert f'SGDJArtworkIsConfirmedCard(row)' in source
     assert f'SGDJArtworkNeedsPlaceholder(row, holder, &retry)' in source
-    assert 'SGDJArtworkTracePaint(' in source
 
 assert 'now - frame.checkedAt < (1.0 / 120.0)' in identity
 assert 'frame.window == window' in identity

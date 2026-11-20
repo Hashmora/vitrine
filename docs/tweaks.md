@@ -797,10 +797,11 @@ Spotify's own through.
   two behind; both caps are raised to 16 for the one launch-time subscription, before a context is known.
   A global subscription cannot be changed per context without safely resubscribing Spotify's player observers, so
   no state-based conditional is used
-  (doing so loses the next DJ tracks on a later DJ launch). With the diagnostic driver enabled, `dj.state` reports
-  `nonDJCapSamples`, `nonDJExtraNextTotal`, `nonDJExtraPrevTotal`, and both peak values; they measure extra
-  retained *track references* against Spotify's original 2+2 cap. Actual bytes, CPU and network latency still require
-  on-device profiling. (With two previous tracks, stepping back across segments previously found only spent ones.) With a
+  (doing so loses the next DJ tracks on a later DJ launch). The simulator A/B
+  comparison found +14 future and +10 previous track references in ordinary
+  playback. See `docs/pr227-getstate-cap-measurement.md`; this is **not** a CPU,
+  memory-byte or network-traffic measurement. (With two previous tracks,
+  stepping back across segments previously found only spent ones.) With a
   cap of 80 the core still gave one segment (9.1.90): the next is made when the core comes to the last track of this
   one. The core asks for it itself, with no context page from the app (no `play`, `updateContext` or
   `updateContextPage`), so it cannot be asked for earlier. With nothing of a segment left but removed or played

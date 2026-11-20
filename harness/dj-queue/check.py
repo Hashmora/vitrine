@@ -179,7 +179,6 @@ static SPTPlayerTrack *asDJTrack(SPTPlayerTrack *t) { return t; }
 static double kSegmentWait = .5;
 
 #define SGLog(...) ((void)0)
-#define SGDJ_TRACE(...) ((void)0) // instrumentation is not part of the Foundation-only test
 static NSString *sSignature;
 static SPTPlayerState *SGPlayerState(void) { return testState; }
 static NSString *trackKey(SPTPlayerTrack *t) { return t.UID; }

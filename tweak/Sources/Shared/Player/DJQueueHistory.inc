@@ -9,9 +9,6 @@ static NSUInteger sDJTrackArrivalSerial;
 @end
 
 @implementation SGDJHistory
-- (void)playerStateDidReport:(SPTPlayerState *)state {
-    sampleDJCapCost(state);
-}
 - (void)playerStateDidChange:(SPTPlayerState *)state {
     if (isDJSession(state)) restoreSession(state);
     if (![state.contextURI isEqual:sPlayedContext]) {
@@ -25,16 +22,6 @@ static NSUInteger sDJTrackArrivalSerial;
     static NSString *lastKey, *lastUID;
     // The first state of a launch is the session going on where it was, not the player coming to the track.
     BOOL arrived = lastKey && ![trackKey(track) isEqualToString:lastKey];
-#if SG_DRIVER
-    static BOOL hadPause, lastPaused;
-    if (arrived || !hadPause || state.isPaused != lastPaused) {
-        SGDJ_TRACE(@"player.state", (@{@"track": SGDJProbeTag(track.UID),
-                                      @"arrived": @(arrived), @"paused": @(state.isPaused),
-                                      @"handover": @(sHandingOver), @"position": @(state.position)}));
-    }
-    lastPaused = state.isPaused;
-    hadPause = YES;
-#endif
     if (arrived) ++sDJTrackArrivalSerial;
     NSString *leftUID = arrived ? lastUID : nil;
     lastUID = track.UID;
