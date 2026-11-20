@@ -17,7 +17,7 @@
 // lyrics in the player on and off (PlayerLyrics.x): filled while they are up, dimmed and dead for a
 // track that has none.
 // Spotify's icons (SGRKeyPlayerSpotifyIcons) leaves Connect's and the queue's glyphs Spotify's, and draws the Lyrics
-// glyph as Spotify's Encore "lyrics", lit in the primary color while the lyrics are up.
+// glyph as Spotify's Encore "quote" / "quoteActive", lit in the primary color while lyrics are up.
 //
 // The row sits lower than Spotify puts it, just over the home indicator the way the Music app's does
 // (issue #54): the footer unit's view is translated down, the controls follow it part of the way, and a
@@ -58,7 +58,7 @@ static const CGFloat kVolumeLift = 10;
 // "airplayaudio" is the name iOS 16 knows; iOS 18 calls it airplay.audio and keeps this one as its alias.
 static NSString *const kConnectSymbol = @"airplayaudio", *const kQueueSymbol = @"list.bullet";
 
-static char kEncoreKey;
+static char kEncoreKey, kEncoreNameKey;
 static char kConnectKey, kShareKey, kTrimmerKey, kSharedByKey, kQueueKey, kQueueIconKey, kLyricsGlyphKey, kReachKey, kRowKey;
 static __weak SGRGlyphButton *sg_lyricsGlyph;
 
@@ -94,32 +94,43 @@ BOOL SGRPlayerSpotifyIcons(void) {
     return on;
 }
 
+// Keep one Encore view and update its Spotify resource in place on lyrics open/close.
+// `setIcon:` is supplied by Spotify's SPTEncoreIconView in 9.1.90 (Stage 44
+// native method probe). This avoids removing/readding a view mid-transition.
 UIView *SGRPlayerEncoreGlyphIn(SGRGlyphButton *button, NSString *name) {
-    if (!button) return nil;
+    if (!button || !name.length) return nil;
     SPTEncoreIconView *encore = objc_getAssociatedObject(button, &kEncoreKey);
-    if (!encore) {
+    NSString *oldName = objc_getAssociatedObject(button, &kEncoreNameKey);
+    if (!encore || ![oldName isEqualToString:name]) {
         Class icons = NSClassFromString(@"SPTEncoreIcon"), view = NSClassFromString(@"SPTEncoreIconView");
         SEL glyphSel = NSSelectorFromString(name);
         if (!icons || !view || ![icons respondsToSelector:glyphSel]) {
-            SGLog(@"redesign player: no Encore glyph %@, the Music app's stays", name);
-            return nil;
+            SGLog(@"redesign player: no Encore glyph %@, the existing glyph stays", name);
+            return encore;
         }
-        id glyph = ((id (*)(id, SEL))objc_msgSend)(icons, glyphSel);
-        encore = glyph ? [[view alloc] initWithIcon:glyph] : nil;
-        if (!encore) return nil;
-        encore.userInteractionEnabled = NO;
-        encore.isAccessibilityElement = NO;
-        CGSize size = encore.intrinsicContentSize;
-        encore.bounds = CGRectMake(0, 0, size.width > 0 ? size.width : 24, size.height > 0 ? size.height : 24);
-        encore.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin
-                                | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
-        encore.foregroundColor = button.glyph.tintColor ?: SGRPrimary();
-        objc_setAssociatedObject(button, &kEncoreKey, encore, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        id icon = ((id (*)(id, SEL))objc_msgSend)(icons, glyphSel);
+        if (!icon) return encore;
+        if (encore) {
+            if (![encore respondsToSelector:@selector(setIcon:)]) return encore;
+            [encore setIcon:icon];
+        } else {
+            encore = [[view alloc] initWithIcon:icon];
+            if (!encore) return nil;
+            encore.userInteractionEnabled = NO;
+            encore.isAccessibilityElement = NO;
+            CGSize size = encore.intrinsicContentSize;
+            encore.bounds = CGRectMake(0, 0, size.width > 0 ? size.width : 24, size.height > 0 ? size.height : 24);
+            encore.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin
+                                    | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+            objc_setAssociatedObject(button, &kEncoreKey, encore, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        objc_setAssociatedObject(button, &kEncoreNameKey, [name copy], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     // Hidden rather than clear: the button puts its glyph's alpha back as it is pressed.
     button.glyph.hidden = YES;
     if (encore.superview != button) [button addSubview:encore];
     encore.center = CGPointMake(CGRectGetMidX(button.bounds), CGRectGetMidY(button.bounds));
+    encore.foregroundColor = button.glyph.tintColor ?: SGRPrimary();
     return encore;
 }
 
@@ -140,7 +151,8 @@ void SGRPlayerLyricsChanged(void) {
     void (^mark)(void) = ^{
         glyph.enabled = enabled;
         glyph.glyph.tintColor = open ? SGRPrimary() : SGRSecondary();
-        ((SPTEncoreIconView *)objc_getAssociatedObject(glyph, &kEncoreKey)).foregroundColor = glyph.glyph.tintColor;
+        if (objc_getAssociatedObject(glyph, &kEncoreKey))
+            SGRPlayerEncoreGlyphIn(glyph, open ? @"quoteActive" : @"quote");
     };
     if (animated) SGRAnimate(SGRMotionFade, mark, nil);
     else mark();
@@ -158,7 +170,7 @@ SGRGlyphButton *SGRPlayerLyricsGlyphIn(UIView *host) {
     // The Lyrics control always uses Spotify's Encore icon in Legacy Glass;
     // the Spotify's icons preference still governs the *other* player glyphs.
     if ((SGBelowiOS26() && SGUseLegacyGlass()) || SGRPlayerSpotifyIcons())
-        SGRPlayerEncoreGlyphIn(glyph, @"lyrics");
+        SGRPlayerEncoreGlyphIn(glyph, SGRPlayerLyricsOpen() ? @"quoteActive" : @"quote");
     sg_lyricsGlyph = glyph;
     return glyph;
 }

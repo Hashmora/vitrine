@@ -4,6 +4,7 @@
 
 @interface SPTEncoreIconView : UIView
 - (instancetype)initWithIcon:(id)icon;
+- (void)setIcon:(id)icon;  // Spotify 9.1.90 native runtime, verified by Stage 44
 @property (nonatomic, strong) UIColor *foregroundColor;
 @property (nonatomic, strong) UIColor *activeForegroundColor;
 - (void)setIsActive:(BOOL)active;
