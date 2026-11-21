@@ -283,6 +283,8 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
 // Create's menu open: the plus turns 45 degrees onto a white disc, as on the capsule's own Create button.
 - (void)setCreateOpen:(BOOL)open;
 - (void)setHeld:(BOOL)held animated:(BOOL)animated;
+// Compact circles retain their 54pt glass; expanded Split Tabs uses 58pt.
+- (void)setCompactSizing:(BOOL)compact;
 @end
 
 @implementation SGRLegacyCircle {
@@ -298,12 +300,13 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
     BOOL _held;
     CGFloat _trackingStartX, _trackingDX;
     CAShapeLayer *_heldPerimeter;
-    BOOL _shown, _configured, _open;
+    BOOL _shown, _configured, _open, _compactSizing;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    _compactSizing = YES;
     _pane = SGGlassFor(self, &kCirclePaneKey);
     _pane.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     // Do NOT install SGGlassInteractive here. Its generic recognizer
@@ -379,7 +382,10 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
     // A true circle: the circular corner curve, not the continuous one the capsule's ends and the now playing
     // card have, which on a square draws a squircle.
     // Native compact platter is 62pt, its quiet glass inset 4pt: 54pt.
-    CGRect quiet = CGRectInset(bounds, 4, 4);
+    // Compact: 62pt slot with 54pt glass, aligned with the mini-player.
+    // Expanded Split Tabs: 58pt glass, closer to the 62pt full tab platter.
+    CGRect quiet = CGRectInset(bounds, _compactSizing ? 4 : 2,
+                              _compactSizing ? 4 : 2);
     if (!CGRectEqualToRect(_pane.frame, quiet)) _pane.frame = quiet;
     CGFloat quietRadius = quiet.size.height / 2;
     SGShapeGlass(_pane, quietRadius, YES);
@@ -420,6 +426,12 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
         _disc.layer.cornerRadius = size / 2;
         _disc.center = _glyph.center;
     }
+}
+
+- (void)setCompactSizing:(BOOL)compact {
+    if (_compactSizing == compact) return;
+    _compactSizing = compact;
+    [self setNeedsLayout];
 }
 
 - (void)setShown:(BOOL)shown {
@@ -1636,6 +1648,8 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
     SGRLegacyCircle *trail = objc_getAssociatedObject(host, &kTrailKey);
     if (compact && !lead) lead = makeCircle(host, &kLeadKey);
     if (trailSource && (!folded || compact) && !trail) trail = makeCircle(host, &kTrailKey);
+    [lead setCompactSizing:compact];
+    [trail setCompactSizing:compact];
     [UIView performWithoutAnimation:^{
         placeCircle(lead, sg_leadFrame, host);
     }];
@@ -2082,16 +2096,22 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     // Its edges bend the backdrop; the icons and captions remain unscaled (TabBarLens.m).
     SGRLegacyLens *selPill = (SGRLegacyLens *)SGLazyChild(host, &kSelPillKey, ^UIView *{ return [SGRLegacyLens new]; });
     if (selPill.superview != host) [host insertSubview:selPill aboveSubview:navTint];
-    selPill.heldOutset = kSelPillInset + kLensOverhang;
-    // The pill follows bar.selectedItem, not Spotify's labels, which repaint late. syncBar is its only writer.
+    // In expanded Split Tabs, the final capsule tab sits next to a separate
+    // 58pt glass button. Give its selected pill the same extra 2pt on each
+    // vertical side, but leave all other selections at the native 54pt.
     NSUInteger selIndex = [bar.items indexOfObject:bar.selectedItem];
+    CGFloat pillInset = separate && selIndex != NSNotFound &&
+        selIndex + 1 == sources.count ? 2 : kSelPillInset;
+    selPill.heldOutset = pillInset + kLensOverhang;
+    // The pill follows bar.selectedItem, not Spotify's labels, which repaint late. syncBar is its only writer.
     if (selIndex != NSNotFound && selIndex < sources.count) {
         CGFloat pillWidth = nativeTabLayout(bar) ? kNativeSlotWidth : itemWidth - kSelPillXInset * 2;
         CGFloat centerX = [bar renderedCenterXForItem:bar.selectedItem];
         CGFloat slotX = isnan(centerX)
             ? bar.frame.origin.x + selIndex * (itemWidth + kNavItemSpacing) + kSelPillXInset
             : bar.frame.origin.x + centerX - pillWidth / 2;
-        CGRect pillFrame = CGRectMake(slotX, bar.frame.origin.y + kSelPillInset, pillWidth, bar.frame.size.height - kSelPillInset * 2);
+        CGRect pillFrame = CGRectMake(slotX, bar.frame.origin.y + pillInset,
+                                      pillWidth, bar.frame.size.height - pillInset * 2);
         BOOL wasVisible = !selPill.hidden;
         selPill.hidden = NO;
         // The lens moves the pill: a tap, a tab picked on release and a layout pass slide it to the new slot on the
