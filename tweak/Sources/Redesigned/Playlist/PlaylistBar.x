@@ -119,13 +119,16 @@ static void apply(UIView *bar) {
     // large, leaving the name where Spotify had it, 2pt low. The layout hook below puts the transform back to
     // identity before Spotify lays out, so what is read here is always the layout's own centre, and the move
     // is written only then: a pass of ours with a move on already (didMoveToWindow, a gradient added) leaves it.
+    // Recompute from Spotify's *untransformed* layout every pass. Earlier
+    // versions only applied a shift when transform was identity: the first
+    // premature call could leave an old shift stuck for the rest of a scroll.
+    CGAffineTransform before = title.transform;
+    BOOL translationOnly = fabs(before.a - 1) < 0.001 && fabs(before.d - 1) < 0.001 &&
+        fabs(before.b) < 0.001 && fabs(before.c) < 0.001;
+    if (!translationOnly) return;
+    if (!CGAffineTransformIsIdentity(before)) title.transform = CGAffineTransformIdentity;
     CGFloat middle = [title.superview convertPoint:title.center toView:nil].y;
     CGFloat target = bar.window.safeAreaInsets.top + SGRGlassCircleSize / 2;
-    // Artist's HeaderNavigationBar belongs to a collapsing ImageHeaderView, unlike
-    // the button pinned to the stationary artist page. Its origin moves as the
-    // photo collapses and sometimes differs from the window safe-area position.
-    // Measure against the *actual* Back glass instead of a predicted inset so
-    // the name remains on the same horizontal line as Back and More.
     BOOL pinnedArtist = NO;
     UIView *artistPage = SGRArtistPageOf(bar);
     SGRMirrorButton *back = SGRPinnedBackIn(artistPage);
@@ -134,11 +137,15 @@ static void apply(UIView *bar) {
         pinnedArtist = YES;
     }
     CGFloat shift = target - middle;
-    // The collapsing header's position may differ more than the other pages'
-    // 20pt tolerance. Never drag an offscreen title across the page, though.
-    CGFloat maximumShift = pinnedArtist ? 48 : 20;
-    if (CGAffineTransformIsIdentity(title.transform) && fabs(shift) > 0.5 &&
-        fabs(shift) < maximumShift) title.transform = CGAffineTransformMakeTranslation(0, shift);
+    CGFloat limit = pinnedArtist ? 52 : 20;
+    if (fabs(shift) > 0.5 && fabs(shift) < limit) {
+        title.transform = CGAffineTransformMakeTranslation(0, shift);
+        if (pinnedArtist) {
+            // The 64pt title holder moved down inside a 100pt bar can extend
+            // ~6pt below it. Never cut its 44pt glass at the bottom edge.
+            SGRUnclipUpTo(title, ^BOOL(UIView *v) { return v == bar; });
+        }
+    }
     SGRGlassTitleCapsule(title, &kBubbleKey, SGRTitleWidth(text), title.bounds.size.width, nil);
 }
 

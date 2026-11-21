@@ -109,6 +109,12 @@ static UIView *containerOf(UIView *header) {
 // the status bar. Pulled down past the top, it grows upward by as much, so the photo stays one piece with the
 // name and the list under it and zooms in, as the Music app's does, rather than sliding down and leaving the
 // field showing above it (issue #169). The photo fills the hero's content, so a pull only resizes it.
+// The base class implements this selector for pull-driven positioning, but
+// intentionally keeps it private to its .m file.
+@interface SGRStretchHero (ArtistTopOverscan)
+- (void)sgr_placeForPull:(CGFloat)pull;
+@end
+
 @interface SGRArtistHero : SGRStretchHero
 @property (nonatomic, readonly) UIImageView *picture;
 // The photo in Spotify's artwork view, and every photo it puts there afterward: the hero keeps itself
@@ -130,6 +136,21 @@ static UIView *containerOf(UIView *header) {
     _picture.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.content addSubview:_picture];
     return self;
+}
+
+// Extend *only* the picture, behind the rest of the header, past the top
+// edge of its scrolling container. The lower edge remains exactly where the
+// original hero ended, so it cannot put a solid rectangle over the list.
+// Clipping at the page/scroll-view boundary still applies.
+- (void)sgr_placeForPull:(CGFloat)pull {
+    [super sgr_placeForPull:pull];
+    if (!self.window || self.restHeight < 1) return;
+    CGFloat overhang = MIN(36, MAX(0, self.window.safeAreaInsets.top));
+    if (overhang < 1) return;
+    CGRect placed = self.frame; // super starts from restHeight every time
+    placed.origin.y -= overhang;
+    placed.size.height += overhang; // unchanged lower edge
+    if (!CGRectEqualToRect(self.frame, placed)) self.frame = placed;
 }
 
 - (void)followArtwork:(UIImageView *)source {
