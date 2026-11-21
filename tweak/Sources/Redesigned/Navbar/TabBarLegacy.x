@@ -262,7 +262,7 @@ static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
 
 // Create's menu dims the page behind the bar, and the bar reads best then: the glass carries that dimming itself,
 // always (SGRDarkenGlass).
-static char kNavDimKey, kCircleDimKey;
+static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
 
 // A round control of the compact bar: a glass circle with one tab's glyph on it. The glass is SGGlassFor's, so
 // it is a legacy glass pane with Legacy Liquid Glass on and a plain blur without it, and comes and goes by its
@@ -349,9 +349,12 @@ static char kNavDimKey, kCircleDimKey;
         SGRLegacyConfigureDirectionalRim(_heldGlare, _heldGlarePath,
                                           _heldPerimeter, _heldLongSpecular,
                                           _heldSpecularPath);
-        _heldGlare.opacity = 0;
-        _heldPerimeter.opacity = 0;
-        _heldLongSpecular.opacity = 0;
+        // The rim belongs to the same animated material as the raised glass.
+        // Let the glass view own its visibility; separate CA opacity tracks
+        // were why the white highlight lagged behind the moving refraction.
+        _heldGlare.opacity = 1;
+        _heldPerimeter.opacity = 1;
+        _heldLongSpecular.opacity = 1;
         _heldRimOverlay = [CALayer layer];
         _heldRimOverlay.name = @"Vitrine.LegacyCompactAboveGlyphRim";
         _heldRimOverlay.zPosition = 100;
@@ -360,7 +363,9 @@ static char kNavDimKey, kCircleDimKey;
         [_heldRimOverlay addSublayer:_heldPerimeter];
         [_heldRimOverlay addSublayer:_heldGlare];
         [_heldRimOverlay addSublayer:_heldLongSpecular];
-        [self.layer addSublayer:_heldRimOverlay];
+        // One compositor transform for glass, black dim and all rim layers.
+        // The glyph remains outside this subtree and does not move.
+        [_heldEdge.layer addSublayer:_heldRimOverlay];
     }
     self.isAccessibilityElement = YES;
     self.accessibilityTraits = UIAccessibilityTraitButton;
@@ -389,10 +394,18 @@ static char kNavDimKey, kCircleDimKey;
         [CATransaction setDisableActions:YES];
         _heldEdge.bounds = (CGRect){CGPointZero, expanded.size};
         _heldEdge.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
-        _heldEdge.layer.cornerRadius = expanded.size.height / 2;
+        CGFloat raisedRadius = expanded.size.height / 2;
+        SGShapeGlass(_heldEdge, raisedRadius, YES);
+        // Stage 109 removed the quiet black pane during a press but supplied
+        // no equivalent tint to the raised clear glass. Give the *moving*
+        // glass the same dark material as the original compact circle so it
+        // never becomes transparent, without sampling a second glass below.
+        SGRDarkenGlass(_heldEdge, &kCircleHeldDimKey, raisedRadius, 0.62);
         _heldRimOverlay.bounds = (CGRect){CGPointZero, expanded.size};
-        _heldRimOverlay.position = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
-        _heldRimOverlay.cornerRadius = expanded.size.height / 2;
+        // The rim is now inside _heldEdge.layer, so its position is LOCAL.
+        _heldRimOverlay.position = CGPointMake(expanded.size.width / 2,
+                                                expanded.size.height / 2);
+        _heldRimOverlay.cornerRadius = raisedRadius;
         SGRLegacyLayoutDirectionalRim(_heldRimOverlay.bounds, _heldGlare,
                                       _heldGlarePath, _heldPerimeter,
                                       _heldLongSpecular, _heldSpecularPath);
@@ -433,16 +446,13 @@ static char kNavDimKey, kCircleDimKey;
 }
 
 - (void)applyCompactFingerPose {
-    // Keep the stationary glyph at its slot. Move the entire *visible* raised
-    // circle with the finger; unlike before, its centre is no longer occupied
-    // by an unmoving, dark compact pane. The finger remains free to leave the
-    // original 62pt button while UIKit continues tracking this touch.
+    // The full lens and compact circles share the same transform constructor.
+    // The rim is a child of the glass, so there is only ONE moving pose to
+    // compute and animate; the glyph keeps its native static slot.
     CGFloat dx = _held ? MAX(-14, MIN(14, _trackingDX * 0.75)) : 0;
     CGFloat stretch = _held ? MIN(0.020, fabs(dx) / 14 * 0.020) : 0;
-    CGAffineTransform pose = CGAffineTransformMakeTranslation(dx, 0);
-    pose = CGAffineTransformScale(pose, 1 + stretch, 1 - stretch * 0.22);
-    _heldEdge.transform = pose;
-    _heldRimOverlay.affineTransform = pose;
+    _heldEdge.transform = SGRLegacyGlassPoseTransform(dx, 1 + stretch,
+                                                       1 - stretch * 0.22);
 }
 
 - (void)setHeld:(BOOL)held animated:(BOOL)animated {
@@ -450,14 +460,12 @@ static char kNavDimKey, kCircleDimKey;
     _held = held;
     if (!held) _trackingDX = 0;
     void (^update)(void) = ^{
-        // Only one real glass circle is visible at a time. The old quiet
-        // pane below the raised backdrop was sampled as an extra inner rim.
+        // Hand the black glass material from the quiet pane to the raised
+        // pane; both carry the same tint, but only one refracts at a time.
         SGRShowGlass(self->_pane, !held && self->_shown);
         self->_film.alpha = (!held && self->_shown) ? 1 : 0;
+        // Child rim, dim and glass now share the SAME UIView opacity clock.
         self->_heldEdge.alpha = held ? 1 : 0;
-        self->_heldGlare.opacity = held ? 1 : 0;
-        self->_heldPerimeter.opacity = held ? 1 : 0;
-        self->_heldLongSpecular.opacity = held ? 1 : 0;
         [self applyCompactFingerPose];
     };
     if (animated && !SGRReduceMotion())
