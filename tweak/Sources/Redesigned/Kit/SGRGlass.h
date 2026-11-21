@@ -116,6 +116,9 @@ void SGRThickenSheetGlass(UIView *glass, CGFloat cornerRadius);
 // A black layer over the body SGRThickenSheetGlass gives a pane, for menus whose white text the light body
 // leaves too little contrast to read. Call it after SGRThickenSheetGlass.
 void SGRDimSheetGlass(UIView *glass, CGFloat alpha);
+// Apply a tinted foreground inside the glass, between its body and specular rim.
+// The Telegram legacy dropdown uses a dark grey foreground instead of the iOS 26 white UIGlassEffect tint.
+void SGRDimSheetGlassTint(UIView *glass, UIColor *color);
 // A pane over the whole of `host` with that body (SGRThickenSheetGlass), dark, its corners `radius`, made once under
 // `key` and kept to the host's size: a card of Spotify's on glass (a dialog, a popup, a menu). The caller dims it.
 UIView *SGRGlassPaneIn(UIView *host, const void *key, CGFloat radius);

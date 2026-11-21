@@ -502,17 +502,23 @@ void SGRThickenSheetGlass(UIView *glass, CGFloat cornerRadius) {
     if (rim.superview == host && host.subviews.lastObject != rim) [host bringSubviewToFront:rim];
 }
 
-void SGRDimSheetGlass(UIView *glass, CGFloat alpha) {
+void SGRDimSheetGlassTint(UIView *glass, UIColor *color) {
+    if (!glass) return;
     UIView *host = glassContent(glass);
     UIView *dim = bodyLayer(host, &kSheetDimKey);
-    UIColor *tint = SGRReduceTransparency() ? UIColor.blackColor : [UIColor colorWithWhite:0 alpha:alpha];
+    UIColor *tint = SGRReduceTransparency() ? UIColor.blackColor : color;
     if (![dim.backgroundColor isEqual:tint]) dim.backgroundColor = tint;
-    // Over the body, under the rim.
+    // Keep the fill above the material body but BELOW the continuous rim.
+    // A dark fill outside the pane would also dim its specular reflection.
     UIView *body = objc_getAssociatedObject(host, &kSheetBodyKey);
     if (dim.superview != host) [host addSubview:dim];
     if (body.superview == host) [host insertSubview:dim aboveSubview:body];
     UIView *rim = objc_getAssociatedObject(host, &kSheetRimKey);
     if (rim.superview == host) [host bringSubviewToFront:rim];
+}
+
+void SGRDimSheetGlass(UIView *glass, CGFloat alpha) {
+    SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0 alpha:alpha]);
 }
 
 UIView *SGRGlassPaneIn(UIView *host, const void *key, CGFloat radius) {

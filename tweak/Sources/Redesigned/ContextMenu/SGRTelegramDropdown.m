@@ -13,7 +13,7 @@ static const CGFloat kTGPanelRadius = 30.0;
 static const CGFloat kTGActionInset = 10.0;
 static const CGFloat kTGHighlightRadius = 20.0;
 static const NSTimeInterval kTGHighlightDuration = 0.16;
-static char kTGHighlightKey, kTGStyledKey, kTGMenuRootKey, kTGTintKey;
+static char kTGHighlightKey, kTGStyledKey, kTGMenuRootKey, kTGSeparatorLineKey;
 static CFTimeInterval sg_lastMenuButtonAt;
 static __weak UIWindow *sg_lastMenuButtonWindow;
 
@@ -153,21 +153,32 @@ void SGRTelegramDropdownCellLaidOut(UICollectionViewCell *cell) {
     styleCell(cell);
 }
 
-static void tintPanel(UIView *platter, UIView *glass) {
-    UIView *tint = objc_getAssociatedObject(platter, &kTGTintKey);
-    if (!tint) {
-        tint = [UIView new];
-        tint.userInteractionEnabled = NO;
-        tint.accessibilityElementsHidden = YES;
-        tint.accessibilityIdentifier = @"Vitrine.TelegramDropdown.PanelTint";
-        tint.backgroundColor = [UIColor colorWithWhite:1 alpha:0.025];
-        tint.layer.cornerCurve = kCACornerCurveContinuous;
-        objc_setAssociatedObject(platter, &kTGTintKey, tint, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+// Telegram's ContextControllerActionsListSeparatorItemNode: an 18 pt
+// inset hairline centered in the existing UIKit spacer. Do not change
+// reusable-view sizes: UIKit owns hit areas and the menu's content height.
+static void styleSeparator(UIView *separator) {
+    if (!separator || separator.bounds.size.width < 50 || separator.bounds.size.height > 21) return;
+    if (![separator isKindOfClass:UICollectionReusableView.class] ||
+        [separator isKindOfClass:UICollectionViewCell.class]) return;
+    if (separator.backgroundColor != UIColor.clearColor) separator.backgroundColor = UIColor.clearColor;
+    separator.opaque = NO;
+    for (UIView *sub in separator.subviews) {
+        if ([sub isKindOfClass:UIVisualEffectView.class]) sub.hidden = YES;
     }
-    if (!CGRectEqualToRect(tint.frame, platter.bounds)) tint.frame = platter.bounds;
-    CGFloat radius = MIN(kTGPanelRadius, platter.bounds.size.height * 0.5);
-    tint.layer.cornerRadius = radius;
-    if (tint.superview != platter) [platter insertSubview:tint aboveSubview:glass];
+    UIView *line = objc_getAssociatedObject(separator, &kTGSeparatorLineKey);
+    if (!line) {
+        line = [UIView new];
+        line.userInteractionEnabled = NO;
+        line.accessibilityElementsHidden = YES;
+        line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
+        line.accessibilityIdentifier = @"Vitrine.TelegramDropdown.Separator";
+        objc_setAssociatedObject(separator, &kTGSeparatorLineKey, line, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (line.superview != separator) [separator addSubview:line];
+    CGFloat pixel = 1.0 / MAX(1.0, UIScreen.mainScreen.scale);
+    CGRect frame = CGRectMake(18, (separator.bounds.size.height - pixel) * 0.5,
+                              MAX(0, separator.bounds.size.width - 36), pixel);
+    if (!CGRectEqualToRect(line.frame, frame)) line.frame = frame;
 }
 
 void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
@@ -177,8 +188,10 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
     platter.layer.cornerCurve = kCACornerCurveContinuous;
     platter.clipsToBounds = YES;
     if (glass.layer.cornerRadius != radius) SGShapeGlass(glass, radius, NO);
-    SGRDimSheetGlass(glass, 0.28);
-    tintPanel(platter, glass);
+    // Telegram's iOS <26 legacy panel: #1C1C1C at 0.85 over its
+    // CABackdropLayer, with the border/reflection above the dark fill.
+    // Its white 0.025 tint is for *native* iOS 26 UIGlassEffect only.
+    SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0.11 alpha:0.85]);
 
     UICollectionView *collection = menuCollection(platter);
     if (collection) {
@@ -186,6 +199,10 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
         collection.opaque = NO;
         if (collection.backgroundView) collection.backgroundView.hidden = YES;
         for (UICollectionViewCell *cell in collection.visibleCells) styleCell(cell);
+        SGForEachView(collection, ^(UIView *view) {
+            if ([view isKindOfClass:UICollectionReusableView.class] &&
+                ![view isKindOfClass:UICollectionViewCell.class]) styleSeparator(view);
+        });
         updateHighlight(collection, NO);
     }
     if (![objc_getAssociatedObject(platter, &kTGStyledKey) boolValue]) {
