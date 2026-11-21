@@ -16,6 +16,7 @@
 // View tree: NavigationUI_TabBarImpl.TabBarView > TabBarCompactView > UIStackView of
 // ElementContentView<TabBarItemElement>, each with an SPTEncoreIconView and an SPTEncoreLabel.
 #import "Core/SGCore.h"
+#import "Core/SGGlassTouch.h"
 #import "Navbar.h"
 #import "TabBarLens.h"
 #import "TabBarLensStyle.h"
@@ -262,7 +263,7 @@ static void turnCreate(UIView *disc, UIView *glyph, BOOL open) {
 
 // Create's menu dims the page behind the bar, and the bar reads best then: the glass carries that dimming itself,
 // always (SGRDarkenGlass).
-static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
+static char kNavDimKey, kCircleDimKey;
 
 // A round control of the compact bar: a glass circle with one tab's glyph on it. The glass is SGGlassFor's, so
 // it is a legacy glass pane with Legacy Liquid Glass on and a plain blur without it, and comes and goes by its
@@ -300,7 +301,9 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
     BOOL _held;
     CGFloat _trackingStartX, _trackingDX;
     CAShapeLayer *_heldPerimeter;
-    BOOL _shown, _configured, _open, _compactSizing;
+    CAGradientLayer *_heldGlow;
+    CAShapeLayer *_heldGlowMask;
+    BOOL _shown, _configured, _open, _compactSizing, _capsuleBacked;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -339,9 +342,8 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
         _heldEdge.sharp = YES;
         _heldEdge.rimless = YES;
         _heldEdge.alpha = 0;
-        // A full raised lens must move, not merely two masked crescents over
-        // the stationary compact circle. The quiet pane is hidden on press,
-        // so this new backdrop does not refract its own dark button boundary.
+        // The clear raised lens bends the backdrop ABOVE a stationary black
+        // compact button. The black pane never disappears on touch.
         [self insertSubview:_heldEdge belowSubview:_glyph];
 
         _heldGlare = [CAGradientLayer layer];
@@ -358,11 +360,27 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
         _heldGlare.opacity = 1;
         _heldPerimeter.opacity = 1;
         _heldLongSpecular.opacity = 1;
+        // A soft edge halo shares the EXACT circle path with the sharp rim;
+        // unlike a white stroke offset into the glass it cannot drift.
+        _heldGlow = [CAGradientLayer layer];
+        _heldGlow.startPoint = CGPointMake(0, 0);
+        _heldGlow.endPoint = CGPointMake(1, 1);
+        _heldGlow.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.26].CGColor,
+                             (id)[UIColor colorWithWhite:1 alpha:0.005].CGColor,
+                             (id)[UIColor colorWithWhite:1 alpha:0.005].CGColor,
+                             (id)[UIColor colorWithWhite:1 alpha:0.24].CGColor];
+        _heldGlow.locations = @[@0, @0.40, @0.60, @1];
+        _heldGlowMask = [CAShapeLayer layer];
+        _heldGlowMask.fillColor = nil;
+        _heldGlowMask.strokeColor = UIColor.whiteColor.CGColor;
+        _heldGlowMask.lineWidth = 3.2;
+        _heldGlow.mask = _heldGlowMask;
         _heldRimOverlay = [CALayer layer];
         _heldRimOverlay.name = @"Vitrine.LegacyCompactAboveGlyphRim";
         _heldRimOverlay.zPosition = 100;
         _heldRimOverlay.masksToBounds = YES;
         _heldRimOverlay.cornerCurve = kCACornerCurveCircular;
+        [_heldRimOverlay addSublayer:_heldGlow];
         [_heldRimOverlay addSublayer:_heldPerimeter];
         [_heldRimOverlay addSublayer:_heldGlare];
         [_heldRimOverlay addSublayer:_heldLongSpecular];
@@ -402,11 +420,6 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
         _heldEdge.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
         CGFloat raisedRadius = expanded.size.height / 2;
         SGShapeGlass(_heldEdge, raisedRadius, YES);
-        // Stage 109 removed the quiet black pane during a press but supplied
-        // no equivalent tint to the raised clear glass. Give the *moving*
-        // glass the same dark material as the original compact circle so it
-        // never becomes transparent, without sampling a second glass below.
-        SGRDarkenGlass(_heldEdge, &kCircleHeldDimKey, raisedRadius, 0.62);
         _heldRimOverlay.bounds = (CGRect){CGPointZero, expanded.size};
         // The rim is now inside _heldEdge.layer, so its position is LOCAL.
         _heldRimOverlay.position = CGPointMake(expanded.size.width / 2,
@@ -415,6 +428,15 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
         SGRLegacyLayoutDirectionalRim(_heldRimOverlay.bounds, _heldGlare,
                                       _heldGlarePath, _heldPerimeter,
                                       _heldLongSpecular, _heldSpecularPath);
+        _heldGlow.frame = _heldRimOverlay.bounds;
+        _heldGlowMask.frame = _heldGlow.bounds;
+        _heldGlowMask.path = _heldPerimeter.path;
+        // A 54pt quiet circle grows into a 70pt transparent pressed bubble.
+        // Set the REST pose only when not animating a touch or return spring.
+        if (!_held && ![_heldEdge.layer animationForKey:@"sg.compact.lift"]) {
+            _heldEdge.transform = CGAffineTransformMakeScale(quiet.size.width / expanded.size.width,
+                                                              quiet.size.height / expanded.size.height);
+        }
         [CATransaction commit];
     }
     // bounds and center, not frame: the glyph is turned while Create's menu is up.
@@ -438,12 +460,19 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
     if (_configured && _shown == shown) return;
     _configured = YES;
     _shown = shown;
-    SGRShowGlass(_pane, shown);
-    _film.alpha = shown ? 1 : 0;
+    SGRShowGlass(_pane, shown && !_capsuleBacked);
+    _film.alpha = shown && !_capsuleBacked ? 1 : 0;
     _glyph.alpha = shown ? 1 : 0;
     self.transform = shown ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.6, 0.6);
     self.userInteractionEnabled = shown;
     if (!shown) { [self setHeld:NO animated:NO]; [self setCreateOpen:NO]; }
+}
+
+- (void)setCapsuleGlassBacking:(BOOL)backed {
+    if (_capsuleBacked == backed) return;
+    _capsuleBacked = backed;
+    SGRShowGlass(_pane, _shown && !backed);
+    _film.alpha = _shown && !backed ? 1 : 0;
 }
 
 - (void)holdGlyphOnly:(CGFloat)alpha {
@@ -457,34 +486,76 @@ static char kNavDimKey, kCircleDimKey, kCircleHeldDimKey;
     [self setHeld:NO animated:NO];
 }
 
+// Geometry is the same shared pose function as the full lens. The circle has
+// its own touch target, but uses the SAME legacy lift/release spring constants.
+- (CGAffineTransform)compactPoseForHeld:(BOOL)held {
+    CGFloat restScale = _compactSizing ? 54.0 / 70.0 : 58.0 / 74.0;
+    if (!held || SGRReduceMotion())
+        return SGRLegacyGlassPoseTransform(0, restScale, restScale);
+    CGFloat dx = MAX(-14, MIN(14, _trackingDX * 0.75));
+    CGFloat stretch = MIN(0.12, fabs(dx) / 14 * 0.12);
+    // Direction-dependent volume compensation: a travelling circle widens
+    // along the swipe and slightly compresses across it, like the big lens.
+    return SGRLegacyGlassPoseTransform(dx, 1.0 + stretch, 1.0 - stretch * 0.70);
+}
+
+- (void)animateCompactPose:(CGAffineTransform)pose visible:(BOOL)visible
+                      spring:(SGSpring)spring animated:(BOOL)animated {
+    CALayer *layer = _heldEdge.layer;
+    CALayer *presented = layer.presentationLayer ?: layer;
+    CATransform3D from = presented.transform;
+    CGFloat alphaFrom = presented.opacity;
+    [layer removeAnimationForKey:@"sg.compact.lift"];
+    [layer removeAnimationForKey:@"sg.compact.opacity"];
+    [UIView performWithoutAnimation:^{
+        self->_heldEdge.transform = pose;
+        self->_heldEdge.alpha = visible ? 1 : 0;
+    }];
+    if (!animated || SGRReduceMotion()) return;
+    CASpringAnimation *move = [CASpringAnimation animationWithKeyPath:@"transform"];
+    move.fromValue = [NSValue valueWithCATransform3D:from];
+    move.toValue = [NSValue valueWithCATransform3D:CATransform3DMakeAffineTransform(pose)];
+    move.mass = spring.mass;
+    move.stiffness = spring.stiffness;
+    move.damping = spring.damping;
+    move.duration = move.settlingDuration;
+    [layer addAnimation:move forKey:@"sg.compact.lift"];
+    CASpringAnimation *fade = [CASpringAnimation animationWithKeyPath:@"opacity"];
+    fade.fromValue = @(alphaFrom);
+    fade.toValue = @(visible ? 1 : 0);
+    fade.mass = spring.mass;
+    fade.stiffness = spring.stiffness;
+    fade.damping = spring.damping;
+    fade.duration = move.duration;
+    [layer addAnimation:fade forKey:@"sg.compact.opacity"];
+}
+
 - (void)applyCompactFingerPose {
-    // The full lens and compact circles share the same transform constructor.
-    // The rim is a child of the glass, so there is only ONE moving pose to
-    // compute and animate; the glyph keeps its native static slot.
-    CGFloat dx = _held ? MAX(-14, MIN(14, _trackingDX * 0.75)) : 0;
-    CGFloat stretch = _held ? MIN(0.020, fabs(dx) / 14 * 0.020) : 0;
-    _heldEdge.transform = SGRLegacyGlassPoseTransform(dx, 1 + stretch,
-                                                       1 - stretch * 0.22);
+    // Retarget the same press spring from its presentation pose. Do not
+    // restart the opacity spring: a finger moving during the first 100 ms
+    // must not make the glass or its child rim flash fully visible.
+    CALayer *layer = _heldEdge.layer;
+    CATransform3D from = (layer.presentationLayer ?: layer).transform;
+    CGAffineTransform pose = [self compactPoseForHeld:_held];
+    [UIView performWithoutAnimation:^{ self->_heldEdge.transform = pose; }];
+    CASpringAnimation *move = [CASpringAnimation animationWithKeyPath:@"transform"];
+    move.fromValue = [NSValue valueWithCATransform3D:from];
+    move.toValue = [NSValue valueWithCATransform3D:CATransform3DMakeAffineTransform(pose)];
+    move.mass = SGGlassLiftOn.mass;
+    move.stiffness = SGGlassLiftOn.stiffness;
+    move.damping = SGGlassLiftOn.damping;
+    move.duration = move.settlingDuration;
+    [layer addAnimation:move forKey:@"sg.compact.lift"];
 }
 
 - (void)setHeld:(BOOL)held animated:(BOOL)animated {
     if (_held == held || !_heldEdge) return;
     _held = held;
     if (!held) _trackingDX = 0;
-    void (^update)(void) = ^{
-        // Hand the black glass material from the quiet pane to the raised
-        // pane; both carry the same tint, but only one refracts at a time.
-        SGRShowGlass(self->_pane, !held && self->_shown);
-        self->_film.alpha = (!held && self->_shown) ? 1 : 0;
-        // Child rim, dim and glass now share the SAME UIView opacity clock.
-        self->_heldEdge.alpha = held ? 1 : 0;
-        [self applyCompactFingerPose];
-    };
-    if (animated && !SGRReduceMotion())
-        [UIView animateWithDuration:held ? 0.14 : 0.17 delay:0
-                            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
-                         animations:update completion:nil];
-    else [UIView performWithoutAnimation:update];
+    // The stationary dark pane is intentionally NEVER hidden. Pressing adds
+    // a transparent moving lens over it, matching the full tab-bar substrate.
+    [self animateCompactPose:[self compactPoseForHeld:held] visible:held
+                     spring:held ? SGGlassLiftOn : SGGlassLiftOff animated:animated];
 }
 
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
@@ -1731,7 +1802,10 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
         NSUInteger generation = ++sg_rollGeneration;
         CGRect full = (CGRect){CGPointZero, platter.size};
         // The circle in the glass's own coordinates, with the glass slid to it.
-        CGRect dot = CGRectOffset(sg_leadFrame, -platter.origin.x - slide, -platter.origin.y);
+        // Finish at the actual quiet-glass diameter (54pt), not the 62pt
+        // interactive slot; otherwise it visibly shrinks at completion.
+        CGRect quietCircle = CGRectInset(sg_leadFrame, 4, 4);
+        CGRect dot = CGRectOffset(quietCircle, -platter.origin.x - slide, -platter.origin.y);
         UIView *glassMask = rollMask(navGlass, &kGlassMaskKey), *tintMask = rollMask(navTint, &kTintMaskKey);
         [UIView performWithoutAnimation:^{
             SGRShowGlass(navGlass, YES);
@@ -1755,15 +1829,17 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(duration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (generation != sg_rollGeneration) return;
             [UIView performWithoutAnimation:^{
-                navGlass.maskView = nil;
-                navTint.maskView = nil;
-                navGlass.transform = navTint.transform = CGAffineTransformIdentity;
                 if (compact) {
+                    // Keep the exact moving glass at rest. Swapping it to a
+                    // different 54pt effect after the roll caused the flash.
+                    [weakLead setCapsuleGlassBacking:YES];
                     [weakLead setShown:YES];
-                    SGRShowGlass(navGlass, NO);
-                    navTint.alpha = 0;
                 } else {
+                    navGlass.maskView = nil;
+                    navTint.maskView = nil;
+                    navGlass.transform = navTint.transform = CGAffineTransformIdentity;
                     [weakLead setShown:NO];
+                    [weakLead setCapsuleGlassBacking:NO];
                 }
             }];
         });
@@ -1775,6 +1851,9 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
             navGlass.maskView = nil;
             navTint.maskView = nil;
             navGlass.transform = navTint.transform = CGAffineTransformIdentity;
+            // A Reduce Motion / interrupted roll must not strand the leading
+            // circle in capsule-backed mode after the host mask is removed.
+            [lead setCapsuleGlassBacking:NO];
         }
         [lead setShown:compact];
         // Outside a roll the glass and the tabs fade, the tabs a beat after the glass coming in and first going away.
