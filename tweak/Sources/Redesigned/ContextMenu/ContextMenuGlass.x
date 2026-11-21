@@ -96,6 +96,13 @@ static void bubbleMenu(UIView *list) {
     while (menu && ![menu isKindOfClass:NSClassFromString(@"_UIContextMenuView")]) menu = menu.superview;
     if (!menu || objc_getAssociatedObject(menu, &kBubbledKey)) return;
     objc_setAssociatedObject(menu, &kBubbledKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // Stage 140-147 layered our own glass-bubble open on top of UIKit's
+    // _UIContextMenuView opening transition. The menu's layout is also
+    // refitted as its content arrives: two animation owners can restart the
+    // opening midway through. Until the dedicated iOS-26 morph is measured,
+    // button dropdowns use *only* UIKit's opening transition. Context menus
+    // that are not part of the dropdown port retain their previous motion.
+    if (SGRTelegramDropdownShouldStyle(list, SGRDropdownMenuIsOpenedFromButton())) return;
     SGRGlassBubbleOpen(list, kMenuRadius);
 }
 

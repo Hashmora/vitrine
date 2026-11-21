@@ -98,8 +98,17 @@ static void updateHighlight(UICollectionView *collection, BOOL animate) {
     CGRect target = CGRectZero;
     if (cell && cell.window && cell.bounds.size.width > 10 && cell.bounds.size.height > 10) {
         CGRect frame = [cell convertRect:cell.bounds toView:collection];
-        target = CGRectMake(kTGActionInset, frame.origin.y,
-                            MAX(0, collection.bounds.size.width - 2 * kTGActionInset), frame.size.height);
+        // The three quick actions at the top are three independent tiles,
+        // not one full-width selectable row. Their highlights must never
+        // escape the individual tile, even during a drag across the row.
+        BOOL tile = frame.size.width < collection.bounds.size.width * 0.55;
+        if (tile) {
+            const CGFloat tileInset = 6.0;
+            target = CGRectInset(frame, tileInset, tileInset);
+        } else {
+            target = CGRectMake(kTGActionInset, frame.origin.y,
+                                MAX(0, collection.bounds.size.width - 2 * kTGActionInset), frame.size.height);
+        }
     }
     BOOL shown = !CGRectIsEmpty(target);
     if (shown) {
@@ -373,6 +382,11 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
     if (collection) {
         collection.backgroundColor = UIColor.clearColor;
         collection.opaque = NO;
+        // Telegram's actions scroll view never shows a system scrollbar. The
+        // native UICollectionView may still scroll when a menu is genuinely
+        // taller than the viewport; suppress only its indicators, not scrolling.
+        if (collection.showsVerticalScrollIndicator) collection.showsVerticalScrollIndicator = NO;
+        if (collection.showsHorizontalScrollIndicator) collection.showsHorizontalScrollIndicator = NO;
         if (collection.backgroundView) collection.backgroundView.hidden = YES;
         for (UICollectionViewCell *cell in collection.visibleCells) styleCell(cell);
         SGForEachView(collection, ^(UIView *view) {
