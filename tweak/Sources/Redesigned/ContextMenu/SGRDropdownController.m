@@ -8,6 +8,9 @@
 static const CGFloat kWidth = 250, kRadius = 30, kInset = 10;
 static const CGFloat kRow = 42, kSubtitle = 58, kQuick = 93, kHeader = 62;
 static const CGFloat kPanelMaximum = 520;
+// Lightweight presentation transitions only. The touch-driven iOS 26 morph
+// remains a separate task; never replay an open transition on a data refresh.
+static const NSTimeInterval kOpenTime = 0.18, kSubmenuTime = 0.16, kDismissTime = 0.12;
 static char kOwnedGlassKey;
 
 BOOL SGRDropdownPerformAction(UIMenuElement *element) {
@@ -346,6 +349,9 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 @property (nonatomic, strong) NSMutableArray<SGRDropdownPanel *> *panels;
 @property (nonatomic, strong) NSMutableArray<NSString *> *menuIDs;
 @property (nonatomic) CGRect origin;
+@property (nonatomic) BOOL closing;
+@property (nonatomic) BOOL popping;
+- (void)finishDismiss:(UIMenuElement *)element;
 - (BOOL)start:(UIMenu *)menu from:(UIView *)anchor finish:(SGRDropdownFinish)finish;
 - (void)update:(UIMenu *)menu;
 - (void)dismiss:(UIMenuElement *)element;
@@ -391,22 +397,36 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)outsideTapped { [self dismiss:nil]; }
 - (void)backTapped { [self popMenu]; }
 - (void)popMenu {
+    if (self.closing || self.popping) return;
     if (self.panels.count < 2) { [self dismiss:nil]; return; }
+    self.popping = YES;
     SGRDropdownPanel *top = self.panels.lastObject;
-    [top removeFromSuperview];
-    [self.panels removeLastObject];
-    [self.menuIDs removeLastObject];
-    self.panels.lastObject.alpha = 1;
+    SGRDropdownPanel *under = self.panels[self.panels.count - 2];
+    top.userInteractionEnabled = NO;
+    [UIView animateWithDuration:kSubmenuTime delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
+                     animations:^{
+        top.alpha = 0;
+        top.transform = CGAffineTransformMakeScale(0.98, 0.98);
+        under.alpha = 1;
+    } completion:^(__unused BOOL finished) {
+        if (self.panels.lastObject == top) {
+            [top removeFromSuperview];
+            [self.panels removeLastObject];
+            [self.menuIDs removeLastObject];
+        }
+        self.popping = NO;
+    }];
 }
 - (void)choose:(UIMenuElement *)element {
+    if (self.closing || self.popping) return;
     if ([element isKindOfClass:UIMenu.class]) { [self pushMenu:(UIMenu *)element title:element.title]; return; }
     if (dropdownAttributes(element) & UIMenuElementAttributesDisabled) return;
     [self dismiss:element];
 }
 - (void)pushMenu:(UIMenu *)menu title:(NSString *)title {
-    if (self.panels.count >= 8) return;
+    if (self.closing || self.popping || self.panels.count >= 8) return;
     SGRDropdownPanel *parent = self.panels.lastObject;
-    if (parent) parent.alpha = 0.5;
     SGRDropdownPanel *panel = [[SGRDropdownPanel alloc] initWithFrame:CGRectZero];
     panel.isSubmenu = title.length > 0;
     __weak SGRDropdownPresentation *weakSelf = self;
@@ -421,6 +441,17 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     [self.root.view addSubview:panel];
     [self.panels addObject:panel];
     [self.menuIDs addObject:menu.identifier ?: menu.title ?: @""];
+    // The first pane arrives only once. Submenus are separate surfaces above
+    // the parent; refreshing UIMenu data must never restart this transition.
+    panel.alpha = 0;
+    panel.transform = CGAffineTransformMakeScale(0.96, 0.96);
+    [UIView animateWithDuration:parent ? kSubmenuTime : kOpenTime delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
+                     animations:^{
+        panel.alpha = 1;
+        panel.transform = CGAffineTransformIdentity;
+        if (parent) parent.alpha = 0.5;
+    } completion:nil];
 }
 static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     for (UIMenuElement *element in root.children) {
@@ -450,9 +481,20 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     controller.view.backgroundColor = UIColor.clearColor;
     [panel addSubview:controller.view];
     [controller didMoveToParentViewController:self.root];
+    // An embedded control is sized after its empty UIMenu shell is made. Stop
+    // that shell's transition and open the real, final-sized surface just once.
+    [panel.layer removeAllAnimations];
+    panel.alpha = 0;
+    panel.transform = CGAffineTransformMakeScale(0.96, 0.96);
+    [UIView animateWithDuration:kOpenTime delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
+                     animations:^{
+        panel.alpha = 1;
+        panel.transform = CGAffineTransformIdentity;
+    } completion:nil];
 }
 - (void)update:(UIMenu *)menu {
-    if (!menu || !self.window) return;
+    if (!menu || !self.window || self.closing || self.popping) return;
     self.rootMenu = menu;
     SGRDropdownPanel *first = self.panels.firstObject;
     CGPoint offset = first.scroll.contentOffset;
@@ -472,7 +514,7 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
         panel.scroll.contentOffset = prior;
     }
 }
-- (void)dismiss:(UIMenuElement *)element {
+- (void)finishDismiss:(UIMenuElement *)element {
     if (!self.window) return;
     SGRDropdownFinish finish = self.finish;
     self.finish = nil;
@@ -483,14 +525,26 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     self.root = nil;
     if (finish) finish(element);
 }
+- (void)dismiss:(UIMenuElement *)element {
+    if (!self.window || self.closing) return;
+    self.closing = YES;
+    UIView *surface = self.root.view;
+    surface.userInteractionEnabled = NO;
+    [UIView animateWithDuration:kDismissTime delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
+                     animations:^{ surface.alpha = 0; }
+                     completion:^(__unused BOOL finished) { [self finishDismiss:element]; }];
+}
 @end
 
 static SGRDropdownPresentation *sg_currentDropdown;
 BOOL SGRDropdownPresent(UIView *anchor, UIMenu *menu, SGRDropdownFinish finished) {
     if (!anchor.window || !menu) return NO;
     if (sg_currentDropdown) {
-        if (sg_currentDropdown.anchor == anchor) return YES;
-        [sg_currentDropdown dismiss:nil];
+        if (sg_currentDropdown.anchor == anchor && sg_currentDropdown.window && !sg_currentDropdown.closing) return YES;
+        // Replacing an existing menu is immediate: no dying overlay above the
+        // next window, and no delayed callback into a new menu session.
+        [sg_currentDropdown finishDismiss:nil];
         sg_currentDropdown = nil;
     }
     SGRDropdownPresentation *showing = [SGRDropdownPresentation new];
@@ -514,7 +568,10 @@ void SGRDropdownDismissFrom(UIView *anchor) {
 
 BOOL SGRDropdownPresentContent(UIView *anchor, UIViewController *content, CGSize preferredSize) {
     if (!anchor.window || !content) return NO;
-    if (sg_currentDropdown) [sg_currentDropdown dismiss:nil];
+    if (sg_currentDropdown) {
+        [sg_currentDropdown finishDismiss:nil];
+        sg_currentDropdown = nil;
+    }
     UIMenu *empty = [UIMenu menuWithChildren:@[]];
     if (!SGRDropdownPresent(anchor, empty, nil)) return NO;
     [sg_currentDropdown showContent:content preferredSize:preferredSize];
