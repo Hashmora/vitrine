@@ -32,6 +32,14 @@ BOOL SGRDropdownPerformAction(UIMenuElement *element) {
 @implementation SGRDropdownItem
 @end
 
+// Attributes belong to concrete actions/commands, not to the UIMenuElement base class.
+// A submenu is a container, so it has no action attributes of its own.
+static UIMenuElementAttributes dropdownAttributes(UIMenuElement *element) {
+    if ([element isKindOfClass:UIAction.class]) return ((UIAction *)element).attributes;
+    if ([element isKindOfClass:UICommand.class]) return ((UICommand *)element).attributes;
+    return 0;
+}
+
 static BOOL isInline(UIMenu *menu) {
     return (menu.options & UIMenuOptionsDisplayInline) != 0;
 }
@@ -183,11 +191,11 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     SGRDropdownPress *press = [[SGRDropdownPress alloc] initWithFrame:CGRectMake(kInset, y, kWidth - 2*kInset, h)];
     press.element = element;
     press.pick = self.choose;
-    BOOL enabled = !(element.attributes & UIMenuElementAttributesDisabled);
+    BOOL enabled = !(dropdownAttributes(element) & UIMenuElementAttributesDisabled);
     press.enabled = enabled;
     press.accessibilityLabel = element.title;
     if (element.subtitle.length) press.accessibilityValue = element.subtitle;
-    UIColor *foreground = (element.attributes & UIMenuElementAttributesDestructive)
+    UIColor *foreground = (dropdownAttributes(element) & UIMenuElementAttributesDestructive)
         ? [UIColor colorWithRed:1 green:0.36 blue:0.34 alpha:enabled ? 1 : 0.38]
         : [UIColor colorWithWhite:1 alpha:enabled ? 1 : 0.38];
     UIImageView *glyph = [[UIImageView alloc] initWithFrame:CGRectMake(14, (h-21)/2, 21, 21)];
@@ -230,7 +238,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         press.element = element;
         press.pick = self.choose;
         press.accessibilityLabel = element.title;
-        press.enabled = !(element.attributes & UIMenuElementAttributesDisabled);
+        press.enabled = !(dropdownAttributes(element) & UIMenuElementAttributesDisabled);
         press.highlight.layer.cornerRadius = 18;
         UIImageView *image = [[UIImageView alloc] initWithFrame:CGRectMake((tileWidth-26)/2, 14, 26, 26)];
         image.image = [element.image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
@@ -378,7 +386,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 }
 - (void)choose:(UIMenuElement *)element {
     if ([element isKindOfClass:UIMenu.class]) { [self pushMenu:(UIMenu *)element title:element.title]; return; }
-    if (element.attributes & UIMenuElementAttributesDisabled) return;
+    if (dropdownAttributes(element) & UIMenuElementAttributesDisabled) return;
     [self dismiss:element];
 }
 - (void)pushMenu:(UIMenu *)menu title:(NSString *)title {
