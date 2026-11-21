@@ -6,7 +6,7 @@
 #import "Pages.h"
 
 static char kShareSearch, kShareRow, kShareInvite, kGroupName, kCancel;
-static char kMoreAction, kCopyAction, kSelfAction, kSearchAction;
+static char kMoreAction, kCopyAction, kSearchAction;
 static char kShareInnerPrepared, kShareOuterPrepared;
 
 // These actions are not all in the same Encore hierarchy: some are icon
@@ -42,15 +42,11 @@ static void glassNamedActions(UIView *root) {
         const void *key = NULL;
         if ([lower containsString:@"copy link"] || [lower isEqualToString:@"copy invite link"])
             key = &kCopyAction;
-        else if ([lower containsString:@" (you)"] || [lower isEqualToString:@"you"])
-            key = &kSelfAction;
         else if ([lower isEqualToString:@"more"] || [lower hasPrefix:@"more options"])
             key = &kMoreAction;
         else if ([lower isEqualToString:@"search"] || [lower hasPrefix:@"search people"] ||
                  [lower hasPrefix:@"search for people"])
             key = &kSearchAction;
-        else if ([lower isEqualToString:@"create group"])
-            key = &kShareRow;
         if (!key) return;
         UIView *button = actionWithText(view, root);
         if (!button) return;
@@ -68,6 +64,30 @@ static void glassNamedActions(UIView *root) {
             return [ancestor isKindOfClass:UICollectionView.class] || ancestor == root;
         });
     });
+}
+
+// New message has a 48pt icon and a separate 402pt hit-test row for
+// Create group and the signed-in user. The row is not meant to be glass:
+// earlier named-action matching glassed the full 402pt button (and sometimes
+// its outer ElementContentView). Keep only the icon/FaceStackView glass.
+// Clean old backing views on reused cells without touching the native button,
+// other list rows, or their actions.
+static void removeWideGlassFromShareRow(UIView *row) {
+    if (!row || row.bounds.size.width < 280) return;
+    UIView *owner = row;
+    for (NSUInteger depth = 0; owner && depth < 3; ++depth, owner = owner.superview) {
+        NSArray<UIView *> *children = [owner.subviews copy];
+        for (UIView *child in children) {
+            NSString *type = NSStringFromClass(child.class);
+            if (![type hasSuffix:@"LegacyGlassView"] &&
+                ![type hasSuffix:@"SGGlassView"] &&
+                ![type isEqualToString:@"SGLegacyGlassView"]) continue;
+            if (child.bounds.size.width < 280 ||
+                fabs(child.bounds.size.width - row.bounds.size.width) > 3) continue;
+            [child removeFromSuperview];
+        }
+        if ([owner isKindOfClass:UICollectionViewCell.class]) break;
+    }
 }
 
 static void glassAction(UIView *row, const void *key) {
@@ -194,6 +214,14 @@ static void shareGlass(UIViewController *c) {
     glassAction(SGRFindByIdentifier(root, @"CreateGroup.Row", &kShareRow), &kShareRow);
     glassAction(SGRFindByIdentifier(root, @"InviteLink.Row", &kShareInvite), &kShareInvite);
     glassNamedActions(root);
+    // Only the icon discs are glass here; avoid 402pt selected-looking rows.
+    UIView *create = SGRFindByIdentifier(root, @"CreateGroup.Row", &kShareRow);
+    removeWideGlassFromShareRow(create);
+    SGForEachView(root, ^(UIView *v) {
+        if ([v.accessibilityIdentifier isEqualToString:@"User.Row.Chat"] &&
+            [v.accessibilityLabel containsString:@"(you)"])
+            removeWideGlassFromShareRow(v);
+    });
     // In Add people the Cancel navigation action is an Encore tertiary text
     // button, not the standard UIKit back control.
     UIView *content = SGRChildNamed(bar, @"_UINavigationBarContentView");
