@@ -647,14 +647,16 @@ static BOOL playerShown(void) {
 // The system's menu, for the menus of UIButton and UIContextMenuInteraction.
 static BOOL isMenuPart(UIView *view) {
     NSString *name = NSStringFromClass(view.class);
-    return [name hasPrefix:@"_UIContextMenu"] || [name hasPrefix:@"_UIMenu"];
+    return [name hasPrefix:@"_UIContextMenu"] || [name hasPrefix:@"_UIMenu"]
+        || [view.accessibilityIdentifier isEqualToString:@"Vitrine.Dropdown.Panel"];
 }
 
 static UIView *shownMenu(void) {
     for (UIWindow *window in windows()) {
         __block UIView *found = nil;
         SGForEachView(window, ^(UIView *view) {
-            if (!found && [NSStringFromClass(view.class) hasPrefix:@"_UIContextMenuView"] && isShown(view)) found = view;
+            if (!found && ([NSStringFromClass(view.class) hasPrefix:@"_UIContextMenuView"]
+                             || [view.accessibilityIdentifier isEqualToString:@"Vitrine.Dropdown.Panel"]) && isShown(view)) found = view;
         });
         if (found) return found;
     }
