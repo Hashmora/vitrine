@@ -408,6 +408,7 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
 // rather than stretch just the dark material or draw an inert duplicate menu.
 // Other UIMenu shapes retain native heights until independently measured.
 static char kTGReferenceBusyKey, kTGRefLine1Key, kTGRefLine2Key;
+static char kTGMoreBusyKey, kTGMoreSizedKey, kTGMoreLinesKey, kTGMoreHeaderLineKey;
 
 static NSUInteger menuItemCount(UICollectionView *collection) {
     NSUInteger count = 0;
@@ -465,6 +466,215 @@ static void referenceLine(UICollectionView *collection, const void *key, CGFloat
     if (!CGRectEqualToRect(line.frame, target)) line.frame = target;
 }
 
+
+// UIKit 26 keeps the first menu as a separate, dimmed pane when More opens.
+// iOS 18 normally shrinks the second list to the first one's height and shifts
+// the underlying list down; the old port also faded the whole parent to zero.
+// This adapter is scoped to *button-originated* menus. It keeps UIKit's
+// original cell instances, actions, scroll gestures and submenu navigation.
+static NSArray<UIView *> *submenuLists(UIView *menu) {
+    NSMutableArray<UIView *> *lists = [NSMutableArray array];
+    for (UIView *v in menu.subviews)
+        if ([NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuListView"])
+            [lists addObject:v];
+    return lists;
+}
+
+static UIView *submenuPlatter(UIView *list) {
+    for (UIView *v in list.subviews)
+        if ([v isMemberOfClass:UIView.class] && v.bounds.size.width >= 200)
+            return v;
+    return nil;
+}
+
+static NSArray<UICollectionViewCell *> *sortedMenuCells(UICollectionView *collection) {
+    return [collection.visibleCells sortedArrayUsingComparator:^NSComparisonResult(UICollectionViewCell *a, UICollectionViewCell *b) {
+        CGFloat ay = CGRectGetMinY(a.frame), by = CGRectGetMinY(b.frame);
+        return ay < by ? NSOrderedAscending : ay > by ? NSOrderedDescending : NSOrderedSame;
+    }];
+}
+
+static UIView *submenuTitleIn(UICollectionView *collection) {
+    for (UIView *v in collection.subviews)
+        if ([NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuSubmenuTitleView"])
+            return v;
+    return nil;
+}
+
+static BOOL submenuTitleIs(UIView *header, NSString *expected) {
+    if (!header) return NO;
+    __block BOOL found = NO;
+    SGForEachView(header, ^(UIView *v) {
+        if ([v isKindOfClass:UILabel.class] && [((UILabel *)v).text isEqualToString:expected]) found = YES;
+    });
+    return found;
+}
+
+static void dressMoreHeader(UIView *header) {
+    if (!header || header.bounds.size.width < 200) return;
+    UIView *content = nil;
+    for (UIView *v in header.subviews) {
+        if ([NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuCellContentView"]) content = v;
+        // The opaque iOS 18 header strip must not sit above our one-piece
+        // pane: use the same glass as the rows underneath.
+        if ([v isKindOfClass:UIVisualEffectView.class] && !v.hidden) v.hidden = YES;
+    }
+    if (!content) return;
+    UIImageView *chevron = nil, *ellipsis = nil;
+    UIStackView *text = nil;
+    for (UIView *v in content.subviews) {
+        if ([v isKindOfClass:UIStackView.class]) text = (UIStackView *)v;
+        if (![v isKindOfClass:UIImageView.class] || v.alpha < 0.05 || v.hidden) continue;
+        UIImageView *icon = (UIImageView *)v;
+        if (icon.bounds.size.width <= 16) chevron = icon;
+        else if (icon.bounds.size.width >= 18) ellipsis = icon;
+    }
+    // iOS 26: ellipsis at the leading edge, title at x=60, disclosure at
+    // the trailing edge. Move UIKit's original views rather than cloning.
+    placeDropdownContent(ellipsis, 26, 21);
+    placeDropdownContent(text, 60, 20.667);
+    if (chevron) {
+        static UIImage *down;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{ down = [UIImage systemImageNamed:@"chevron.down"]; });
+        // UIKit can replace the image during a later layout pass; keep
+        // enforcing the shared trailing disclosure, not just its frame.
+        if (down && chevron.image != down) chevron.image = down;
+        placeDropdownContent(chevron, 213, 26.333);
+    }
+    for (UIView *v in header.subviews) {
+        if (![NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuSeparatorView"]) continue;
+        if (!v.hidden) v.hidden = YES;  // a single inset rule replaces it
+    }
+}
+
+void SGRTelegramDropdownSubmenuHeaderLaidOut(UIView *header) {
+    if (!header.window || !SGBelowiOS26()) return;
+    UIView *list = header.superview;
+    while (list && ![NSStringFromClass(list.class) isEqualToString:@"_UIContextMenuListView"]) list = list.superview;
+    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kTGMenuRootKey) boolValue]) return;
+    // A title inside a menu with no separate secondary list is not More.
+    UIView *menu = list.superview;
+    if (submenuLists(menu).count < 2) return;
+    dressMoreHeader(header);
+}
+
+static void moreRowLines(UICollectionView *collection, NSArray<UICollectionViewCell *> *cells) {
+    NSMutableArray<UIView *> *lines = objc_getAssociatedObject(collection, &kTGMoreLinesKey);
+    if (!lines) {
+        lines = [NSMutableArray array];
+        objc_setAssociatedObject(collection, &kTGMoreLinesKey, lines, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CGFloat pixel = 1.0 / MAX(1.0, collection.window.screen.scale);
+    // The native iOS 18 separators still sit at the old 43.67pt rhythm.
+    // Hide only those on the reference-sized submenu and draw real rules at
+    // the new action boundaries, without allowing them to receive touches.
+    for (UIView *v in collection.subviews) {
+        if ([v isKindOfClass:UICollectionReusableView.class] && ![v isKindOfClass:UICollectionViewCell.class])
+            v.layer.opacity = 0;
+    }
+    for (NSUInteger i = 0; i < cells.count; i++) {
+        UIView *line = nil;
+        if (i < lines.count) line = lines[i];
+        else {
+            line = [UIView new];
+            line.userInteractionEnabled = NO;
+            line.accessibilityElementsHidden = YES;
+            line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+            [lines addObject:line];
+        }
+        if (line.superview != collection) [collection addSubview:line];
+        CGFloat y = CGRectGetMaxY(cells[i].frame);
+        CGRect frame = CGRectMake(18, y - pixel * 0.5, MAX(0, collection.bounds.size.width - 36), pixel);
+        if (!CGRectEqualToRect(line.frame, frame)) line.frame = frame;
+        line.hidden = i == cells.count - 1;
+    }
+}
+
+// Returns YES for a dropdown submenu handled by this adapter. This means
+// the older hideUnder() animation must not run on the same two lists.
+BOOL SGRTelegramDropdownMatchSubmenuGeometry(UIView *menu) {
+    if (!menu.window || ![NSStringFromClass(menu.class) isEqualToString:@"_UIContextMenuView"]) return NO;
+    NSArray<UIView *> *lists = submenuLists(menu);
+    if (lists.count < 2) return NO;
+    UIView *under = lists.firstObject;
+    if (!SGRTelegramDropdownShouldStyle(under, SGRDropdownMenuIsOpenedFromButton())) return NO;
+    UIView *front = lists.lastObject;
+    UIView *platter = submenuPlatter(front);
+    UICollectionView *collection = platter ? menuCollection(platter) : nil;
+    if (!collection || menuItemCount(collection) == 0) return YES;
+    if ([objc_getAssociatedObject(menu, &kTGMoreBusyKey) boolValue]) return YES;
+    objc_setAssociatedObject(menu, &kTGMoreBusyKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    // Keep the already-laid-out parent where it opened. The iOS 26 tree has
+    // list alpha=1, but its *collection of actions* is dimmed to 0.5.
+    if (under.alpha != 1) under.alpha = 1;
+    UIView *underPlatter = submenuPlatter(under);
+    UICollectionView *underCollection = underPlatter ? menuCollection(underPlatter) : nil;
+    if (underCollection && fabs(underCollection.alpha - 0.5) > 0.01) underCollection.alpha = 0.5;
+    CGRect parent = under.frame;
+    if (fabs(parent.size.width - 242.5) < 2 && parent.size.height > 280) {
+        parent.origin.x = 7.5;
+        parent.origin.y = 0;
+        parent.size.height = 305.55;
+        if (!CGRectEqualToRect(parent, under.frame)) under.frame = parent;
+    }
+
+    NSUInteger count = menuItemCount(collection);
+    UIView *header = submenuTitleIn(collection);
+    BOOL measuredMore = count == 13 && fabs(collection.bounds.size.width - 250) < 2
+                        && submenuTitleIs(header, @"More");
+    CGFloat naturalBottom = 0;
+    NSArray<UICollectionViewCell *> *cells = sortedMenuCells(collection);
+    for (UICollectionViewCell *cell in cells)
+        naturalBottom = MAX(naturalBottom, CGRectGetMaxY(cell.frame));
+    CGFloat height = measuredMore ? 508.0 : MIN(508.0, MAX(front.bounds.size.height, naturalBottom + 10));
+    if (height > 1) {
+        CGRect root = menu.frame;
+        root.size.height = height + 12;
+        if (!CGRectEqualToRect(root, menu.frame)) menu.frame = root;
+        CGRect target = front.frame;
+        target.origin.x = 0;
+        target.origin.y = 12;
+        target.size.width = menu.bounds.size.width;
+        target.size.height = height;
+        if (!CGRectEqualToRect(target, front.frame)) front.frame = target;
+        CGRect pane = platter.frame;
+        pane.origin = CGPointZero;
+        pane.size = target.size;
+        if (!CGRectEqualToRect(pane, platter.frame)) platter.frame = pane;
+    }
+    if (front.alpha != 1) front.alpha = 1;
+    if (collection.alpha != 1) collection.alpha = 1;
+
+    // The 13-action Spotify More sheet has an independently measured 62pt
+    // header + 10pt breathing room, 42pt rows, and a 64pt wrapping row.
+    // Do not impose those heights on unrelated UIMenu contents.
+    if (measuredMore && cells.count == 13) {
+        if (header) {
+            CGRect title = header.frame;
+            title.origin.y = 0;
+            title.size.height = 62;
+            if (!CGRectEqualToRect(header.frame, title)) header.frame = title;
+            dressMoreHeader(header);
+        }
+        CGFloat y = 72;
+        for (UICollectionViewCell *cell in cells) {
+            CGFloat rowHeight = cell.bounds.size.height > 55 ? 64 : 42;
+            positionReferenceRow(cell, CGRectMake(0, y, 250, rowHeight));
+            y += rowHeight;
+        }
+        // The real cells remain the hit-test targets, not visual copies.
+        objc_setAssociatedObject(collection, &kTGReferenceSizedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (collection.contentSize.height < y)
+            collection.contentSize = CGSizeMake(collection.contentSize.width, y);
+        moreRowLines(collection, cells);
+        referenceLine(collection, &kTGMoreHeaderLineKey, 62);
+    }
+    objc_setAssociatedObject(menu, &kTGMoreBusyKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return YES;
+}
+
 BOOL SGRTelegramDropdownReferenceHit(UICollectionView *collection, CGPoint point, NSIndexPath **index) {
     if (![objc_getAssociatedObject(collection, &kTGReferenceSizedKey) boolValue]) return NO;
     // A hit follows the visual cell positions, not UIKit 18's stale flow
@@ -490,6 +700,10 @@ void SGRTelegramDropdownMatchReferenceGeometry(UIView *list) {
         if ([NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuView"]) { root = v; break; }
     }
     if (!root || [objc_getAssociatedObject(root, &kTGReferenceBusyKey) boolValue]) return;
+    // Do not shrink the shared container back to 315pt when More has
+    // expanded it to hold the overlay. The parent six cells were already
+    // matched before the submenu was presented.
+    if (submenuLists(root).count > 1) return;
     UIView *platter = nil;
     for (UIView *v in list.subviews)
         if ([v isMemberOfClass:UIView.class] && v.bounds.size.width > 200) { platter = v; break; }

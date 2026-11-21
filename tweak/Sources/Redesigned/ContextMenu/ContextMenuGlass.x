@@ -233,12 +233,28 @@ static void hideUnder(UIView *menuView) {
 }
 
 // The menu's own view lays out as a submenu comes in or goes out, which reaches the lists it holds.
+// UIKit lays out the submenu header separately from its list. Move the
+// existing glyphs and label after *that* pass, without replacing its actions.
+%hook _UIContextMenuSubmenuTitleView
+- (void)layoutSubviews {
+    %orig;
+    SGRTelegramDropdownSubmenuHeaderLaidOut((UIView *)self);
+}
+%end
+
 %hook _UIContextMenuView
 - (void)layoutSubviews {
     %orig;
     holdHeight((UIView *)self);
     glassLists((UIView *)self);
-    hideUnder((UIView *)self);
+    // Keep the parent dropdown stationary beneath an overlay. The previous
+    // hideUnder path removed it completely, unlike iOS 26 (parent actions
+    // remain visible at 50% behind the submenu). Other menus retain their
+    // preexisting UIKit presentation until we can measure them.
+    if (SGRTelegramDropdownMatchSubmenuGeometry((UIView *)self))
+        glassLists((UIView *)self); // refit glass to the final enlarged submenu platter
+    else
+        hideUnder((UIView *)self);
 }
 %end
 
