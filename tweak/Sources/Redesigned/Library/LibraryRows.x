@@ -20,7 +20,7 @@
 // starts at 76), and where the hairline starts with it.
 static const CGFloat kTextGap = 12;
 
-static char kThumbKey, kCoverKey, kLineKey;
+static char kThumbKey, kCoverKey, kLineKey, kAddRowGlassKey;
 
 // Spotify gives a cover a square corner and an artist's picture a circle. Only the square becomes the Kit's.
 static void roundCorners(UIView *artwork, CGFloat radius) {
@@ -31,6 +31,61 @@ static void roundCorners(UIView *artwork, CGFloat radius) {
     if (layer.cornerRadius != radius) layer.cornerRadius = radius;
     if (layer.cornerCurve != kCACornerCurveContinuous) layer.cornerCurve = kCACornerCurveContinuous;
     if (!layer.masksToBounds) layer.masksToBounds = YES;
+}
+
+
+
+static BOOL isLibraryActionRow(UIView *row) {
+    NSString *identifier = row.accessibilityIdentifier;
+    return [identifier isEqualToString:@"AddArtist.Row.Library"]
+        || [identifier isEqualToString:@"AddPodcast.Row.Library"]
+        || [identifier isEqualToString:@"AddEvent.Row.Library"]
+        || [identifier isEqualToString:@"ImportMusic.Row.Library"];
+}
+
+static UIView *libraryActionRow(UIView *cell) {
+    __block UIView *row = nil;
+    SGForEachView(cell, ^(UIView *view) {
+        if (!row && isLibraryActionRow(view)) row = view;
+    });
+    return row;
+}
+
+static UIView *actionFillInThumb(UIView *thumb) {
+    for (UIView *child in thumb.subviews.reverseObjectEnumerator) {
+        if (![child isMemberOfClass:UIView.class]) continue;
+        if (fabs(child.bounds.size.width - thumb.bounds.size.width) > 1
+            || fabs(child.bounds.size.height - thumb.bounds.size.height) > 1) continue;
+        UIColor *color = child.backgroundColor;
+        if (!color && !child.layer.backgroundColor) continue;
+        CGFloat alpha = color ? CGColorGetAlpha(color.CGColor) : CGColorGetAlpha(child.layer.backgroundColor);
+        if (alpha < 0.05) continue;
+        return child;
+    }
+    return nil;
+}
+
+static void glassLibraryAction(UIView *cell) {
+    UIView *row = libraryActionRow(cell);
+    if (!row || !row.window) return;
+    UIView *thumb = SGRFindByIdentifier(row, @"Artwork.Row.Library", &kThumbKey);
+    if (!thumb || fabs(thumb.bounds.size.width - 64) > 2 || fabs(thumb.bounds.size.height - 64) > 2) return;
+
+    UIView *fill = actionFillInThumb(thumb);
+    if (fill) SGRHoldClear(fill);
+
+    UIView *glass = SGGlassFor(thumb, &kAddRowGlassKey);
+    if (!glass) return;
+    if (glass.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    if (!CGRectEqualToRect(glass.frame, thumb.bounds)) glass.frame = thumb.bounds;
+    CGFloat radius = thumb.layer.cornerRadius > 0 ? thumb.layer.cornerRadius
+                                                  : MIN(thumb.bounds.size.width, thumb.bounds.size.height) / 2;
+    SGShapeGlass(glass, radius, NO);
+    if (glass.layer.borderWidth > 0) glass.layer.borderWidth = 0;
+    SGRGlassSetFilm(glass, YES, radius);
+    if (fill && glass.superview != thumb) [thumb insertSubview:glass belowSubview:fill];
+    else if (glass.superview != thumb) [thumb insertSubview:glass atIndex:0];
+    if (SGUseLegacyGlass()) SGRUnclipUpTo(thumb, ^BOOL(UIView *v) { return v == cell; });
 }
 
 // The line under a row, from its text's leading edge to the trailing edge of the page. A cell holding a card
@@ -68,6 +123,7 @@ static void style(UIView *cell) {
     if (thumb) roundCorners(thumb, SGRRadiusThumb);
     else roundCorners(SGRFindByIdentifier(cell, @"Components.UI.CardLibrary.Artwork", &kCoverKey), SGRRadiusCover);
     hairline(cell, thumb);
+    glassLibraryAction(cell);
 
     // The first cell that held an artwork, so the line says what was found rather than what had not loaded yet.
     static BOOL logged;
