@@ -476,6 +476,144 @@ static NSDictionary *touchAt(NSDictionary *where, NSTimeInterval hold) {
     return result;
 }
 
+#pragma mark - runtime screen/glass coverage (SG_DRIVER only)
+
+// A static IPA class list only shows POSSIBLE controllers. This census inspects
+// real UIViewController objects and the currently attached view hierarchy.
+// It is diagnostic, read-only, and deliberately does not load offscreen views.
+static void sgAuditIncludeController(UIViewController *vc, NSMutableOrderedSet<UIViewController *> *found) {
+    if (!vc || [found containsObject:vc] || found.count >= 350) return;
+    [found addObject:vc];
+    if ([vc isKindOfClass:UINavigationController.class]) {
+        for (UIViewController *entry in ((UINavigationController *)vc).viewControllers) {
+            sgAuditIncludeController(entry, found);
+        }
+    }
+    if ([vc isKindOfClass:UITabBarController.class]) {
+        for (UIViewController *entry in ((UITabBarController *)vc).viewControllers) {
+            sgAuditIncludeController(entry, found);
+        }
+    }
+    for (UIViewController *child in vc.childViewControllers) sgAuditIncludeController(child, found);
+    sgAuditIncludeController(vc.presentedViewController, found);
+}
+
+static NSString *sgAuditGlassKind(UIView *v) {
+    NSString *name = NSStringFromClass(v.class) ?: @"";
+    if ([name containsString:@"SGLegacyGlass"] || [name containsString:@"SGGlass"] ||
+        [name containsString:@"SGRLegacyLens"] || [name containsString:@"SGRTabBarLens"]) return @"vitrine";
+    if ([v isKindOfClass:UIVisualEffectView.class]) return @"system-effect";
+    if ([name containsString:@"Backdrop"] || [name containsString:@"Glass"] || [name containsString:@"Lens"]) return @"named-candidate";
+    return nil;
+}
+
+static BOOL sgAuditHasBackdropLayer(UIView *view) {
+    if ([NSStringFromClass(view.layer.class) containsString:@"Backdrop"]) return YES;
+    // Non-UIView CALayers do not appear in /tree, but are important for the
+    // legacy refraction surface. Inspect only the direct layer children.
+    NSUInteger inspected = 0;
+    for (CALayer *layer in view.layer.sublayers) {
+        if (++inspected > 32) break;
+        if ([NSStringFromClass(layer.class) containsString:@"Backdrop"]) return YES;
+    }
+    return NO;
+}
+
+static NSMutableDictionary *sgAuditEmptyCounts(void) {
+    return [@{@"views":@0, @"buttons":@0, @"headerCandidates":@0,
+              @"vitrineGlass":@0, @"systemEffect":@0, @"namedGlassCandidates":@0,
+              @"backdropViews":@0, @"examples":[NSMutableArray array]} mutableCopy];
+}
+
+static void sgAuditInc(NSMutableDictionary *counts, NSString *key) {
+    counts[key] = @([counts[key] unsignedIntegerValue] + 1);
+}
+
+static NSDictionary *sgAuditControllers(void) {
+    NSMutableOrderedSet<UIViewController *> *found = [NSMutableOrderedSet orderedSet];
+    NSArray<UIWindow *> *allWindows = windows();
+    for (UIWindow *window in allWindows) sgAuditIncludeController(window.rootViewController, found);
+    NSMutableArray<NSString *> *navigation = [NSMutableArray array], *presented = [NSMutableArray array];
+    UIViewController *top = topController(navigation, presented);
+
+    // Attribute visible UI elements to their closest responder-chain controller.
+    // Global navbar/mini-player glass is counted separately when no owning
+    // UIViewController is reachable, not credited to every page beneath it.
+    NSMutableDictionary<NSValue *, NSMutableDictionary *> *countsByController = [NSMutableDictionary dictionary];
+    for (UIViewController *vc in found) {
+        countsByController[[NSValue valueWithNonretainedObject:vc]] = sgAuditEmptyCounts();
+    }
+    NSMutableDictionary *unowned = sgAuditEmptyCounts();
+    __block NSUInteger scanned = 0;
+    for (UIWindow *window in allWindows) {
+        SGForEachView(window, ^(UIView *view) {
+            if (++scanned > 30000 || !isShown(view)) return;
+            UIViewController *owner = nil;
+            NSUInteger hops = 0;
+            for (UIResponder *responder = view.nextResponder; responder && hops < 128;
+                 responder = responder.nextResponder, hops++) {
+                if ([responder isKindOfClass:UIViewController.class]) {
+                    owner = (UIViewController *)responder;
+                    break;
+                }
+            }
+            if (owner && ![found containsObject:owner]) sgAuditIncludeController(owner, found);
+            NSValue *key = owner ? [NSValue valueWithNonretainedObject:owner] : nil;
+            NSMutableDictionary *counts = key ? countsByController[key] : nil;
+            if (!counts && key) {
+                counts = sgAuditEmptyCounts();
+                countsByController[key] = counts;
+            }
+            if (!counts) counts = unowned;
+            sgAuditInc(counts, @"views");
+            NSString *name = NSStringFromClass(view.class) ?: @"";
+            if ([view isKindOfClass:UIButton.class] || [name containsString:@"Button"]) sgAuditInc(counts, @"buttons");
+            if ([name containsString:@"Header"] || [name containsString:@"Chip"] ||
+                [name containsString:@"NavigationBar"] || [name containsString:@"TopBar"]) sgAuditInc(counts, @"headerCandidates");
+            NSString *kind = sgAuditGlassKind(view);
+            BOOL backdrop = sgAuditHasBackdropLayer(view);
+            if ([kind isEqualToString:@"vitrine"]) sgAuditInc(counts, @"vitrineGlass");
+            else if ([kind isEqualToString:@"system-effect"]) sgAuditInc(counts, @"systemEffect");
+            else if (kind) sgAuditInc(counts, @"namedGlassCandidates");
+            if (backdrop) sgAuditInc(counts, @"backdropViews");
+            if ((kind || backdrop) && [counts[@"examples"] count] < 20) {
+                CGRect f = screenFrame(view);
+                [counts[@"examples"] addObject:@{@"class":name,
+                    @"kind":kind ?: @"backdrop-layer", @"frame":@[@(round(f.origin.x)),
+                    @(round(f.origin.y)), @(round(f.size.width)), @(round(f.size.height))]}];
+            }
+        });
+    }
+    NSMutableArray *controllers = [NSMutableArray array];
+    for (UIViewController *vc in found) {
+        UIView *view = vc.viewIfLoaded;
+        BOOL loaded = view != nil;
+        BOOL shown = loaded && isShown(view);
+        NSMutableDictionary *item = [NSMutableDictionary dictionary];
+        item[@"class"] = NSStringFromClass(vc.class) ?: @"";
+        item[@"identity"] = [NSString stringWithFormat:@"%p", (void *)vc];
+        item[@"loaded"] = @(loaded);
+        item[@"visible"] = @(shown);
+        item[@"top"] = @(vc == top);
+        if (vc.title.length) item[@"title"] = vc.title;
+        if (vc.parentViewController) item[@"parent"] = NSStringFromClass(vc.parentViewController.class) ?: @"";
+        if (loaded && view.window) {
+            CGRect f = screenFrame(view);
+            item[@"frame"] = @[@(round(f.origin.x)), @(round(f.origin.y)),
+                               @(round(f.size.width)), @(round(f.size.height))];
+        }
+        item[@"glass"] = countsByController[[NSValue valueWithNonretainedObject:vc]] ?: sgAuditEmptyCounts();
+        [controllers addObject:item];
+    }
+    return @{@"schema":@1, @"top": top ? NSStringFromClass(top.class) : @"",
+             @"controllerPath":navigation, @"presented":presented,
+             @"controllers":controllers, @"unownedGlass":unowned,
+             @"scannedViews":@(scanned), @"windowCount":@(allWindows.count),
+             @"controllerCensusTruncated":@(found.count >= 350),
+             @"viewCensusTruncated":@(scanned > 30000),
+             @"interpretation":@"counts are visible UI evidence, not a verdict that the page is fully glass-covered"};
+}
+
 #pragma mark - the app's own parts
 
 static NSString *const kPlayerClass = @"_TtC21NowPlaying_ScrollImpl23NPVScrollViewController";
@@ -1204,6 +1342,9 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
                     return @{@"count" : @(found.count), @"views" : views};
                 });
             },
+            @"audit.controllers" : ^NSDictionary *(NSDictionary *p) {
+                return onMain(^id { return sgAuditControllers(); });
+            },
             @"state" : ^NSDictionary *(NSDictionary *p) {
                 return onMain(^id {
                     NSMutableArray<NSString *> *path = [NSMutableArray array], *presented = [NSMutableArray array];
@@ -1514,7 +1655,7 @@ static NSDictionary<NSString *, SGCommand> *commands(void) {
 }
 
 static NSSet<NSString *> *readOnly(void) {
-    return [NSSet setWithArray:@[@"find", @"state", @"screenshot", @"log", @"wait", @"get", @"layers", @"nav.trace.status", @"nav.trace.read"]];
+    return [NSSet setWithArray:@[@"find", @"state", @"audit.controllers", @"screenshot", @"log", @"wait", @"get", @"layers", @"nav.trace.status", @"nav.trace.read"]];
 }
 
 BOOL SGDriverHandles(NSString *command) {
