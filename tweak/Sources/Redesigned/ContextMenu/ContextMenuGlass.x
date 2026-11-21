@@ -57,7 +57,7 @@ static void glassMenu(UIView *list) {
     if (!platter || platter.bounds.size.width < 1 || platter.bounds.size.height < 1) return;
     if (list.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) list.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
 
-    BOOL telegramDropdown = SGRDropdownMenuIsOpenedFromButton();
+    BOOL telegramDropdown = SGRTelegramDropdownShouldStyle(list, SGRDropdownMenuIsOpenedFromButton());
     CGFloat radius = telegramDropdown ? MIN(30.0, platter.bounds.size.height * 0.5) : kMenuRadius;
     UIView *glass = menuGlass(platter, &kMenuGlassKey, SGRMenuDim, radius);
 
@@ -112,10 +112,25 @@ static void bubbleMenu(UIView *list) {
 
 // Telegram's movable highlight follows UIKit's real highlighted cells.
 // We do not create gesture recognizers that could intercept a menu action.
+// One global entry for all UIKit button dropdowns, not a list of Spotify pages.
+// A menu opened from a UIControl is tagged at first presentation. A long press
+// on a card is not tagged and retains the existing context-menu appearance.
+%hook UIControl
+- (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
+    BOOL accepted = %orig;
+    if (accepted) SGRTelegramDropdownControlTouched((UIControl *)self);
+    return accepted;
+}
+%end
+
 %hook UICollectionViewCell
 - (void)setHighlighted:(BOOL)highlighted {
     %orig;
-    if (SGRDropdownMenuIsOpenedFromButton()) SGRTelegramDropdownCellHighlightChanged((UICollectionViewCell *)self);
+    SGRTelegramDropdownCellHighlightChanged((UICollectionViewCell *)self);
+}
+- (void)layoutSubviews {
+    %orig;
+    SGRTelegramDropdownCellLaidOut((UICollectionViewCell *)self);
 }
 %end
 
