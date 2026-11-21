@@ -139,6 +139,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic, strong) UIView *tileGroup;
 @property (nonatomic, strong) NSMutableArray<SGRDropdownPress *> *tileButtons;
 @property (nonatomic, strong) UIMenu *menu;
+@property (nonatomic) BOOL isSubmenu;
 @property (nonatomic, copy) void (^choose)(UIMenuElement *element);
 @property (nonatomic, copy) void (^back)(void);
 @property (nonatomic) CGFloat actualHeight;
@@ -173,7 +174,11 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, kRadius);
-    if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithRed:0.11 green:0.11 blue:0.11 alpha:0.56]);
+    // The owned pane is not UIKit's already-darkened context menu. Match the
+    // opacity of the reference surface here, rather than letting the artwork
+    // and the previous menu read sharply through the live glass material.
+    if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0.11
+                                                        alpha:self.isSubmenu ? 0.83 : 0.76]);
     self.scroll.frame = self.bounds;
 }
 static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
@@ -203,13 +208,21 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     glyph.tintColor = foreground;
     glyph.contentMode = UIViewContentModeScaleAspectFit;
     [press addSubview:glyph];
-    CGFloat labelY = element.subtitle.length ? (h-40)/2 : (h-22)/2;
+    // The reference's two-line Speed title is not a single, vertically
+    // centred UIKit label. Reserve two lines above its secondary value.
+    BOOL tallSubtitle = element.subtitle.length && h >= 79;
+    BOOL wrapsTitle = !element.subtitle.length && h > kRow;
+    CGFloat labelY = tallSubtitle ? 9 : (element.subtitle.length ? 9 : (wrapsTitle ? 10 : (h-22)/2));
+    CGFloat labelHeight = tallSubtitle || wrapsTitle ? 44 : 23;
+    CGFloat labelWidth = tallSubtitle ? 144 : 166;
     UILabel *name = textLabel(element.title, [UIFont systemFontOfSize:16 weight:UIFontWeightRegular], foreground);
-    name.frame = CGRectMake(50, labelY, 166, element.subtitle.length ? 23 : h-8);
+    name.frame = CGRectMake(50, labelY, labelWidth, labelHeight);
+    name.numberOfLines = tallSubtitle || wrapsTitle ? 2 : 1;
     [press addSubview:name];
     if (element.subtitle.length) {
         UILabel *detail = textLabel(element.subtitle, [UIFont systemFontOfSize:13], [UIColor colorWithWhite:1 alpha:enabled ? 0.65 : 0.32]);
-        detail.frame = CGRectMake(50, labelY+23, 166, h-labelY-25);
+        detail.frame = CGRectMake(50, tallSubtitle ? 54 : 32, 166, 18);
+        detail.numberOfLines = 1;
         [press addSubview:detail];
     }
     if ([element isKindOfClass:UIMenu.class]) {
@@ -284,15 +297,16 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         UIImageView *leading = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"ellipsis.circle"]];
         leading.tintColor = UIColor.whiteColor;
         leading.contentMode = UIViewContentModeScaleAspectFit;
-        leading.frame = CGRectMake(18, 17, 28, 28);
+        leading.frame = CGRectMake(25, 20, 22, 22);
         [head addSubview:leading];
-        UIImageView *back = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.left"]];
+        UIImageView *back = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.down"]];
         back.tintColor = UIColor.whiteColor;
         back.contentMode = UIViewContentModeScaleAspectFit;
-        back.frame = CGRectMake(216, 22, 11, 18);
+        back.frame = CGRectMake(215, 25, 12, 12);
         [head addSubview:back];
-        UILabel *label = textLabel(title, [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold], UIColor.whiteColor);
-        label.frame = CGRectMake(54, 17, 152, 30);
+        UILabel *label = textLabel(title, [UIFont systemFontOfSize:15 weight:UIFontWeightMedium], UIColor.whiteColor);
+        label.numberOfLines = 1;
+        label.frame = CGRectMake(60, 19, 145, 24);
         [head addSubview:label];
         [self.body addSubview:head];
         UIView *line = [[UIView alloc] initWithFrame:CGRectMake(18, kHeader, kWidth-36, 1.0/UIScreen.mainScreen.scale)];
@@ -366,7 +380,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     CGFloat width = CGRectGetWidth(self.window.bounds);
     CGFloat x = MIN(width-kWidth-12, MAX(12, CGRectGetMaxX(from)-kWidth));
     CGFloat top = MAX(62, self.window.safeAreaInsets.top+8);
-    CGFloat y = MAX(top, CGRectGetMinY(from));
+    CGFloat y = CGRectGetMinY(from) <= top + 24 ? top : CGRectGetMinY(from);
     CGFloat available = CGRectGetHeight(self.window.bounds)-self.window.safeAreaInsets.bottom-12;
     CGFloat wanted = MIN(kPanelMaximum, contentHeight(menu, NO));
     if (y+wanted > available) y = MAX(top, available-wanted);
@@ -394,6 +408,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     SGRDropdownPanel *parent = self.panels.lastObject;
     if (parent) parent.alpha = 0.5;
     SGRDropdownPanel *panel = [[SGRDropdownPanel alloc] initWithFrame:CGRectZero];
+    panel.isSubmenu = title.length > 0;
     __weak SGRDropdownPresentation *weakSelf = self;
     panel.choose = ^(UIMenuElement *element) { [weakSelf choose:element]; };
     panel.back = ^{ [weakSelf popMenu]; };
