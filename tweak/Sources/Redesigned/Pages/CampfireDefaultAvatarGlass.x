@@ -5,31 +5,42 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 
-static char kFallbackGlass, kFallbackGlyph, kFallbackMasked;
+static char kFallbackGlass, kFallbackGlyph, kFallbackMasked, kFallbackImageWatch, kFallbackRescan;
 
 // The bundled no-photo group mark is neutral grey, while ordinary user/group art is
 // chromatic. Conservative test: a grayscale photograph is possible, so this path is
 // intentionally limited to the single-avatar FaceStackView used by group chat rows.
 static BOOL isNeutralFallback(UIImage *image) {
-    if (!image.CGImage) return NO;
-    enum { SIDE = 12 };
+    if (!image || !image.CGImage) return NO;
+    enum { SIDE = 16 };
     uint8_t pixels[SIDE * SIDE * 4] = {0};
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGContextRef context = CGBitmapContextCreate(pixels, SIDE, SIDE, 8, SIDE * 4,
-                                                space, kCGBitmapByteOrder32Big | (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+        space, kCGBitmapByteOrder32Big | (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(space);
     if (!context) return NO;
     CGContextDrawImage(context, CGRectMake(0, 0, SIDE, SIDE), image.CGImage);
     CGContextRelease(context);
-    NSUInteger colored = 0, visible = 0;
+
+    // The no-photo graphic is a neutral, mostly transparent people glyph;
+    // Encore's BackgroundLayer draws the opaque grey disc *separately*.
+    // Stage 118 required >50% opaque image pixels, rejecting that icon.
+    NSUInteger visible = 0, colored = 0, dominant = 0;
+    NSUInteger bins[32] = {0};
     for (NSUInteger i = 0; i < SIDE * SIDE; i++) {
-        uint8_t *p = pixels + i * 4;
-        if (p[3] < 90) continue;
+        const uint8_t *px = pixels + i * 4;
+        if (px[3] < 60) continue;
         visible++;
-        int r = p[0], g = p[1], b = p[2];
-        if (MAX(r, MAX(g, b)) - MIN(r, MIN(g, b)) > 17) colored++;
+        int r = px[0], g = px[1], b = px[2];
+        if (MAX(r, MAX(g, b)) - MIN(r, MIN(g, b)) > 22) colored++;
+        NSUInteger level = (NSUInteger)((r + g + b) / 3 / 8);
+        bins[MIN(level, 31)]++;
     }
-    return visible > SIDE * SIDE / 2 && colored * 20 < visible;
+    for (NSUInteger i = 0; i < 32; i++) dominant = MAX(dominant, bins[i]);
+    if (visible < 8 || colored * 10 > visible) return NO;
+    // Transparent glyph, or a largely flat solid-background icon. A greyscale
+    // photo ordinarily fails the dominant-colour condition and is untouched.
+    return visible < SIDE * SIDE * 0.80 || dominant * 2 > visible;
 }
 
 static void dressDefault(UIView *stack) {
@@ -56,6 +67,14 @@ static void dressDefault(UIView *stack) {
         if (!source && [view isKindOfClass:UIImageView.class] && ((UIImageView *)view).image)
             source = (UIImageView *)view;
     });
+    // The image may arrive *after* FaceStackView has finished laying out.
+    if (source && !objc_getAssociatedObject(source, &kFallbackImageWatch)) {
+        objc_setAssociatedObject(source, &kFallbackImageWatch, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        __weak UIView *weakStack = stack;
+        SGRObserveImage(source, ^(UIImageView *changed) {
+            if (weakStack.window) dressDefault(weakStack);
+        });
+    }
     BOOL fallback = !hasLetter && isNeutralFallback(source.image);
     UIImageView *glyph = objc_getAssociatedObject(stack, &kFallbackGlyph);
     if (!fallback) {
@@ -91,4 +110,21 @@ static void dressDefault(UIView *stack) {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     Class stack = NSClassFromString(@"_TtCE14Encore_FaceKitO16EncoreFoundation6Encore13FaceStackView");
     if (stack) SGRPassView(stack, ^(UIView *v) { dressDefault(v); });
+    // The ChatRow lifecycle is a second reliable entry point: its child
+    // FaceStackView may not be ready at the moment of its own first pass.
+    Class row = NSClassFromString(@"_TtCE16Encore_LayoutKitO16EncoreFoundation6Encore7ListRow");
+    if (row) SGRPassView(row, ^(UIView *v) {
+        if (![v.accessibilityIdentifier isEqualToString:@"Components.UI.ChatRow"]) return;
+        SGForEachView(v, ^(UIView *child) {
+            if ([NSStringFromClass(child.class) hasSuffix:@"FaceStackView"]) dressDefault(child);
+        });
+        if (!objc_getAssociatedObject(v, &kFallbackRescan)) {
+            objc_setAssociatedObject(v, &kFallbackRescan, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            SGRRepeatViewPass(v, @[@0.08, @0.35], ^(UIView *again) {
+                SGForEachView(again, ^(UIView *child) {
+                    if ([NSStringFromClass(child.class) hasSuffix:@"FaceStackView"]) dressDefault(child);
+                });
+            });
+        }
+    });
 }
