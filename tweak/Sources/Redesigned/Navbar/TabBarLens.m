@@ -81,6 +81,23 @@ static CGFloat rubber(CGFloat x, CGFloat lo, CGFloat hi) {
 @end
 
 typedef struct { CGFloat L, R, vL, vR, lift, vLift, sq, vSq; } SGLensSample;
+// One immutable pose for a frame, projected once from the lens host into
+// every optical sibling. The refraction shader, tint and inverse white mask
+// must never independently convert the host center while the host is scaled.
+typedef struct {
+    CGPoint hostCenter;
+    CGPoint tintCenter;
+    CGPoint normalCenter;
+    CGPoint glyphCenter;
+    CGFloat sx, sy;
+} SGLensGeometry;
+
+@interface SGRLegacyLens (Geometry)
+- (SGLensGeometry)geometryForSample:(SGLensSample)sample;
+- (void)updateNormalCutoutWithGeometry:(SGLensGeometry)geometry;
+- (void)updateOuterEdgeGuardWithGeometry:(SGLensGeometry)geometry;
+@end
+
 static const CGFloat kPlayStep = 1.0 / 120;
 
 @implementation SGRLegacyLens {
@@ -656,20 +673,13 @@ static BOOL bubbles(void) {
     [self updateOuterEdgeGuard];
 }
 
-- (CGFloat)tintScaleXForState:(SGLensSample)st opticalScaleX:(CGFloat)sx {
-    (void)st;
-    // Both the inverse white mask and the accent must cover EXACTLY the
-    // same geometry. The former 1.3% overdraw made a dark/green seam.
-    return sx;
-}
-
-- (CGPathRef)newNormalCutoutPathAt:(CGPoint)center sx:(CGFloat)sx sy:(CGFloat)sy {
+- (CGPathRef)newNormalCutoutPathForGeometry:(SGLensGeometry)geometry {
     UIView *bar = _normalContent;
     if (!bar || !self.superview) return nil;
-    CGPoint inside = SGRLensPointInHostChild(self.superview, bar, center);
-    CGFloat width = self.bounds.size.width * sx;
-    CGFloat height = self.bounds.size.height * sy;
-    CGRect hole = CGRectMake(inside.x - width / 2, inside.y - height / 2, width, height);
+    CGFloat width = self.bounds.size.width * geometry.sx;
+    CGFloat height = self.bounds.size.height * geometry.sy;
+    CGRect hole = CGRectMake(geometry.normalCenter.x - width / 2,
+                             geometry.normalCenter.y - height / 2, width, height);
     CGMutablePathRef path = CGPathCreateMutable();
     CGPathAddRect(path, NULL, bar.bounds);
     CGPathAddRoundedRect(path, NULL, hole, height / 2, height / 2);
@@ -684,20 +694,25 @@ static BOOL bubbles(void) {
 // Suppress the outward sampling band before the shader reaches the platter
 // rail. The center and internal tab boundaries retain their refraction.
 - (void)updateOuterEdgeGuard {
+    SGLensGeometry geometry = {0};
+    if (self.superview && !CGRectIsEmpty(_restFrame))
+        geometry = [self geometryForSample:[self state]];
+    [self updateOuterEdgeGuardWithGeometry:geometry];
+}
+
+- (void)updateOuterEdgeGuardWithGeometry:(SGLensGeometry)geometry {
     UIView *bar = SGRLensPlatterInHost(self.superview, _normalContent);
     if (!_glassOn || !bar || !self.superview || CGRectIsEmpty(_restFrame)) {
         if (_pane.layer.mask == _outerEdgeGuard) _pane.layer.mask = nil;
         [self updateGlyphEdgeMaskLeft:1 right:1];
         return;
     }
-    CGPoint center; CGFloat sx, sy;
-    [self getPose:[self state] center:&center sx:&sx sy:&sy];
     CGRect barInHost = [bar convertRect:bar.bounds toView:self.superview];
-    CGFloat halfWidth = self.bounds.size.width * sx / 2;
+    CGFloat halfWidth = self.bounds.size.width * geometry.sx / 2;
     // Clearances are measured from the rendered capsule, not UITabBar bounds;
     // the two can differ during layout and at the edge tabs.
-    CGFloat leftClearance = center.x - halfWidth - CGRectGetMinX(barInHost);
-    CGFloat rightClearance = CGRectGetMaxX(barInHost) - center.x - halfWidth;
+    CGFloat leftClearance = geometry.hostCenter.x - halfWidth - CGRectGetMinX(barInHost);
+    CGFloat rightClearance = CGRectGetMaxX(barInHost) - geometry.hostCenter.x - halfWidth;
     // Protect only whichever outward end approaches the capsule rail.
     // Interior tab boundaries still use the normal refraction strength.
     // The shader samples beyond the visible edge. Leave a protected band
@@ -737,19 +752,22 @@ static BOOL bubbles(void) {
 }
 
 - (void)updateNormalCutout {
+    SGLensGeometry geometry = {0};
+    if (self.superview && !CGRectIsEmpty(_restFrame))
+        geometry = [self geometryForSample:[self state]];
+    [self updateNormalCutoutWithGeometry:geometry];
+}
+
+- (void)updateNormalCutoutWithGeometry:(SGLensGeometry)geometry {
     UIView *bar = _normalContent;
     if (!bar) return;
-    if (!_glassOn || !self.superview || !self.tintOverlay || self.hidden) {
+    if (!_glassOn || !self.superview || !self.tintOverlay || self.hidden || CGRectIsEmpty(_restFrame)) {
         if (bar.layer.mask == _normalCutout) bar.layer.mask = nil;
         return;
     }
     // Do not disturb UIKit-owned transition masks (such as compacting).
     if (bar.layer.mask && bar.layer.mask != _normalCutout) return;
-    CGPoint center;
-    CGFloat sx, sy;
-    SGLensSample st = [self state];
-    [self getPose:st center:&center sx:&sx sy:&sy];
-    CGPathRef path = [self newNormalCutoutPathAt:center sx:sx sy:sy];
+    CGPathRef path = [self newNormalCutoutPathForGeometry:geometry];
     if (!path) return;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -986,18 +1004,24 @@ static BOOL bubbles(void) {
     return (SGLensSample){_L, _R, _vL, _vR, _lift, _vLift, _sq, _vSq};
 }
 
-// The tint mask belongs to a copy inside the UITabBar. Its position must
-// use that bar's coordinates, not the surrounding host's coordinates.
-- (CGPoint)tintPointForHostPoint:(CGPoint)point {
-    if (!_tintOverlay || !self.superview) return point;
-    return SGRLensPointInHostChild(self.superview, _tintOverlay, point);
+// Only this function projects a spring pose into the host's optical children.
+// Both the interactive CADisplayLink and render-server release keyframes
+// consume these exact values. The geometry is a value, never a live layer.
+- (SGLensGeometry)geometryForSample:(SGLensSample)sample {
+    SGLensGeometry geometry = {0};
+    [self getPose:sample center:&geometry.hostCenter sx:&geometry.sx sy:&geometry.sy];
+    UIView *host = self.superview;
+    geometry.tintCenter = SGRLensPointInHostChild(host, _tintOverlay, geometry.hostCenter);
+    geometry.normalCenter = SGRLensPointInHostChild(host, _normalContent, geometry.hostCenter);
+    geometry.glyphCenter = SGRLensPointInHostChild(host, _glyphEdgePane.superview, geometry.hostCenter);
+    return geometry;
 }
 
 - (void)applyPose {
     if (CGRectIsEmpty(_restFrame)) return;
-    CGPoint center;
-    CGFloat sx, sy;
-    [self getPose:[self state] center:&center sx:&sx sy:&sy];
+    SGLensGeometry geometry = [self geometryForSample:[self state]];
+    CGPoint center = geometry.hostCenter;
+    CGFloat sx = geometry.sx, sy = geometry.sy;
     [UIView performWithoutAnimation:^{
         self.center = center;
         self.transform = CGAffineTransformMakeScale(sx, sy);
@@ -1038,9 +1062,8 @@ static BOOL bubbles(void) {
         [CATransaction setDisableActions:YES];
         _tintMask.bounds = (CGRect){CGPointZero, self.bounds.size};
         _tintMask.cornerRadius = self.bounds.size.height / 2;
-        _tintMask.position = [self tintPointForHostPoint:center];
-        _tintMask.transform = CATransform3DMakeScale(
-            [self tintScaleXForState:[self state] opticalScaleX:sx], sy, 1);
+        _tintMask.position = geometry.tintCenter;
+        _tintMask.transform = CATransform3DMakeScale(sx, sy, 1);
         [CATransaction commit];
     }
     if (_platterEdgePane && _platterEdgePane.superview) {
@@ -1051,16 +1074,15 @@ static BOOL bubbles(void) {
         }];
     }
     if (_glyphEdgePane && _glyphEdgePane.superview) {
-        UIView *edgeHost = _glyphEdgePane.superview;
-        CGPoint edgeCenter = SGRLensPointInHostChild(self.superview, edgeHost, center);
+        CGPoint edgeCenter = geometry.glyphCenter;
         [UIView performWithoutAnimation:^{
             if (!CGRectEqualToRect(self->_glyphEdgePane.bounds, self.bounds)) self->_glyphEdgePane.bounds = self.bounds;
             self->_glyphEdgePane.center = edgeCenter;
             self->_glyphEdgePane.transform = CGAffineTransformMakeScale(sx, sy);
         }];
     }
-    [self updateNormalCutout];
-    [self updateOuterEdgeGuard];
+    [self updateNormalCutoutWithGeometry:geometry];
+    [self updateOuterEdgeGuardWithGeometry:geometry];
 }
 
 - (void)snapToRest {
@@ -1266,16 +1288,18 @@ static BOOL bubbles(void) {
     NSMutableArray<NSNumber *> *sxs = [NSMutableArray arrayWithCapacity:count];
     NSMutableArray<NSNumber *> *sys = [NSMutableArray arrayWithCapacity:count];
     NSMutableArray<NSNumber *> *maskXs = [NSMutableArray arrayWithCapacity:count];
-    NSMutableArray<NSNumber *> *maskSxs = [NSMutableArray arrayWithCapacity:count];
+    NSMutableArray<NSNumber *> *glyphXs = [NSMutableArray arrayWithCapacity:count];
+    // Record one pose per keyframe, then share it with every optical track.
+    // In particular glyphXs and maskXs must not convert the host scale again.
+    NSMutableData *geometries = [NSMutableData dataWithCapacity:count * sizeof(SGLensGeometry)];
     for (NSUInteger i = 0; i < count; i++) {
-        CGPoint center;
-        CGFloat sx, sy;
-        [self getPose:all[i] center:&center sx:&sx sy:&sy];
-        [xs addObject:@(center.x)];
-        [maskXs addObject:@([self tintPointForHostPoint:center].x)];
-        [maskSxs addObject:@([self tintScaleXForState:all[i] opticalScaleX:sx])];
-        [sxs addObject:@(sx)];
-        [sys addObject:@(sy)];
+        SGLensGeometry geometry = [self geometryForSample:all[i]];
+        [geometries appendBytes:&geometry length:sizeof(geometry)];
+        [xs addObject:@(geometry.hostCenter.x)];
+        [maskXs addObject:@(geometry.tintCenter.x)];
+        [glyphXs addObject:@(geometry.glyphCenter.x)];
+        [sxs addObject:@(geometry.sx)];
+        [sys addObject:@(geometry.sy)];
     }
     [self dropPlayback];
     // The model goes to where the run ends, so nothing jumps when the animations are done.
@@ -1325,15 +1349,7 @@ static BOOL bubbles(void) {
             a.calculationMode = kCAAnimationLinear;
             [self->_glyphEdgePane.layer addAnimation:a forKey:key];
         };
-        NSMutableArray<NSNumber *> *edgeXs = [NSMutableArray arrayWithCapacity:count];
-        for (NSUInteger i = 0; i < count; i++) {
-            CGPoint hostCenter;
-            CGFloat xScale, yScale;
-            [self getPose:all[i] center:&hostCenter sx:&xScale sy:&yScale];
-            CGPoint localCenter = SGRLensPointInHostChild(self.superview, self->_glyphEdgePane.superview, hostCenter);
-            [edgeXs addObject:@(localCenter.x)];
-        }
-        edgeRun(@"lens.x", @"position.x", edgeXs);
+        edgeRun(@"lens.x", @"position.x", glyphXs);
         edgeRun(@"lens.sx", @"transform.scale.x", sxs);
         edgeRun(@"lens.sy", @"transform.scale.y", sys);
     }
@@ -1348,7 +1364,7 @@ static BOOL bubbles(void) {
             [_tintMask addAnimation:a forKey:key];
         };
         maskRun(@"lens.x", @"position.x", maskXs);
-        maskRun(@"lens.sx", @"transform.scale.x", maskSxs);
+        maskRun(@"lens.sx", @"transform.scale.x", sxs);
         maskRun(@"lens.sy", @"transform.scale.y", sys);
     }
     // Give the resting substrate the SAME position/squash keyframes as the
@@ -1404,10 +1420,9 @@ static BOOL bubbles(void) {
     // selected group; otherwise a loading tab freezes the hole in the backdrop.
     if (_glassOn && _normalContent && _normalContent.layer.mask == _normalCutout) {
         NSMutableArray *paths = [NSMutableArray arrayWithCapacity:count];
+        const SGLensGeometry *poses = geometries.bytes;
         for (NSUInteger i = 0; i < count; i++) {
-            CGPoint center; CGFloat sx, sy;
-            [self getPose:all[i] center:&center sx:&sx sy:&sy];
-            CGPathRef path = [self newNormalCutoutPathAt:center sx:sx sy:sy];
+            CGPathRef path = [self newNormalCutoutPathForGeometry:poses[i]];
             if (path) [paths addObject:CFBridgingRelease(path)];
         }
         if (paths.count == count) {
