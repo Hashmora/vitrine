@@ -917,29 +917,15 @@ static BOOL bubbles(void) {
     *sx = width * (1 + d) / baseWidth;
     *sy = held * (1 - kLensVolume * d);
     CGPoint pose = CGPointMake((st.L + st.R) / 2, CGRectGetMidY(_restFrame));
-    // A slight native-style outward lean belongs to the first/last tab as
-    // soon as it is raised; a static hold should only reach 3pt, not the
-    // full 8pt drag limit. The spring drives the lean, not a hard jump.
-    if (st.lift > 0.001 && _minCenter > 0 && _maxCenter > _minCenter &&
-        _normalContent && self.superview) {
+    // Never move the lens outwards merely because an edge tab was pressed.
+    // Its center comes from the finger/selection springs. Only cap an actual
+    // excursion to the existing 8pt drag allowance, accounting for its size.
+    if (st.lift > 0.001 && _normalContent && self.superview) {
         CGRect platter = [_normalContent convertRect:_normalContent.bounds toView:self.superview];
         CGFloat half = baseWidth * *sx / 2;
-        CGFloat minX = CGRectGetMinX(platter) - kLensOverscroll + half;
+        CGFloat minX = CGRectGetMinX(platter) - kLensLeftOverscroll + half;
         CGFloat maxX = CGRectGetMaxX(platter) + kLensOverscroll - half;
-        if (maxX >= minX) {
-            CGFloat rise = MIN(1, MAX(0, st.lift));
-            CGFloat nearLeft = MIN(1, MAX(0, (_minCenter + 14 - pose.x) / 14));
-            CGFloat nearRight = MIN(1, MAX(0, (pose.x - (_maxCenter - 14)) / 14));
-            // Move outward only if the natural spring hasn't already reached
-            // the 3pt shoulder; never pull an outward drag back in.
-            CGFloat gentleLeft = minX + (kLensOverscroll - 3.0);
-            CGFloat gentleRight = maxX - (kLensOverscroll - 3.0);
-            if (nearLeft > 0 && gentleLeft < pose.x)
-                pose.x += (gentleLeft - pose.x) * rise * nearLeft;
-            else if (nearRight > 0 && gentleRight > pose.x)
-                pose.x += (gentleRight - pose.x) * rise * nearRight;
-            pose.x = MAX(minX, MIN(maxX, pose.x));
-        }
+        if (maxX >= minX) pose.x = MAX(minX, MIN(maxX, pose.x));
     }
     *center = pose;
 }
