@@ -12,6 +12,11 @@
 static const CGFloat kTGPanelRadius = 30.0;
 static const CGFloat kTGActionInset = 10.0;
 static const CGFloat kTGHighlightRadius = 20.0;
+// Stage 142 used Telegram's .85 *opaque legacy image* as an additional
+// alpha film over Vitrine's already blurred and darkened panel. That stacks
+// the opacities and produces a nearly black panel. The alpha here is for our
+// *separate* tint layer, not for Telegram's precomposited image.
+static const CGFloat kTGGlassOverlayAlpha = 0.56;
 static const NSTimeInterval kTGHighlightDuration = 0.16;
 static char kTGHighlightKey, kTGStyledKey, kTGMenuRootKey, kTGSeparatorLineKey;
 static CFTimeInterval sg_lastMenuButtonAt;
@@ -188,10 +193,24 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
     platter.layer.cornerCurve = kCACornerCurveContinuous;
     platter.clipsToBounds = YES;
     if (glass.layer.cornerRadius != radius) SGShapeGlass(glass, radius, NO);
-    // Telegram's iOS <26 legacy panel: #1C1C1C at 0.85 over its
-    // CABackdropLayer, with the border/reflection above the dark fill.
-    // Its white 0.025 tint is for *native* iOS 26 UIGlassEffect only.
-    SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0.11 alpha:0.85]);
+
+    // UIKit 18 keeps a 14pt cut-out/shadow outside the actual platter. With
+    // our 30pt Telegram silhouette the old cut-out shows as white, pointed
+    // corners around a dark, rounded panel. Mask the *whole list* and remove
+    // only that legacy cut-out, not the real content or our specular border.
+    if (list.layer.cornerRadius != radius) list.layer.cornerRadius = radius;
+    list.layer.cornerCurve = kCACornerCurveContinuous;
+    if (!list.layer.masksToBounds) list.layer.masksToBounds = YES;
+    for (UIView *child in list.subviews) {
+        if ([NSStringFromClass(child.class) isEqualToString:@"_UICutoutShadowView"] && !child.hidden)
+            child.hidden = YES;
+    }
+
+    // Telegram renders a precomposited legacy panel with #1C1C1C @ .85.
+    // Here the CABackdropLayer and an independent body already contribute
+    // opacity, so an additional .85 tint makes the final composite too black.
+    // Keep the same charcoal hue but lower only this OVERLAY's exposure.
+    SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0.11 alpha:kTGGlassOverlayAlpha]);
 
     UICollectionView *collection = menuCollection(platter);
     if (collection) {
