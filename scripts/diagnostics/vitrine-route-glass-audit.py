@@ -117,12 +117,14 @@ def all_routes(repo, extra, only_extra):
 class Driver:
     def __init__(self, port):
         self.base = f'http://127.0.0.1:{port}'
+        self.census_enabled = True
+        self.census_error = None
 
-    def call(self, command, **kwargs):
+    def call(self, command, _timeout=40, **kwargs):
         query = parse.urlencode({key: str(v) for key, v in kwargs.items()})
         url = self.base + '/' + parse.quote(command) + ('?' + query if query else '')
         req = request.Request(url, headers={'X-Phone-Driver': '1'})
-        with request.urlopen(req, timeout=40) as response:
+        with request.urlopen(req, timeout=_timeout) as response:
             raw = response.read()
         if command == 'tree':
             tree = raw.decode('utf-8', 'replace')
@@ -158,7 +160,10 @@ class SimNavigator:
 def capture(driver, navigator, folder, with_layers):
     folder.mkdir(parents=True, exist_ok=True)
     info = {'timestamp': datetime.now().isoformat(timespec='seconds'), 'errors': []}
-    for command, name in (('state', 'state.json'), ('audit.controllers', 'controllers.json')):
+    commands = [('state', 'state.json')]
+    if getattr(driver, 'census_enabled', True):
+        commands.append(('audit.controllers', 'controllers.json'))
+    for command, name in commands:
         try:
             result = driver.call(command)
             save_json(folder / name, result)
@@ -169,6 +174,10 @@ def capture(driver, navigator, folder, with_layers):
                 info['runtimeControllers'] = len(result.get('controllers', []))
         except Exception as exc:
             info['errors'].append(f'{command}: {exc}')
+            if command == 'audit.controllers' and hasattr(driver, 'census_enabled'):
+                driver.census_enabled = False
+                driver.census_error = f'{type(exc).__name__}: {exc}'
+                print(f'  WARNING: controller census failed; continuing with trees/screenshots: {exc}', flush=True)
     try:
         tree = driver.call('tree')
         if len(tree.encode('utf-8')) > MAX_SAVED_TREE:
@@ -186,7 +195,7 @@ def capture(driver, navigator, folder, with_layers):
             info['screenshot'] = 'SG_DRIVER fallback'
         except Exception as exc2:
             info['errors'].append(f'screenshot: {exc}; fallback: {exc2}')
-    if with_layers:
+    if with_layers and (folder / 'controllers.json').exists():
         try:
             snapshot = json.loads((folder / 'controllers.json').read_text(encoding='utf-8'))
             classes = []
@@ -356,6 +365,8 @@ def run_audit(args, driver, navigator, repo):
     summary.update({'routesPlanned':len(routes), 'routesAttempted':len(results),
                     'routesOpenedBySimctl':sum(bool(r['opened']) for r in results),
                     'routesWithErrors':sum(bool(r['errors']) for r in results),
+                    'controllerCensusAvailable':getattr(driver, 'census_enabled', True),
+                    'controllerCensusError':getattr(driver, 'census_error', None),
                     'notes':['simctl success is not proof of reaching a particular screen',
                              'glass detection is visual evidence, not a correctness test',
                              'class names are not Spotify URIs; non-routable classes remain unvisited']})
@@ -367,6 +378,7 @@ def run_audit(args, driver, navigator, repo):
         'inventory_runtime_coverage.csv: ALL IPA controller candidates including never visited.\n'
         'A visible page with no local glass is NOT proof that glass is missing. Shared navbar glass is separate.\n'
         'Some URI handlers require a paid account or populated user library; openurl may open no page.\n'
+        'When controllerCensusAvailable is false, controller CSV is incomplete and IPA coverage is unknown.\n'
         'Screen trees and screenshots may contain personal messages, usernames and listening history.\n',
         encoding='utf-8')
     dest = archive(root)
@@ -412,6 +424,48 @@ def self_test():
     print('SELF-TEST PASSED: navigation, runtime snapshot, CSV merge, zip')
 
 
+def preflight_driver(driver, wait_seconds, census_mode):
+    """Do not mistake an app still launching for a missing driver.
+
+    One controller-census probe is enough: if the diagnostic itself kills the
+    server, repeatedly issuing it only makes recovery more difficult.
+    """
+    deadline = time.monotonic() + wait_seconds
+    last_error = None
+    while True:
+        try:
+            driver.call('state', _timeout=5)
+            break
+        except Exception as exc:
+            last_error = f'{type(exc).__name__}: {exc}'
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f'SG_DRIVER state did not respond on {driver.base}: {last_error}. '
+                    'Check Spotify is foregrounded, PHONE_PORT, and port owner '
+                    '(lsof -nP -iTCP:8087 -sTCP:LISTEN).') from exc
+            time.sleep(min(0.6, max(0.1, deadline - time.monotonic())))
+    print('SG_DRIVER /state: ready', flush=True)
+    if census_mode == 'off':
+        driver.census_enabled = False
+        driver.census_error = 'disabled by --census off'
+        print('Controller census: OFF (tree and screenshot capture still enabled)', flush=True)
+        return
+    try:
+        probe = driver.call('audit.controllers', _timeout=15)
+        if not isinstance(probe.get('controllers'), list):
+            raise RuntimeError('controller census did not return a controllers list')
+        print(f'Controller census: ready ({len(probe["controllers"])} instances)', flush=True)
+    except Exception as exc:
+        driver.census_error = f'{type(exc).__name__}: {exc}'
+        if census_mode == 'require':
+            raise RuntimeError('SG_DRIVER /state works but /audit.controllers failed: '
+                               + driver.census_error) from exc
+        driver.census_enabled = False
+        print('WARNING: /audit.controllers failed: ' + driver.census_error, file=sys.stderr, flush=True)
+        print('Continuing with screen trees, state and screenshots; runtime glass coverage is UNKNOWN.',
+              file=sys.stderr, flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--port', type=int, default=int(os.environ.get('SIM_PORT', DEFAULT_PORT)))
@@ -426,23 +480,27 @@ def main():
     parser.add_argument('--scroll-delay', type=float, default=0.5)
     parser.add_argument('--no-layers', action='store_false', dest='layers', help='Faster audit without CALayer samples')
     parser.add_argument('--self-test', action='store_true')
+    parser.add_argument('--census', choices=('auto', 'require', 'off'), default='auto',
+                        help='auto: fall back to trees if /audit.controllers fails; require: stop; off: skip census')
+    parser.add_argument('--ready-wait', type=float, default=15,
+                        help='Seconds to wait for SG_DRIVER /state before starting routes')
     args = parser.parse_args()
     if args.self_test:
         self_test()
         return 0
-    if args.delay < 0 or args.scroll_delay < 0 or args.scroll < 0:
-        parser.error('delay and scroll must be non-negative')
+    if args.delay < 0 or args.scroll_delay < 0 or args.scroll < 0 or args.ready_wait < 0:
+        parser.error('delay, scroll and ready-wait must be non-negative')
+    if args.inventory and not Path(args.inventory).expanduser().is_file():
+        parser.error(f'--inventory file not found: {args.inventory}. Download the IPA audit ZIP or omit --inventory.')
     if args.only_routes and not args.routes:
         parser.error('--only-routes needs --routes')
     if not shutil.which('xcrun'):
         parser.error('xcrun is missing: run this on the Mac with Xcode Simulator')
     driver = Driver(args.port)
     try:
-        probe = driver.call('audit.controllers')
-        if not isinstance(probe.get('controllers'), list):
-            raise RuntimeError('audit.controllers did not return controllers array')
+        preflight_driver(driver, args.ready_wait, args.census)
     except Exception as exc:
-        parser.error('SG_DRIVER not ready or Stage 126 not compiled. Check port/build: '+str(exc))
+        parser.error(str(exc))
     try:
         run_audit(args, driver, SimNavigator(args.device), Path(args.repo).expanduser().resolve())
     except Exception as exc:
