@@ -2162,11 +2162,17 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     if (!CGPointEqualToPoint(navGlass.center, glassCenter)) navGlass.center = glassCenter;
     SGShapeGlass(navGlass, glassFrame.size.height / 2, NO);
     // iOS 26's platter is distinctly darker than its clear moving lens.
-    // Scope this tint to the Legacy Tab Bar, not the player's glass.
-    SGRDarkenGlass(navGlass, &kNavDimKey, glassFrame.size.height / 2, 0.63);
+    // Scope this tint to the Legacy Tab Bar, not the player's glass. In
+    // chrome mode without glass, flip the balance so the platter reads
+    // lighter and the resting selection sits darker, which matches the
+    // bright mini-player card above it.
+    CGFloat platterDarken = SGUseLegacyGlass() ? 0.63 : 0.16;
+    SGRDarkenGlass(navGlass, &kNavDimKey, glassFrame.size.height / 2, platterDarken);
 
     UIView *navTint = SGRGlassFilm(host, &kNavTintKey, navGlass, glassFrame.size.height / 2);
-    navTint.backgroundColor = [UIColor colorWithWhite:1 alpha:0.05];
+    navTint.backgroundColor = SGUseLegacyGlass()
+        ? [UIColor colorWithWhite:1 alpha:0.05]
+        : [UIColor colorWithWhite:1 alpha:0.19];
     // SGRGlassFilm sets the film's frame from the pane's; the film is given the pane's bounds and center as well.
     if (!CGSizeEqualToSize(navTint.bounds.size, glassFrame.size)) navTint.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navTint.center, glassCenter)) navTint.center = glassCenter;

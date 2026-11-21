@@ -165,7 +165,11 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _heldOutset = 8;
     _rest = [UIView new];
     // Apple's resting selection is lighter than its surrounding dark platter.
-    _rest.backgroundColor = [UIColor colorWithWhite:1 alpha:0.17];
+    // In fallback chrome mode (Legacy Liquid Glass off) invert that balance
+    // so the platter is the lighter surface and the selection reads darker.
+    _rest.backgroundColor = SGUseLegacyGlass()
+        ? [UIColor colorWithWhite:1 alpha:0.17]
+        : [UIColor colorWithWhite:0 alpha:0.22];
     _rest.layer.cornerCurve = kCACornerCurveCircular;
     [self addSubview:_rest];
     _pane = SGGlassFor(self, &kLensPaneKey);
