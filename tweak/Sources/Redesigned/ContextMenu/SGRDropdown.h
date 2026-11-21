@@ -16,4 +16,6 @@ void SGRDropdownMatchReferenceGeometry(UIView *list);
 // Keeps button submenus above a stationary, dimmed parent; sizes the measured More sheet.
 BOOL SGRDropdownMatchSubmenuGeometry(UIView *menu);
 void SGRDropdownSubmenuHeaderLaidOut(UIView *header);
+// Keep a fully presented, button-originated More title visible after UIKit fades it.
+BOOL SGRDropdownSubmenuHeaderShouldShow(UIView *header);
 BOOL SGRDropdownReferenceHit(UICollectionView *collection, CGPoint point, NSIndexPath **index);

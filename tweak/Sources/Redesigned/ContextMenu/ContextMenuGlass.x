@@ -240,6 +240,13 @@ static void hideUnder(UIView *menuView) {
     %orig;
     SGRDropdownSubmenuHeaderLaidOut((UIView *)self);
 }
+// iOS 18 fades the native submenu header to zero when the transition
+// completes, even though the More list remains onscreen. Only override that
+// fade while the measured, fully expanded button dropdown is presented.
+- (void)setAlpha:(CGFloat)alpha {
+    if (alpha < 1 && SGRDropdownSubmenuHeaderShouldShow((UIView *)self)) alpha = 1;
+    %orig(alpha);
+}
 %end
 
 %hook _UIContextMenuView

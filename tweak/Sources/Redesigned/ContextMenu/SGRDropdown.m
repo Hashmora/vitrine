@@ -17,6 +17,7 @@ static const CGFloat kDropdownHighlightRadius = 20.0;
 static const CGFloat kDropdownGlassOverlayAlpha = 0.56;
 static const NSTimeInterval kDropdownHighlightDuration = 0.16;
 static char kDropdownHighlightKey, kDropdownStyledKey, kDropdownMenuRootKey, kDropdownSeparatorLineKey, kDropdownReferenceSizedKey;
+static char kDropdownWrappedTitleKey, kDropdownWrappedNativeTitleKey;
 static CFTimeInterval sg_lastMenuButtonAt;
 static __weak UIWindow *sg_lastMenuButtonWindow;
 
@@ -151,6 +152,42 @@ static void setDropdownFrame(UIView *view, CGRect frame) {
     view.frame = frame;
 }
 
+// UIKit 18 continues enforcing the old narrow intrinsic UILabel width even
+// after the outer text stack is widened. For a measured two-line action only,
+// preserve its real cell/hit area and draw the visible title in a noninteractive
+// 162pt label. Restore the stock label when the cell is reused.
+static void fitWrappedDropdownTitle(UICollectionViewCell *cell, UILabel *native, BOOL needsWrap) {
+    UILabel *overlay = objc_getAssociatedObject(cell, &kDropdownWrappedTitleKey);
+    UILabel *previous = objc_getAssociatedObject(cell, &kDropdownWrappedNativeTitleKey);
+    if (!needsWrap || !native) {
+        if (overlay && !overlay.hidden) overlay.hidden = YES;
+        if (previous && previous.alpha < 1) previous.alpha = 1;
+        return;
+    }
+    if (!overlay) {
+        overlay = [UILabel new];
+        overlay.accessibilityIdentifier = @"Vitrine.Dropdown.WrappedTitle";
+        overlay.userInteractionEnabled = NO;
+        overlay.accessibilityElementsHidden = YES;
+        overlay.numberOfLines = 2;
+        overlay.lineBreakMode = NSLineBreakByWordWrapping;
+        objc_setAssociatedObject(cell, &kDropdownWrappedTitleKey, overlay, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (previous && previous != native) previous.alpha = 1;
+    objc_setAssociatedObject(cell, &kDropdownWrappedNativeTitleKey, native, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    overlay.hidden = NO;
+    if (![overlay.text isEqualToString:native.text]) overlay.text = native.text;
+    if (![overlay.font isEqual:native.font]) overlay.font = native.font;
+    // The stock label is dark before its private vibrancy filter; this
+    // sibling is rendered without that filter, so it needs a white foreground.
+    UIColor *white = [UIColor colorWithWhite:1 alpha:0.96];
+    if (![overlay.textColor isEqual:white]) overlay.textColor = white;
+    CGRect frame = CGRectMake(60, 10.666667, 162, 42.333333);
+    if (!CGRectEqualToRect(overlay.frame, frame)) overlay.frame = frame;
+    if (overlay.superview != cell.contentView) [cell.contentView addSubview:overlay];
+    if (native.alpha != 0) native.alpha = 0;
+}
+
 static void matchDropdownRowContent(UICollectionViewCell *cell) {
     UIView *content = cell.contentView;
     if (!content || cell.bounds.size.width < 40 || cell.bounds.size.height < 30) return;
@@ -172,6 +209,7 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
     BOOL referenceMenu = [objc_getAssociatedObject(parent, &kDropdownReferenceSizedKey) boolValue];
 
     if (cell.bounds.size.width < 130) {
+        fitWrappedDropdownTitle(cell, nil, NO);
         // iOS 26: 78pt tiles with 74pt captions. The older UIKit reserves
         // 10pt on each side of the caption and scales symbols down. The
         // original SF Symbol image has the reference geometry in its size.
@@ -235,6 +273,7 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
     BOOL referenceWidth = referenceMenu && fabs(cell.bounds.size.width - 250.0) < 1.0;
     if (referenceWidth && labels.count > 1 &&
         (fabs(cell.bounds.size.height - 80.0) < 1 || fabs(cell.bounds.size.height - 58.0) < 1)) {
+        fitWrappedDropdownTitle(cell, nil, NO);
         BOOL tall = cell.bounds.size.height > 70;
         CGFloat titleHeight = tall ? 42.333333 : 20.333333;
         CGFloat subtitleTop = tall ? 43.0 : 21.0;
@@ -255,6 +294,9 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
         BOOL wraps = cell.bounds.size.height > 55;
         CGFloat textHeight = wraps ? 42.333333 : 20.333333;
         UILabel *title = labels.firstObject;
+        // The 64pt More row is a true two-line action on iOS 26. UIKit 18
+        // keeps its old 146pt UILabel constraint even inside a 162pt stack.
+        fitWrappedDropdownTitle(cell, title, wraps);
         if (wraps && title.numberOfLines != 2) title.numberOfLines = 2;
         if (wraps && fabs(title.preferredMaxLayoutWidth - 162.0) > 0.5)
             title.preferredMaxLayoutWidth = 162.0;
@@ -264,6 +306,7 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
         placeDropdownContent(textStack, 60.0, 10.666667);
         setDropdownFrame(title, CGRectMake(0, 0, 162, textHeight));
     } else {
+        fitWrappedDropdownTitle(cell, nil, NO);
         // Other button dropdowns retain their own measured line heights.
         placeDropdownContent(textStack, 60.0,
                              floor((cell.bounds.size.height - textStack.bounds.size.height) * 0.5));
@@ -516,8 +559,22 @@ static BOOL submenuTitleIs(UIView *header, NSString *expected) {
     return found;
 }
 
+BOOL SGRDropdownSubmenuHeaderShouldShow(UIView *header) {
+    if (!header || !header.window || !SGBelowiOS26()) return NO;
+    UIView *list = header.superview;
+    while (list && ![NSStringFromClass(list.class) isEqualToString:@"_UIContextMenuListView"])
+        list = list.superview;
+    if (!list) return NO;
+    UIView *menu = list.superview;
+    NSArray<UIView *> *lists = submenuLists(menu);
+    if (lists.count < 2 || lists.lastObject != list || list.bounds.size.height < 480 ||
+        menu.bounds.size.height < 510 || !submenuTitleIs(header, @"More")) return NO;
+    return [objc_getAssociatedObject(menuRoot(list), &kDropdownMenuRootKey) boolValue];
+}
+
 static void dressMoreHeader(UIView *header) {
     if (!header || header.bounds.size.width < 200) return;
+    if (SGRDropdownSubmenuHeaderShouldShow(header) && header.alpha != 1) header.alpha = 1;
     UIView *content = nil;
     for (UIView *v in header.subviews) {
         if ([NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuCellContentView"]) content = v;
@@ -557,6 +614,11 @@ static void dressMoreHeader(UIView *header) {
     dispatch_once(&once, ^{ down = [UIImage systemImageNamed:@"chevron.down"]; });
     if (down && back.image != down) back.image = down;
     placeDropdownContent(action, 26, 11.333333);
+    if (text && !CGSizeEqualToSize(text.bounds.size, CGSizeMake(162, 20.333333))) {
+        CGRect bounds = text.bounds;
+        bounds.size = CGSizeMake(162, 20.333333);
+        text.bounds = bounds;
+    }
     placeDropdownContent(text, 60, 10.666667);
     placeDropdownContent(back, 212.666667, 16.333333);
 
