@@ -16,7 +16,7 @@ static BOOL isNeutralFallback(UIImage *image) {
     uint8_t pixels[SIDE * SIDE * 4] = {0};
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGContextRef context = CGBitmapContextCreate(pixels, SIDE, SIDE, 8, SIDE * 4,
-                                                space, kCGImageAlphaPremultipliedLast);
+                                                space, kCGBitmapByteOrder32Big | (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(space);
     if (!context) return NO;
     CGContextDrawImage(context, CGRectMake(0, 0, SIDE, SIDE), image.CGImage);
