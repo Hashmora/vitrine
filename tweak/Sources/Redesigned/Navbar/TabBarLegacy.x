@@ -2175,12 +2175,14 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     // Its edges bend the backdrop; the icons and captions remain unscaled (TabBarLens.m).
     SGRLegacyLens *selPill = (SGRLegacyLens *)SGLazyChild(host, &kSelPillKey, ^UIView *{ return [SGRLegacyLens new]; });
     if (selPill.superview != host) [host insertSubview:selPill aboveSubview:navTint];
-    // In expanded Split Tabs, the final capsule tab sits next to a separate
-    // 58pt glass button. Give its selected pill the same extra 2pt on each
-    // vertical side, but leave all other selections at the native 54pt.
+    // In expanded Split Tabs the capsule selection keeps ONE vertical size
+    // over the entire drag. Previously its size changed from 54 to 58pt
+    // exactly when the hover moved from Search to Create; setRestFrame then
+    // reset the edge springs mid-gesture. Match the separate 58pt button for
+    // every capsule slot in this split-only layout, with no impact on the
+    // ordinary (non-split) bar or its lens implementation.
     NSUInteger selIndex = [bar.items indexOfObject:bar.selectedItem];
-    CGFloat pillInset = separate && selIndex != NSNotFound &&
-        selIndex + 1 == sources.count ? 2 : kSelPillInset;
+    CGFloat pillInset = separate ? 2 : kSelPillInset;
     selPill.heldOutset = pillInset + kLensOverhang;
     // The pill follows bar.selectedItem, not Spotify's labels, which repaint late. syncBar is its only writer.
     if (selIndex != NSNotFound && selIndex < sources.count) {
