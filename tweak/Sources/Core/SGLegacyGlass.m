@@ -405,7 +405,10 @@ static NSString *const kLongSpecularName = @"sg.specular.long";
 // material, content and optional tint; full-strength rim light on all those
 // surfaces made chips look chrome-white next to the quiet leading circle.
 // Keep the directional profile identical; normalize the pane's exposure.
-static const float kPaneSpecularExposure = 0.48f;
+// Stage 139: the normalized rim was a little dimmer than the detached
+// leading Home button. A small exposure increase preserves the single
+// shared renderer and avoids the doubled, overbright Stage 137 film rim.
+static const float kPaneSpecularExposure = 0.56f;
 
 static CALayer *subWithName(CALayer *host, NSString *name) {
     for (CALayer *sub in host.sublayers) if ([sub.name isEqualToString:name]) return sub;
