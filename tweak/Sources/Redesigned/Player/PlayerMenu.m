@@ -13,6 +13,7 @@
 // The item says under its name what is not as Spotify plays it, so the menu reads as a settings summary.
 #import "Core/SGCore.h"
 #import "Redesigned/ContextMenu/ContextMenu.h"
+#import "Redesigned/ContextMenu/SGRDropdownController.h"
 #import "Shared/Player/PlayerState.h"
 #import "Shared/Player/SpeedPitch.h"
 #import "Shared/Lyrics/Lyrics.h"
@@ -51,7 +52,13 @@ static UIAction *soundMenu(void) {
     if (SGPlayerPitchAvailable() && !pitchFollowing() && SGPlayerPitch() != 0) [changed addObject:semitonesText(SGPlayerPitch())];
     if (SGPlayerReverb() > 0) [changed addObject:[NSString stringWithFormat:@"Reverb %.0f%%", SGPlayerReverb()]];
     UIAction *open = [UIAction actionWithTitle:@"Speed, Pitch & Reverb" image:symbol(@"slider.horizontal.3") identifier:nil
-                                       handler:^(UIAction *action) { SGPlayerShowSpeedPitchPanel(sg_moreButton); }];
+                                       handler:^(UIAction *action) {
+        if (SGBelowiOS26()) {
+            UIViewController *panel = SGPlayerSpeedPitchPanelController();
+            if (SGRDropdownPresentContent(sg_moreButton, panel, panel.preferredContentSize)) return;
+        }
+        SGPlayerShowSpeedPitchPanel(sg_moreButton);
+    }];
     open.subtitle = changed.count ? [changed componentsJoinedByString:@", "] : @"Normal";
     return open;
 }
@@ -196,7 +203,8 @@ static const CGFloat kSourcePanelWidth = 300, kSourcePanelMaxHeight = 440;
     SGRSourceRow *row = _rows[path.row];
     if (row.key) SGLyricsChooseSource(_track, row.key);
     else SGLyricsChooseAutomatic(_track);
-    [self dismissViewControllerAnimated:YES completion:nil];
+    if (SGBelowiOS26()) SGRDropdownDismissActive();
+    else [self dismissViewControllerAnimated:YES completion:nil];
 }
 @end
 
@@ -207,6 +215,7 @@ static UIAction *lyricsSourceItem(void) {
         SGRLyricsSourcePanel *panel = [SGRLyricsSourcePanel new];
         panel.track = track;
         panel.preferredContentSize = CGSizeMake(kSourcePanelWidth, 200);
+        if (SGBelowiOS26() && SGRDropdownPresentContent(sg_moreButton, panel, panel.preferredContentSize)) return;
         SGPresentPopover(panel, sg_moreButton);
     }];
     open.subtitle = SGLyricsCreditFor(track);

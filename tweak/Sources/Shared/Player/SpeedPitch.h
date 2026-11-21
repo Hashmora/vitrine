@@ -58,6 +58,8 @@ BOOL SGPlayerMenuAnimatedArtwork(void);
 void SGPlayerMenuSetAnimatedArtwork(BOOL on);
 // The speed, pitch and reverb sliders and Pitch follows speed, in a popover from `from` (the redesign's ⋯).
 void SGPlayerShowSpeedPitchPanel(UIView *from);
+// Same interactive slider controller without a system popover, for owned dropdown chrome.
+UIViewController *SGPlayerSpeedPitchPanelController(void);
 // Below iOS 26, puts the ⋯ menu's glass in place of the blur of the popover `content` (the panel's view) sits in,
 // leaving the popover itself, and so its animation, the system's. Defined by Redesigned/Player/PlayerPanelGlass.m;
 // does nothing under the native look and on iOS 26. Safe to call on every layout.

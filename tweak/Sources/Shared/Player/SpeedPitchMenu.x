@@ -556,10 +556,14 @@ static NSString *pitchText(float pitch) {
 }
 @end
 
-void SGPlayerShowSpeedPitchPanel(UIView *from) {
+UIViewController *SGPlayerSpeedPitchPanelController(void) {
     SGSpeedPitchPanel *panel = [SGSpeedPitchPanel new];
     panel.preferredContentSize = CGSizeMake(320, panelTop() + 3 * kSliderBlockHeight + kSwitchRowHeight + kPanelBottom);
-    SGPresentPopover(panel, from);
+    return panel;
+}
+
+void SGPlayerShowSpeedPitchPanel(UIView *from) {
+    SGPresentPopover(SGPlayerSpeedPitchPanelController(), from);
 }
 
 #pragma mark - the player's more button
