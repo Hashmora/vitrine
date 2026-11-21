@@ -94,6 +94,7 @@ static NSArray<NSString *> *contentMarkers(void) {
              @"ModalContainerViewController",
              @"PodcastUIPlatform_MemberButtonElementKit",
              @"LiveEvents_MultiEventsBottomSheetPageImpl",
+             @"VenueBadgeDetailsViewController",
              @"MusicQuiz_",
              @"SubscriptionManagement_AllocationRequestDialogPageImpl",
              @"PromptablePlaylists_",
