@@ -405,7 +405,12 @@ static char kNavDimKey, kCircleDimKey;
         [_quietRimOverlay addSublayer:_quietPerimeter];
         [_quietRimOverlay addSublayer:_quietGlare];
         [_quietRimOverlay addSublayer:_quietLongSpecular];
-        [_pane.layer addSublayer:_quietRimOverlay];
+        // The leading circle rolls out of the bar's capsule, which owns the
+        // resting glass after a normal minimise. Its own _pane is deliberately
+        // hidden in capsule-backed mode: a rim inside _pane.layer could never
+        // be visible there. Put the thin reflection above the circle's glyph,
+        // independently of the hidden backdrop, like the tab lens's host rim.
+        [self.layer addSublayer:_quietRimOverlay];
         _heldRimOverlay.zPosition = 100;
         _heldRimOverlay.masksToBounds = YES;
         _heldRimOverlay.cornerCurve = kCACornerCurveCircular;
@@ -449,12 +454,13 @@ static char kNavDimKey, kCircleDimKey;
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
         _quietRimOverlay.bounds = (CGRect){CGPointZero, quiet.size};
-        _quietRimOverlay.position = CGPointMake(CGRectGetMidX(_pane.bounds), CGRectGetMidY(_pane.bounds));
+        // Host-layer coordinates, not the hidden _pane's local coordinates.
+        _quietRimOverlay.position = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
         _quietRimOverlay.cornerRadius = quietRadius;
         SGRLegacyLayoutDirectionalRim(_quietRimOverlay.bounds, _quietGlare,
                                       _quietGlarePath, _quietPerimeter,
                                       _quietLongSpecular, _quietSpecularPath);
-        _quietRimOverlay.hidden = !_outwardGuardLeft || !_shown || _capsuleBacked;
+        _quietRimOverlay.hidden = !_outwardGuardLeft || !_shown;
         [CATransaction commit];
     }
     if (_heldEdge) {
@@ -509,7 +515,7 @@ static char kNavDimKey, kCircleDimKey;
     [_heldEdge setBackdropOuterEdgeGuardLeft:left right:!left];
     if ([_pane isKindOfClass:SGLegacyGlassView.class])
         [(SGLegacyGlassView *)_pane setBackdropOuterEdgeGuardLeft:left right:!left];
-    if (_quietRimOverlay) _quietRimOverlay.hidden = !left || !_shown || _capsuleBacked;
+    if (_quietRimOverlay) _quietRimOverlay.hidden = !left || !_shown;
 }
 
 - (void)setShown:(BOOL)shown {
@@ -519,7 +525,7 @@ static char kNavDimKey, kCircleDimKey;
     SGRShowGlass(_pane, shown && !_capsuleBacked);
     _film.alpha = shown && !_capsuleBacked ? 1 : 0;
     _glyph.alpha = shown ? 1 : 0;
-    if (_quietRimOverlay) _quietRimOverlay.hidden = !_outwardGuardLeft || !shown || _capsuleBacked;
+    if (_quietRimOverlay) _quietRimOverlay.hidden = !_outwardGuardLeft || !shown;
     self.transform = shown ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.6, 0.6);
     self.userInteractionEnabled = shown;
     if (!shown) { [self setHeld:NO animated:NO]; [self setCreateOpen:NO]; }
@@ -530,7 +536,8 @@ static char kNavDimKey, kCircleDimKey;
     _capsuleBacked = backed;
     SGRShowGlass(_pane, _shown && !backed);
     _film.alpha = _shown && !backed ? 1 : 0;
-    if (_quietRimOverlay) _quietRimOverlay.hidden = !_outwardGuardLeft || !_shown || backed;
+    // Unlike _pane, the resting rim remains visible after the capsule roll.
+    if (_quietRimOverlay) _quietRimOverlay.hidden = !_outwardGuardLeft || !_shown;
 }
 
 - (void)holdGlyphOnly:(CGFloat)alpha {
