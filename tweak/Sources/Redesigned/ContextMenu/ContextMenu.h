@@ -56,3 +56,6 @@ UIControl *SGRSystemMenuFront(UIView *button);
 // of its own. Nil while `host` has no size.
 static const CGFloat SGRMenuDim = 0.42;
 UIView *SGRMenuGlass(UIView *host, const void *key, CGFloat dim);
+
+// Whether a Vitrine button-originated dropdown menu is currently on screen.
+BOOL SGRDropdownMenuIsOpenedFromButton(void);

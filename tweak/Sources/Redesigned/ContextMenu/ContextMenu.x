@@ -64,6 +64,8 @@ static NSString *const kPlainRowsKey = @"spotifyglass.redesign.player.menuPlainR
 static NSString *const kSleepTimerItem = @"51";
 
 static char kAnchorKey, kFrontKey, kPlacedKey, kSessionKey;
+static NSUInteger sg_dropdownMenuDepth;
+BOOL SGRDropdownMenuIsOpenedFromButton(void) { return sg_dropdownMenuDepth > 0; }
 
 @class SGRMenuSession;
 static void pageKinds(UIView *button, SGRMenuSession *session);
@@ -451,6 +453,7 @@ static void fadeButton(UIView *button, BOOL away) {
                       animator:(id<UIContextMenuInteractionAnimating>)animator {
     [super contextMenuInteraction:interaction willDisplayMenuForConfiguration:configuration animator:animator];
     [self.session shown];
+    sg_dropdownMenuDepth++;
     // The ⋯ this anchor covers: the page's pinned one, or Spotify's for the player's (the mod's button sits inside it).
     fadeButton(self.superview, YES);
 }
@@ -459,6 +462,7 @@ static void fadeButton(UIView *button, BOOL away) {
                       animator:(id<UIContextMenuInteractionAnimating>)animator {
     [super contextMenuInteraction:interaction willEndForConfiguration:configuration animator:animator];
     fadeButton(self.superview, NO);
+    if (sg_dropdownMenuDepth) sg_dropdownMenuDepth--;
     SGRMenuSession *session = self.session;
     self.session = nil;
     self.userInteractionEnabled = [self isKindOfClass:SGRMenuFront.class];

@@ -11,6 +11,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Redesigned/ContextMenu/ContextMenu.h"
+#import "Redesigned/ContextMenu/SGRTelegramDropdown.h"
 
 // The corners UIKit cuts a menu with. Rounder ones, as iOS 26's menus have, were tried (24 pt): UIKit's own shape under
 // the platter (its shadow and cut-out) kept its 14 pt corners, and the glass's rim light ran round the rounder ones over
@@ -56,7 +57,9 @@ static void glassMenu(UIView *list) {
     if (!platter || platter.bounds.size.width < 1 || platter.bounds.size.height < 1) return;
     if (list.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) list.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
 
-    UIView *glass = menuGlass(platter, &kMenuGlassKey, SGRMenuDim, kMenuRadius);
+    BOOL telegramDropdown = SGRDropdownMenuIsOpenedFromButton();
+    CGFloat radius = telegramDropdown ? MIN(30.0, platter.bounds.size.height * 0.5) : kMenuRadius;
+    UIView *glass = menuGlass(platter, &kMenuGlassKey, SGRMenuDim, radius);
 
     // UIKit's own blur goes; the pane above is the mod's, which is a UIVisualEffectView too when it is not
     // the legacy glass.
@@ -64,6 +67,7 @@ static void glassMenu(UIView *list) {
         if (sub != glass && [sub isKindOfClass:UIVisualEffectView.class] && !sub.hidden) sub.hidden = YES;
     }
 
+    if (telegramDropdown) SGRTelegramDressDropdown(list, platter, glass);
     static dispatch_once_t once;
     dispatch_once(&once, ^{ SGLog(@"context menu: glass over a platter of %@", NSStringFromCGRect(platter.bounds)); });
 }
@@ -103,6 +107,15 @@ static void bubbleMenu(UIView *list) {
 - (void)layoutSubviews {
     %orig;
     glassMenu((UIView *)self);
+}
+%end
+
+// Telegram's movable highlight follows UIKit's real highlighted cells.
+// We do not create gesture recognizers that could intercept a menu action.
+%hook UICollectionViewCell
+- (void)setHighlighted:(BOOL)highlighted {
+    %orig;
+    if (SGRDropdownMenuIsOpenedFromButton()) SGRTelegramDropdownCellHighlightChanged((UICollectionViewCell *)self);
 }
 %end
 
