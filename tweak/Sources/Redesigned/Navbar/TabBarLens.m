@@ -1,4 +1,5 @@
 #import "TabBarLens.h"
+#import "TabBarLensStyle.h"
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRGlass.h"
 #import "Redesigned/Kit/SGRTokens.h"
@@ -13,9 +14,9 @@ static char kLensPaneKey, kLensFilmKey;
 // the specular rim. The icons stay legible in the centre like on iOS 26.
 // Apple keeps the content subtly smaller behind the lifted lens. The custom
 // mesh permits 0.92 for a measurable, local backdrop reduction.
-static const CGFloat kLensMagnification = 0.92;
-static const CGFloat kLensHeldBlur = 0.08, kLensRestBlur = 2;
-static const CGFloat kLensHeldBend = 1.14;
+static const CGFloat kLensMagnification = SGRLegacyHeldMagnification;
+static const CGFloat kLensHeldBlur = SGRLegacyHeldBlur, kLensRestBlur = 2;
+static const CGFloat kLensHeldBend = SGRLegacyHeldBend;
 
 // The held bubble is this much wider than the pill (and taller by 2 * heldOutset, so it stands out of the capsule's
 // rim, as the system's does), and may be dragged this far past the first and the last tab.
@@ -177,56 +178,26 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _film.userInteractionEnabled = NO;
     _glare = [CAGradientLayer layer];
     _glare.name = @"Vitrine.LegacyLensDynamicGlare";
-    _glare.startPoint = CGPointMake(0, 0);
-    _glare.endPoint = CGPointMake(1, 1);
-    // Match the thumb's directional highlight, not a static opaque border.
-    _glare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.80].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.035].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.035].CGColor,
-                      (id)[UIColor colorWithWhite:1 alpha:0.76].CGColor];
-    // The opposite highlights taper along the capsule rather than stopping
-    // at arbitrary hand-drawn horizontal segments.
-    _glare.locations = @[@0, @0.46, @0.54, @1];
     _glareMask = [CAShapeLayer layer];
-    _glareMask.fillColor = nil;
-    _glareMask.strokeColor = UIColor.whiteColor.CGColor;
-    _glareMask.lineWidth = 0.58;
-    _glare.mask = _glareMask;
-    _glare.opacity = 0;
-    // Apple has a fine continuous edge PLUS a brighter directional streak.
-    // The old diagonal gradient alone left two long sides almost black.
     _perimeter = [CAShapeLayer layer];
     _perimeter.name = @"Vitrine.LegacyLensFullPerimeter";
-    _perimeter.fillColor = nil;
-    _perimeter.strokeColor = [UIColor colorWithWhite:1 alpha:0.18].CGColor;
-    _perimeter.lineWidth = 0.48;
+    _longSpecular = [CAGradientLayer layer];
+    _longSpecular.name = @"Vitrine.LegacyLensLongSpecular";
+    _specularMask = [CAShapeLayer layer];
+    // The compact circle and full lens now draw the same diagonal specular
+    // along the exact silhouette rather than maintaining separate strokes.
+    SGRLegacyConfigureDirectionalRim(_glare, _glareMask, _perimeter,
+                                      _longSpecular, _specularMask);
+    _glare.opacity = 0;
     _perimeter.opacity = 0;
+    _longSpecular.opacity = 0;
     _rimOverlay = [CALayer layer];
     _rimOverlay.name = @"Vitrine.LegacyLensAboveTabsRim";
     _rimOverlay.zPosition = 100;
-    // The reflection remains above UIKit's artwork, but must not draw outside
-    // the same capsule silhouette as the refracting glass.
     _rimOverlay.masksToBounds = YES;
     _rimOverlay.cornerCurve = kCACornerCurveCircular;
     [_rimOverlay addSublayer:_perimeter];
     [_rimOverlay addSublayer:_glare];
-    // A second, narrower directional gradient on the EXACT SAME outline.
-    // Unlike the old Bezier strokes, it cannot diverge from the glass shape.
-    _longSpecular = [CAGradientLayer layer];
-    _longSpecular.name = @"Vitrine.LegacyLensLongSpecular";
-    _longSpecular.startPoint = CGPointMake(0, 0);
-    _longSpecular.endPoint = CGPointMake(1, 1);
-    _longSpecular.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.30].CGColor,
-                             (id)[UIColor colorWithWhite:1 alpha:0.008].CGColor,
-                             (id)[UIColor colorWithWhite:1 alpha:0.008].CGColor,
-                             (id)[UIColor colorWithWhite:1 alpha:0.28].CGColor];
-    _longSpecular.locations = @[@0, @0.42, @0.58, @1];
-    _specularMask = [CAShapeLayer layer];
-    _specularMask.fillColor = nil;
-    _specularMask.strokeColor = UIColor.whiteColor.CGColor;
-    _specularMask.lineWidth = 0.40;
-    _longSpecular.mask = _specularMask;
-    _longSpecular.opacity = 0;
     [_rimOverlay addSublayer:_longSpecular];
     // The press feedback follows the touch's highlighted state, as in
     // Telegram's GlassBarButtonComponent. Unlike its non-glass button scale,
@@ -471,23 +442,10 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     _film.alpha = 0;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    _glare.frame = bounds;
-    _glareMask.frame = _glare.bounds;
-    // One shared optical outline: all three components sit at the same
-    // radius as the glass's capsule, inset only half a pixel to retain the
-    // antialiasing inside the edge. There is NO independent white stripe.
-    CGRect pathBounds = CGRectInset(bounds, 0.50, 0.50);
-    UIBezierPath *opticalPath = [UIBezierPath bezierPathWithRoundedRect:pathBounds
-                                            cornerRadius:CGRectGetHeight(pathBounds) / 2];
-    CGPathRef outline = opticalPath.CGPath;
+    SGRLegacyLayoutDirectionalRim(bounds, _glare, _glareMask, _perimeter,
+                                   _longSpecular, _specularMask);
     _rimOverlay.bounds = bounds;
     _rimOverlay.cornerRadius = radius;
-    _glareMask.path = outline;
-    _perimeter.frame = bounds;
-    _perimeter.path = outline;
-    _longSpecular.frame = bounds;
-    _specularMask.frame = bounds;
-    _specularMask.path = outline;
     _fingerHighlight.frame = bounds;
     if (_platterEdgePane) {
         if (!CGRectEqualToRect(_platterEdgePane.bounds, bounds)) _platterEdgePane.bounds = bounds;
@@ -918,7 +876,7 @@ static BOOL bubbles(void) {
         // ring exactly during the glass-to-platter handoff.
         glass.rimless = YES;
         glass.lateralRefraction = on;
-        glass.lateralVerticalReach = on ? 0.24 : 0;
+        glass.lateralVerticalReach = on ? SGRLegacyHeldVerticalReach : 0;
     }
     void (^change)(void) = ^{
         SGRShowGlass(self->_pane, on);
