@@ -18,6 +18,7 @@
 #import "Core/SGCore.h"
 #import "Navbar.h"
 #import "TabBarLens.h"
+#import "TabBarLensStyle.h"
 #import "Redesigned/Kit/SGRGlass.h"
 #import "Redesigned/Kit/SGRTokens.h"
 #import "Redesigned/Kit/SGRAccent.h"
@@ -289,9 +290,11 @@ static char kNavDimKey, kCircleDimKey;
     UIView *_film;
     UIView *_disc;
     SGLegacyGlassView *_heldEdge;
-    CAGradientLayer *_heldEdgeMask;
     CAGradientLayer *_heldGlare;
     CAShapeLayer *_heldGlarePath;
+    CAGradientLayer *_heldLongSpecular;
+    CAShapeLayer *_heldSpecularPath;
+    CALayer *_heldRimOverlay;
     BOOL _held;
     CGFloat _trackingStartX, _trackingDX;
     CAShapeLayer *_heldPerimeter;
@@ -320,49 +323,44 @@ static char kNavDimKey, kCircleDimKey;
         _heldEdge.userInteractionEnabled = NO;
         _heldEdge.accessibilityElementsHidden = YES;
         _heldEdge.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        _heldEdge.clipsToBounds = YES;
+        _heldEdge.layer.cornerCurve = kCACornerCurveCircular;
         _heldEdge.capsule = YES;
         _heldEdge.clear = YES;
-        _heldEdge.blurRadius = 0.12;
-        _heldEdge.magnification = 0.92;
-        _heldEdge.lensScale = 0.90;
+        // Identical raised-material profile to the full Legacy tab lens.
+        _heldEdge.blurRadius = SGRLegacyHeldBlur;
+        _heldEdge.magnification = SGRLegacyHeldMagnification;
+        _heldEdge.lensScale = SGRLegacyHeldBend;
+        _heldEdge.lateralVerticalReach = SGRLegacyHeldVerticalReach;
         _heldEdge.lateralRefraction = YES;
         _heldEdge.sharp = YES;
         _heldEdge.rimless = YES;
         _heldEdge.alpha = 0;
-        _heldEdgeMask = [CAGradientLayer layer];
-        _heldEdgeMask.startPoint = CGPointMake(0, 0.5);
-        _heldEdgeMask.endPoint = CGPointMake(1, 0.5);
-        _heldEdgeMask.locations = @[@0, @0.10, @0.29, @0.37, @0.63, @0.71, @0.90, @1];
-        _heldEdgeMask.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.8].CGColor,
-                                 (id)[UIColor colorWithWhite:1 alpha:0.72].CGColor,
-                                 (id)[UIColor colorWithWhite:1 alpha:0.14].CGColor,
-                                 (id)UIColor.clearColor.CGColor,
-                                 (id)UIColor.clearColor.CGColor,
-                                 (id)[UIColor colorWithWhite:1 alpha:0.14].CGColor,
-                                 (id)[UIColor colorWithWhite:1 alpha:0.72].CGColor,
-                                 (id)[UIColor colorWithWhite:1 alpha:0.8].CGColor];
-        _heldEdge.layer.mask = _heldEdgeMask;
+        // A full raised lens must move, not merely two masked crescents over
+        // the stationary compact circle. The quiet pane is hidden on press,
+        // so this new backdrop does not refract its own dark button boundary.
         [self insertSubview:_heldEdge belowSubview:_glyph];
+
         _heldGlare = [CAGradientLayer layer];
-        _heldGlare.startPoint = CGPointMake(0, 0);
-        _heldGlare.endPoint = CGPointMake(1, 1);
-        _heldGlare.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.98].CGColor,
-                              (id)[UIColor colorWithWhite:1 alpha:0.03].CGColor,
-                              (id)[UIColor colorWithWhite:1 alpha:0.82].CGColor];
-        _heldGlare.locations = @[@0, @0.58, @1];
         _heldGlarePath = [CAShapeLayer layer];
-        _heldGlarePath.fillColor = nil;
-        _heldGlarePath.strokeColor = UIColor.whiteColor.CGColor;
-        _heldGlarePath.lineWidth = 0.82;
-        _heldGlare.mask = _heldGlarePath;
-        _heldGlare.opacity = 0;
         _heldPerimeter = [CAShapeLayer layer];
-        _heldPerimeter.fillColor = nil;
-        _heldPerimeter.strokeColor = [UIColor colorWithWhite:1 alpha:0.38].CGColor;
-        _heldPerimeter.lineWidth = 0.72;
+        _heldLongSpecular = [CAGradientLayer layer];
+        _heldSpecularPath = [CAShapeLayer layer];
+        SGRLegacyConfigureDirectionalRim(_heldGlare, _heldGlarePath,
+                                          _heldPerimeter, _heldLongSpecular,
+                                          _heldSpecularPath);
+        _heldGlare.opacity = 0;
         _heldPerimeter.opacity = 0;
-        [self.layer addSublayer:_heldPerimeter];
-        [self.layer addSublayer:_heldGlare];
+        _heldLongSpecular.opacity = 0;
+        _heldRimOverlay = [CALayer layer];
+        _heldRimOverlay.name = @"Vitrine.LegacyCompactAboveGlyphRim";
+        _heldRimOverlay.zPosition = 100;
+        _heldRimOverlay.masksToBounds = YES;
+        _heldRimOverlay.cornerCurve = kCACornerCurveCircular;
+        [_heldRimOverlay addSublayer:_heldPerimeter];
+        [_heldRimOverlay addSublayer:_heldGlare];
+        [_heldRimOverlay addSublayer:_heldLongSpecular];
+        [self.layer addSublayer:_heldRimOverlay];
     }
     self.isAccessibilityElement = YES;
     self.accessibilityTraits = UIAccessibilityTraitButton;
@@ -386,19 +384,19 @@ static char kNavDimKey, kCircleDimKey;
     film.layer.cornerCurve = kCACornerCurveCircular;
     film.backgroundColor = [UIColor colorWithWhite:1 alpha:0.045];
     if (_heldEdge) {
-        CGRect expanded = CGRectInset(quiet, -8, -8);  // exactly 70x70 on a 62pt compact platter
+        CGRect expanded = CGRectInset(quiet, -8, -8); // 70pt raised circle from 54pt rest
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
         _heldEdge.bounds = (CGRect){CGPointZero, expanded.size};
         _heldEdge.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
         _heldEdge.layer.cornerRadius = expanded.size.height / 2;
-        _heldEdgeMask.frame = _heldEdge.bounds;
-        _heldGlare.frame = expanded;
-        _heldGlarePath.frame = _heldGlare.bounds;
-        CGRect stroke = CGRectInset(_heldGlare.bounds, 0.85, 0.85);
-        CGPathRef path = [UIBezierPath bezierPathWithRoundedRect:stroke
-                                                 cornerRadius:stroke.size.height / 2].CGPath;
-        _heldGlarePath.path = path;
-        _heldPerimeter.frame = expanded;
-        _heldPerimeter.path = path;
+        _heldRimOverlay.bounds = (CGRect){CGPointZero, expanded.size};
+        _heldRimOverlay.position = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+        _heldRimOverlay.cornerRadius = expanded.size.height / 2;
+        SGRLegacyLayoutDirectionalRim(_heldRimOverlay.bounds, _heldGlare,
+                                      _heldGlarePath, _heldPerimeter,
+                                      _heldLongSpecular, _heldSpecularPath);
+        [CATransaction commit];
     }
     // bounds and center, not frame: the glyph is turned while Create's menu is up.
     _glyph.bounds = (CGRect){CGPointZero, bounds.size};
@@ -435,21 +433,16 @@ static char kNavDimKey, kCircleDimKey;
 }
 
 - (void)applyCompactFingerPose {
-    // The finger carries the *raised lens*, not the entire compact control.
-    // The previous 0.35 gain was further clamped to just +/-3.5pt, so the
-    // response was nearly invisible even in the slow-driver recordings.
-    CGFloat dx = _held ? MAX(-13, MIN(13, _trackingDX * 0.58)) : 0;
-    CGFloat stretch = _held ? MIN(0.020, fabs(dx) / 13 * 0.020) : 0;
-    CGAffineTransform lens = CGAffineTransformMakeTranslation(dx, 0);
-    lens = CGAffineTransformScale(lens, _held ? 1.055 + stretch : 1, _held ? 1.055 - stretch * 0.22 : 1);
-    _heldEdge.transform = lens;
-    _heldGlare.affineTransform = lens;
-    _heldPerimeter.affineTransform = lens;
-    // Enlarge the visible compact button's normal glass as well; the icon
-    // remains at its native 1x size and the tap target remains unchanged.
-    CGAffineTransform backing = _held ? CGAffineTransformMakeScale(1.085, 1.085) : CGAffineTransformIdentity;
-    _pane.transform = backing;
-    _film.transform = backing;
+    // Keep the stationary glyph at its slot. Move the entire *visible* raised
+    // circle with the finger; unlike before, its centre is no longer occupied
+    // by an unmoving, dark compact pane. The finger remains free to leave the
+    // original 62pt button while UIKit continues tracking this touch.
+    CGFloat dx = _held ? MAX(-14, MIN(14, _trackingDX * 0.75)) : 0;
+    CGFloat stretch = _held ? MIN(0.020, fabs(dx) / 14 * 0.020) : 0;
+    CGAffineTransform pose = CGAffineTransformMakeTranslation(dx, 0);
+    pose = CGAffineTransformScale(pose, 1 + stretch, 1 - stretch * 0.22);
+    _heldEdge.transform = pose;
+    _heldRimOverlay.affineTransform = pose;
 }
 
 - (void)setHeld:(BOOL)held animated:(BOOL)animated {
@@ -457,9 +450,14 @@ static char kNavDimKey, kCircleDimKey;
     _held = held;
     if (!held) _trackingDX = 0;
     void (^update)(void) = ^{
+        // Only one real glass circle is visible at a time. The old quiet
+        // pane below the raised backdrop was sampled as an extra inner rim.
+        SGRShowGlass(self->_pane, !held && self->_shown);
+        self->_film.alpha = (!held && self->_shown) ? 1 : 0;
         self->_heldEdge.alpha = held ? 1 : 0;
-        self->_heldGlare.opacity = held ? 0.70 : 0;
+        self->_heldGlare.opacity = held ? 1 : 0;
         self->_heldPerimeter.opacity = held ? 1 : 0;
+        self->_heldLongSpecular.opacity = held ? 1 : 0;
         [self applyCompactFingerPose];
     };
     if (animated && !SGRReduceMotion())
@@ -474,6 +472,7 @@ static char kNavDimKey, kCircleDimKey;
     if (accepted && _shown) {
         _trackingStartX = [touch locationInView:self].x;
         _trackingDX = 0;
+        [self layoutIfNeeded];
         [self setHeld:YES animated:YES];
     }
     return accepted;
