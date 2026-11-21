@@ -3,7 +3,6 @@
 #import "Redesigned/Kit/SGRGlass.h"
 #import "Redesigned/Kit/SGRTokens.h"
 #import <objc/runtime.h>
-#import <math.h>
 
 static char kLensGlyphDeghostKey;
 
@@ -348,7 +347,15 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
         [host insertSubview:_platterEdgePane aboveSubview:self];
     }
     if (!_glyphEdgePane) return;
-    UIView *target = _tintOverlay.superview == host ? _tintOverlay : host;
+    // This edge-only refractor samples green selected glyphs, so it must be
+    // clipped by the SAME animated mask as those glyphs. A host-level fallback
+    // is not safe: it bypasses SelectedContentView's live capsule mask and
+    // exposes displaced green pixels outside the bubble at the end tabs.
+    UIView *target = (_tintOverlay && _tintOverlay.superview == host) ? _tintOverlay : nil;
+    if (!target) {
+        [_glyphEdgePane removeFromSuperview];
+        return;
+    }
     if (_glyphEdgePane.superview != target) [target addSubview:_glyphEdgePane];
     if (target.subviews.lastObject != _glyphEdgePane) [target bringSubviewToFront:_glyphEdgePane];
 }
@@ -377,37 +384,12 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     [self clearGlyphSourceMasks];
 }
 
-// SelectedContentView has its own transform; this refractor does NOT share
-// screen coordinates with the lens, even when both have identical bounds.
-// Return the actual bubble's contour in the glyph pane's own coordinates.
-// Never reposition the pane: it has to sample the original glyphs there.
-- (CGRect)glyphEdgeClipRect {
-    CGRect clip = _glyphEdgePane.bounds;
-    if (self.superview && _glyphEdgePane.superview &&
-        self.window && self.window == _glyphEdgePane.window) {
-        CGRect lensInGlyph = [self convertRect:self.bounds toView:_glyphEdgePane];
-        if (!CGRectIsEmpty(lensInGlyph) && !CGRectIsNull(lensInGlyph) &&
-            isfinite(CGRectGetMinX(lensInGlyph)) &&
-            isfinite(CGRectGetMinY(lensInGlyph)) &&
-            isfinite(CGRectGetWidth(lensInGlyph)) &&
-            isfinite(CGRectGetHeight(lensInGlyph))) {
-            clip = lensInGlyph;
-        }
-    }
-    return clip;
-}
-
 - (void)updateGlyphEdgeMaskLeft:(CGFloat)left right:(CGFloat)right {
     if (!_glyphEdgeMask) return;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    // Clip the displaced backdrop to the live bubble, NOT the pane's own
-    // silhouette. Stage 100 found 2–7pt of outward glyph refraction here.
-    CGRect glyphClip = [self glyphEdgeClipRect];
-    _glyphEdgeMask.frame = glyphClip;
-    _glyphEdgeMask.cornerRadius = CGRectGetHeight(glyphClip) / 2;
-    // Platter-edge glass is already a sibling of the lens in host space.
-    // Its mask must continue to cover its own local bounds unchanged.
+    _glyphEdgeMask.frame = _glyphEdgePane.bounds;
+    _glyphEdgeMask.cornerRadius = CGRectGetHeight(_glyphEdgePane.bounds) / 2;
     _platterEdgeMask.frame = _platterEdgePane.bounds;
     _platterEdgeMask.cornerRadius = CGRectGetHeight(_platterEdgePane.bounds) / 2;
     NSArray *colors = @[
@@ -482,9 +464,8 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     if (_glyphEdgePane) {
         if (!CGRectEqualToRect(_glyphEdgePane.bounds, bounds)) _glyphEdgePane.bounds = bounds;
         _glyphEdgePane.layer.cornerRadius = radius;
-        CGRect glyphClip = [self glyphEdgeClipRect];
-        _glyphEdgeMask.frame = glyphClip;
-        _glyphEdgeMask.cornerRadius = CGRectGetHeight(glyphClip) / 2;
+        _glyphEdgeMask.frame = bounds;
+        _glyphEdgeMask.cornerRadius = radius;
     }
     [CATransaction commit];
 }
