@@ -29,6 +29,7 @@
 
 static char kListKey, kBellKey, kSavedKey, kBellPinKey, kSavedPinKey, kTitleGlassKey;
 static char kEntityTitleKey, kEntityChipKey, kEntityFillKey;
+static char kCollapsedHeroMaskKey, kCollapsedHeroTouchKey, kCollapsedHeroA11yKey;
 
 static Class sg_galleryPage;
 
@@ -198,6 +199,61 @@ static void dressEntityBar(UIView *bar) {
         SGRGlassTitleCapsule(title, &kEntityTitleKey, SGRTitleWidth(label), title.bounds.size.width, nil);
 }
 
+// Spotify leaves the HeaderLayout partially expanded after scrolling to the
+// top: the Event's ticket card or the Venue's Follow/Share/genre chips stop
+// under the navigation bar instead of continuing to scroll out. The old
+// gradient-only treatment did not affect these *content* views: they live in
+// _safeAreaView, a sibling of _backgroundViewContainer.
+//
+// Mask only that content subtree once its hero is mostly collapsed. The
+// _foregroundViewContainer (Back and title) remains pinned, and the collection
+// underneath is completely untouched. On returning to the top, restore both
+// drawing and interaction. Never hide an arranged SwiftUI/Encore view itself.
+static void concealCollapsedEntityContent(UIView *header) {
+    NSString *identifier = header.accessibilityIdentifier;
+    if (![identifier isEqualToString:@"Components.UI.EventHeaderEntityPage"] &&
+        ![identifier isEqualToString:@"Components.UI.VenueHeaderEntityPage"]) return;
+    if (!entityRootOf(header)) return;
+    UIView *clip = nil;
+    for (UIView *sub in header.subviews) {
+        if ([sub.accessibilityIdentifier isEqualToString:@"_clippingView"]) { clip = sub; break; }
+    }
+    UIView *background = nil, *safeArea = nil;
+    for (UIView *sub in clip.subviews) {
+        if ([sub.accessibilityIdentifier isEqualToString:@"_backgroundViewContainer"]) background = sub;
+        if ([sub.accessibilityIdentifier isEqualToString:@"_safeAreaView"]) safeArea = sub;
+    }
+    if (!background || !safeArea || header.bounds.size.height < 1) return;
+    // HeaderView retains its full-height bounds and a negative Y as Spotify
+    // collapses it. This is measured on the live hierarchy, unlike a fixed
+    // 189/216/243pt threshold that would fail for another event or venue.
+    UIView *fullHero = nil;
+    for (UIView *sub in background.subviews) {
+        if (sub.bounds.size.height >= header.bounds.size.height - 1) { fullHero = sub; break; }
+    }
+    if (!fullHero || fullHero.bounds.size.height < 140) return;
+    CGFloat progress = MAX(0, -fullHero.frame.origin.y) / fullHero.bounds.size.height;
+    BOOL collapsed = progress > 0.33;
+    CALayer *empty = objc_getAssociatedObject(safeArea, &kCollapsedHeroMaskKey);
+    if (collapsed) {
+        if (!empty) {
+            empty = [CALayer layer]; // empty bounds: mask removes only the frozen header content
+            objc_setAssociatedObject(safeArea, &kCollapsedHeroMaskKey, empty, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(safeArea, &kCollapsedHeroTouchKey, @(safeArea.userInteractionEnabled), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            objc_setAssociatedObject(safeArea, &kCollapsedHeroA11yKey, @(safeArea.accessibilityElementsHidden), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        if (safeArea.layer.mask != empty) safeArea.layer.mask = empty;
+        safeArea.userInteractionEnabled = NO;
+        safeArea.accessibilityElementsHidden = YES;
+    } else if (empty) {
+        if (safeArea.layer.mask == empty) safeArea.layer.mask = nil;
+        NSNumber *touch = objc_getAssociatedObject(safeArea, &kCollapsedHeroTouchKey);
+        NSNumber *a11y = objc_getAssociatedObject(safeArea, &kCollapsedHeroA11yKey);
+        if (touch) safeArea.userInteractionEnabled = touch.boolValue;
+        if (a11y) safeArea.accessibilityElementsHidden = a11y.boolValue;
+    }
+}
+
 // The genre tags on Event and Venue pages are LiveEvents_ECMKit.ConceptChipView,
 // not Encore_ChipsKit.ChipView. Reuse the library chip material, without
 // changing the tap target or a scroll view's own clipping/scroll behavior.
@@ -237,6 +293,8 @@ static void dressEntityConceptChip(UIView *chip) {
     // expanded hero (#5), and Venue details (#7).
     Class bar = SGRSwiftClass(@"EncoreConsumerMobile_BaseKit", @"HeaderNavigationBar");
     if (bar) SGRPassView(bar, ^(UIView *view) { dressEntityBar(view); });
+    Class header = SGRSwiftClass(@"LegacyUI_ECMCoreKit", @"HeaderLayout");
+    if (header) SGRPassView(header, ^(UIView *view) { concealCollapsedEntityContent(view); });
     Class concept = SGRSwiftClass(@"LiveEvents_ECMKit", @"ConceptChipView");
     if (concept) SGRPassView(concept, ^(UIView *view) { dressEntityConceptChip(view); });
 }
