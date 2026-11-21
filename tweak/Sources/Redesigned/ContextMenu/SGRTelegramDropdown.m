@@ -18,7 +18,7 @@ static const CGFloat kTGHighlightRadius = 20.0;
 // *separate* tint layer, not for Telegram's precomposited image.
 static const CGFloat kTGGlassOverlayAlpha = 0.56;
 static const NSTimeInterval kTGHighlightDuration = 0.16;
-static char kTGHighlightKey, kTGStyledKey, kTGMenuRootKey, kTGSeparatorLineKey;
+static char kTGHighlightKey, kTGStyledKey, kTGMenuRootKey, kTGSeparatorLineKey, kTGReferenceSizedKey;
 static CFTimeInterval sg_lastMenuButtonAt;
 static __weak UIWindow *sg_lastMenuButtonWindow;
 
@@ -133,6 +133,17 @@ static void placeDropdownContent(UIView *view, CGFloat x, CGFloat y) {
     if (!CGAffineTransformEqualToTransform(view.transform, transform)) view.transform = transform;
 }
 
+// The iOS 18 content view reserves room for its original TRAILING symbol.
+// Moving that symbol to the leading edge (Stage 145) did not release the
+// constraint on the text stack: a 250pt row still receives only ~101pt of
+// text, whereas the same iOS 26 row receives 162pt. Dress the measured
+// frames after the PRIVATE content view's final layout, without altering any
+// collection-view cell or its touch rectangle.
+static void setDropdownFrame(UIView *view, CGRect frame) {
+    if (!view || CGRectEqualToRect(view.frame, frame)) return;
+    view.frame = frame;
+}
+
 static void matchDropdownRowContent(UICollectionViewCell *cell) {
     UIView *content = cell.contentView;
     if (!content || cell.bounds.size.width < 40 || cell.bounds.size.height < 30) return;
@@ -145,26 +156,60 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
     }
     if (!textStack || icons.count == 0) return;
 
+    NSMutableArray<UILabel *> *labels = [NSMutableArray array];
+    for (UIView *view in textStack.arrangedSubviews)
+        if ([view isKindOfClass:UILabel.class]) [labels addObject:(UILabel *)view];
+    if (!labels.count) return;
+    UIView *parent = cell.superview;
+    while (parent && ![parent isKindOfClass:UICollectionView.class]) parent = parent.superview;
+    BOOL referenceMenu = [objc_getAssociatedObject(parent, &kTGReferenceSizedKey) boolValue];
+
     if (cell.bounds.size.width < 130) {
-        // Top quick actions remain tiles. On iOS 26 the symbol is centered
-        // around y=27 and the caption begins at y=44.667.
-        for (UIImageView *icon in icons)
-            placeDropdownContent(icon, (cell.bounds.size.width - icon.bounds.size.width) * 0.5,
-                                 18.0);
-        placeDropdownContent(textStack, (cell.bounds.size.width - textStack.bounds.size.width) * 0.5,
-                             44.667);
-        for (UIView *v in textStack.arrangedSubviews) {
-            if (![v isKindOfClass:UILabel.class]) continue;
-            UILabel *label = (UILabel *)v;
+        // iOS 26: 78pt tiles with 74pt captions. The older UIKit reserves
+        // 10pt on each side of the caption and scales symbols down. The
+        // original SF Symbol image has the reference geometry in its size.
+        BOOL referenceTile = referenceMenu && fabs(cell.bounds.size.width - 78) < 1 &&
+                             fabs(cell.bounds.size.height - 93) < 1;
+        for (UIImageView *icon in icons) {
+            if (referenceTile && icon.image && icon.bounds.size.width > 1 && icon.bounds.size.height > 1) {
+                CGSize image = icon.image.size;
+                CGFloat scaleX = image.width / icon.bounds.size.width;
+                CGFloat scaleY = image.height / icon.bounds.size.height;
+                if (image.width >= 16 && image.width <= 26 && image.height >= 15 && image.height <= 25 &&
+                    scaleX >= 0.9 && scaleX <= 1.5 && scaleY >= 0.9 && scaleY <= 1.5) {
+                    // Preserve the source image, not a separately drawn icon.
+                    CGFloat centerY = image.height >= 21 ? 27 : image.width >= 23 ? 29 : 27.667;
+                    CGAffineTransform t = CGAffineTransformMake(scaleX, 0, 0, scaleY,
+                                                                cell.bounds.size.width * 0.5 - icon.center.x,
+                                                                centerY - icon.center.y);
+                    if (!CGAffineTransformEqualToTransform(icon.transform, t)) icon.transform = t;
+                    continue;
+                }
+            }
+            placeDropdownContent(icon, (cell.bounds.size.width - icon.bounds.size.width) * 0.5, 18.0);
+        }
+        for (UILabel *label in labels) {
             if (fabs(label.font.pointSize - 12.0) > 0.1)
                 label.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightRegular];
+        }
+        if (referenceTile) {
+            CGFloat labelHeight = [labels.firstObject.text containsString:@"\n"] ||
+                                  labels.firstObject.bounds.size.height > 20 ? 30.333333 : 14.333333;
+            // Keep the label and its stack equally wide. UIKit can relayout
+            // them later; this pass re-applies the geometry idempotently.
+            CGRect bounds = textStack.bounds;
+            bounds.size = CGSizeMake(74.0, labelHeight);
+            if (!CGRectEqualToRect(textStack.bounds, bounds)) textStack.bounds = bounds;
+            placeDropdownContent(textStack, 2.0, 44.666667);
+            setDropdownFrame(labels.firstObject, CGRectMake(0, 0, 74.0, labelHeight));
+        } else {
+            placeDropdownContent(textStack,
+                                 (cell.bounds.size.width - textStack.bounds.size.width) * 0.5, 44.667);
         }
         return;
     }
 
-    // On iOS 18 a regular action image sits at x=211, while on iOS 26 it
-    // sits at x~26 and the text starts at x=60. More has two images: the
-    // smaller chevron is trailing, the actual action glyph is leading.
+    // The action glyph is leading and the smaller submenu chevron is trailing.
     if (cell.bounds.size.width < 180) return;
     UIImageView *chevron = nil;
     UIImageView *action = nil;
@@ -180,15 +225,38 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
         placeDropdownContent(chevron, cell.bounds.size.width - 30.0 - chevron.bounds.size.width * 0.5,
                              floor((cell.bounds.size.height - chevron.bounds.size.height) * 0.5));
 
-    placeDropdownContent(textStack, 60.0,
-                         floor((cell.bounds.size.height - textStack.bounds.size.height) * 0.5));
-    if (textStack.arrangedSubviews.count > 1) {
-        for (UIView *v in textStack.arrangedSubviews) {
-            if (![v isKindOfClass:UILabel.class]) continue;
-            UILabel *label = (UILabel *)v;
-            if (label == textStack.arrangedSubviews.lastObject &&
-                fabs(label.font.pointSize - 13.0) > 0.1)
-                label.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
+    BOOL referenceWidth = referenceMenu && fabs(cell.bounds.size.width - 250.0) < 1.0;
+    if (referenceWidth && labels.count > 1 &&
+        (fabs(cell.bounds.size.height - 80.0) < 1 || fabs(cell.bounds.size.height - 58.0) < 1)) {
+        BOOL tall = cell.bounds.size.height > 70;
+        CGFloat titleHeight = tall ? 42.333333 : 20.333333;
+        CGFloat subtitleTop = tall ? 43.0 : 21.0;
+        CGFloat stackHeight = tall ? 58.666667 : 36.666667;
+        UILabel *title = labels.firstObject, *subtitle = labels.lastObject;
+        if (title.numberOfLines != 2) title.numberOfLines = 2;
+        if (fabs(title.preferredMaxLayoutWidth - 162.0) > 0.5) title.preferredMaxLayoutWidth = 162.0;
+        if (fabs(subtitle.font.pointSize - 13.0) > 0.1)
+            subtitle.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
+        CGRect bounds = textStack.bounds;
+        bounds.size = CGSizeMake(162.0, stackHeight);
+        if (!CGRectEqualToRect(textStack.bounds, bounds)) textStack.bounds = bounds;
+        placeDropdownContent(textStack, 60.0, 10.666667);
+        setDropdownFrame(title, CGRectMake(0, 0, 162.0, titleHeight));
+        setDropdownFrame(subtitle, CGRectMake(0, subtitleTop, 162.0, 15.666667));
+    } else if (referenceWidth && labels.count == 1 && fabs(cell.bounds.size.height - 42.0) < 1) {
+        CGRect bounds = textStack.bounds;
+        bounds.size.height = 20.333333;
+        if (!CGRectEqualToRect(textStack.bounds, bounds)) textStack.bounds = bounds;
+        placeDropdownContent(textStack, 60.0, 10.666667);
+        setDropdownFrame(labels.firstObject, CGRectMake(0, 0, labels.firstObject.bounds.size.width, 20.333333));
+    } else {
+        // Other button dropdowns retain their own measured line heights.
+        placeDropdownContent(textStack, 60.0,
+                             floor((cell.bounds.size.height - textStack.bounds.size.height) * 0.5));
+        if (labels.count > 1) {
+            UILabel *subtitle = labels.lastObject;
+            if (fabs(subtitle.font.pointSize - 13.0) > 0.1)
+                subtitle.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
         }
     }
 }
@@ -325,7 +393,7 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
 // inferred from an image. We adjust the real UIKit cells and their hit map,
 // rather than stretch just the dark material or draw an inert duplicate menu.
 // Other UIMenu shapes retain native heights until independently measured.
-static char kTGReferenceSizedKey, kTGReferenceBusyKey, kTGRefLine1Key, kTGRefLine2Key;
+static char kTGReferenceBusyKey, kTGRefLine1Key, kTGRefLine2Key;
 
 static NSUInteger menuItemCount(UICollectionView *collection) {
     NSUInteger count = 0;
@@ -438,6 +506,13 @@ void SGRTelegramDropdownMatchReferenceGeometry(UIView *list) {
     const CGFloat height = 315.0;
     CGRect frame = root.frame;
     frame.size.height = height;
+    // The 18.x anchored panel leaves 8pt to the right; on the reference
+    // 26.3 player it leaves 12pt. Anchor to the actual container width so
+    // repeated layout passes cannot cumulatively drift the menu left.
+    CGFloat containerWidth = root.superview.bounds.size.width;
+    CGFloat rightGap = containerWidth - CGRectGetMaxX(frame);
+    if (containerWidth > 300 && rightGap >= -0.5 && rightGap <= 20.0)
+        frame.origin.x = containerWidth - frame.size.width - 12.0;
     if (!CGRectEqualToRect(root.frame, frame)) root.frame = frame;
     CGRect bounds = list.frame;
     bounds.size.height = height;
@@ -465,6 +540,9 @@ void SGRTelegramDropdownMatchReferenceGeometry(UIView *list) {
     CGSize content = collection.contentSize;
     if (content.height < height) collection.contentSize = CGSizeMake(content.width, height);
     objc_setAssociatedObject(collection, &kTGReferenceSizedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // The reference marker is now active: refit labels and the top SF
+    // Symbols in this same pass, without waiting for another UIKit relayout.
+    for (UICollectionViewCell *cell in collection.visibleCells) matchDropdownRowContent(cell);
     objc_setAssociatedObject(root, &kTGReferenceBusyKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
