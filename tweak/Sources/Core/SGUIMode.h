@@ -28,7 +28,7 @@ BOOL SGRedesignFellBack(void);
 BOOL SGRedesignedUI(void);
 
 // YES below iOS 26, where the system draws no glass of its own and the mod's fallbacks (legacy glass, the capsule
-// tab bar, the Telegram alert, glassed sheets) take over: !SGRedesignAvailable(), named for what the callers mean.
+// tab bar, the custom alert, glassed sheets) take over: !SGRedesignAvailable(), named for what the callers mean.
 static inline BOOL SGBelowiOS26(void) {
     return !SGRedesignAvailable();
 }

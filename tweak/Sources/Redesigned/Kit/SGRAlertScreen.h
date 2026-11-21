@@ -1,4 +1,4 @@
-// Redesign, iOS < 26: the system's alert and action sheet, drawn the way Telegram draws its own. Telegram's
+// Redesign, iOS < 26: the system's alert and action sheet, drawn by the custom alert implementation. Its
 // AlertScreen is a 300pt glass card with 35pt corners, a bold 17pt title over 15pt text, and capsule buttons 48pt
 // tall: the main one filled with the accent, the rest a 10% white fill, a destructive one red. This reads the
 // title, message, text fields and actions off a UIAlertController and shows them that way; the controller itself
@@ -7,7 +7,7 @@
 // The glass is the redesign's own pane (SGRGlass.h: the legacy glass below iOS 26, the heavy body and the rim of a
 // sheet), so an alert matches the queue and the ⋯ menu.
 //
-// Metrics and colors are ported from Telegram-iOS's AlertComponent (GPLv2); no Telegram code is kept verbatim.
+// Metrics and colors are ported from a third-party GPLv2 reference; the implementation is original.
 #import <UIKit/UIKit.h>
 #import "Settings/SGPageStyle.h"
 

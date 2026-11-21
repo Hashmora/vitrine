@@ -1,18 +1,18 @@
-# Button dropdowns — Telegram-style visual port, V1
+# Button dropdowns — shared visual renderer, V1
 
 Scope: Redesigned / Legacy Glass (iOS 16–25). Only button-triggered
 `SGRMenuAnchor`/`SGRMenuFront` `UIMenu` sessions; long-press context menus,
 share sheets and Spotify bottom sheets keep their existing implementation.
 System iOS 26 menus are not repainted.
 
-References in the supplied Telegram iOS `Components.zip`:
+UI references inspected during development:
 - `ContextControllerImpl/Sources/ContextControllerActionsStackNode.swift`
 - `ContextControllerImpl/Sources/ContextActionsContainerNode.swift`
-- `GlassBackgroundComponent` (API used by Telegram context action stacks)
+- `GlassBackgroundComponent` (reference API for context action stacks)
 
 This patch is an original UIKit/Objective-C visual adaptation rather than a
-verbatim copy of Telegram's GPL-v2-or-later Swift/AsyncDisplayKit code. The
-large Telegram component requires AccountContext, ContextUI, Display,
+verbatim copy of third-party GPL-v2-or-later Swift/AsyncDisplayKit code. The
+referenced component requires AccountContext, ContextUI, Display,
 GlassBackgroundComponent and other submodules. Importing it unmodified into
 a Theos Logos tweak is not viable.
 
@@ -32,4 +32,4 @@ Suggested simulator smoke test: player `⋯` -> initial items, More submenu,
 fast finger drag without release, select a row, close without selection;
 then entity page `⋯` with long menus and scroll, dark mode, Spotify sheet
 fallback, and native/no-redesign mode. Compare iOS 18 screenshots against
-Telegram and iOS 26. Confirm actions still reach Spotify.
+iOS 26 reference measurements. Confirm actions still reach Spotify.

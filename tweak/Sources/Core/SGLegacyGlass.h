@@ -1,6 +1,6 @@
 // The pre-iOS 26 stand-in for UIGlassEffect: a CABackdropLayer, blurred and saturated, displaced by a
 // mesh so its edges refract the way real glass does. Geometry and filter values are ported from
-// Telegram-iOS's GlassBackgroundComponent and MeshTransform (GPLv2); no Telegram code is kept verbatim.
+// third-party GPLv2 glass and mesh references; the implementation is original.
 //
 // CABackdropLayer and CAMutableMeshTransform are private API Apple can remove at any point, so the
 // whole thing sits behind SGLegacyGlassAvailable() and the "legacy glass" switch (SGKeyLegacyGlass),
@@ -29,7 +29,7 @@ BOOL SGLegacyGlassAvailable(void);
 @property (nonatomic) CGFloat blurRadius;
 
 // Whether the pane wears the glass as it first was: YES for a big pane (a shorter side of 100 pt and more: the queue, the
-// sheets, the menus, the dialogs), with Telegram's lens, bent hard over a thin band at the edge, and its diagonal glare.
+// sheets, the menus, the dialogs), with the classic lens, bent hard over a thin band at the edge, and its diagonal glare.
 // The measured lens of the small controls spreads over a wide band with a faint rim, which on a sheet read as a blur.
 @property (nonatomic, readonly) BOOL classic;
 

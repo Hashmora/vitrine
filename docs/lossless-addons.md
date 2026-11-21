@@ -13,7 +13,7 @@ The [audio prototype](lossless-prototype.md) does not yet connect to any of thes
 | Candidate | Evidence | Implication |
 | --- | --- | --- |
 | [Plex/Jellyfin addon](https://github.com/rairulyle/bitchord-selfhosted-addon) | Inspected source at `2a20c3ac76327f56a4189df66c79292462e154f3`: manifest/search/stream endpoints and original-file proxy with range forwarding | Best first controlled integration target when a test library is available; each configured server is a separate source |
-| [Telegram Music Addon](https://github.com/Imnotshashwat/Telegram-Music-Addon) | Inspected source at `cb336d2cce2b77676a450f11587edf42985cc17a`: JSON endpoints, ISRC resolution and range-aware audio route | Second candidate; requires the user's own channel and hosted server. WebDAV support does not require Vitrine to implement WebDAV |
+| Channel-backed music addon | Inspected source at `cb336d2cce2b77676a450f11587edf42985cc17a`: JSON endpoints, ISRC resolution and range-aware audio route | Second candidate; requires the user's own channel and hosted server. WebDAV support does not require Vitrine to implement WebDAV |
 | Deezer addon | User supplied `https://deezer.nom.deno.net/` and an announcement describing an account/free-pool requirement; the browser tool could not access the page | Current authentication, returned formats, availability and Vitrine access remain unverified |
 | Unified addon | User supplied several setup URLs and announcements about Tidal account/pool requirements, CJK matching fixes, Atmos and client-version restrictions; the browser tool could not inspect the pages | Do not infer the current host, access requirements, matching quality or third-party-client eligibility from old announcements |
 | NullBeat | User supplied an announcement naming paid TorBox access, 5 requests/minute and 60 TorBox caches/hour | Treat these as announced limits for this provider, not verified current limits or global addon defaults; operator permission for BitChord does not establish permission for Vitrine |
@@ -39,8 +39,7 @@ are handled server-side; the source URL itself grants access and must be treated
 Its search/stream handlers serve the original file rather than negotiating a lower-quality transcode.
 The reviewed mapper does not return ISRC, so strict metadata matching is still needed.
 
-Telegram's pinned
-[server](https://github.com/Imnotshashwat/Telegram-Music-Addon/blob/cb336d2cce2b77676a450f11587edf42985cc17a/index.js)
+The inspected channel-backed addon server (commit `cb336d2cce2b77676a450f11587edf42985cc17a`)
 declares `search`, `stream`, `isrc`; search rows include direct `streamURL` values. It implements
 `/resolve-isrc?isrc=…`, `/stream/{id}` and `/audio/{id}`. The audio handler parses byte ranges and emits
 206/416; HEAD is handled too. Secret-prefix authentication is supported, but the server also permits
@@ -76,7 +75,7 @@ after an ISRC lookup; do not inherit a provider's certainty without checking the
 4. **Enforce ceilings locally.** Original-file providers may ignore a requested lower tier. Reject
    above-ceiling candidates before full buffering and retain Spotify. For the initial lossless-only
    upgrade, a cellular lossy ceiling can simply suppress external preparation. `atmos: "auto"` is a
-   provider default in Telegram's manifest: explicitly request stereo where supported, then validate
+   provider default in the channel-backed addon's manifest: explicitly request stereo where supported, then validate
    the response. Atmos availability does not establish lossless audio.
 5. **Test seeking against the served bytes.** Add fixtures for path-secret prefixes, direct search
    URLs, exact/missing ISRC, absent `encrypted`, unknown rate/depth, ignored quality/Atmos preferences,

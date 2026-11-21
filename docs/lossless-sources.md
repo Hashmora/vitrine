@@ -7,7 +7,7 @@ Keep separate Wi-Fi and cellular quality ceilings. The user's direction is to av
 JavaScript in the app; use HTTP/JSON sources.
 
 The [HTTP addon compatibility follow-up](lossless-addons.md) covers the user-supplied Plex/Jellyfin,
-Telegram, Deezer, Unified and NullBeat candidates, Eclipse's optional ISRC contract, secret-bearing setup
+a channel-backed addon, Deezer, Unified and NullBeat candidates, Eclipse's optional ISRC contract, secret-bearing setup
 links, per-provider quotas and client-access restrictions. Read it alongside this design.
 The [Vitrine playback investigation](lossless-playback.md) adds binary evidence, the exact pre-Sing
 integration point and measured native decoder limits. Its [harness](../harness/lossless/README.md)
@@ -83,7 +83,7 @@ The following is a proposed Vitrine subset, not a claim of complete BitChord com
 | `GET /manifest.json` | Require a nonempty `id`; read name, version, resources, settings defaults/options and policy switches. Preserve any base-path prefix. Reject a module index with an explanation; never follow its JavaScript downloads. |
 | `GET /search?q=…&quality=…` | Read `tracks` with provider IDs, title, artist, album, duration in seconds and format hints. Ignore unknown fields. Validate types, sizes and finite positive durations. |
 | `GET /stream/{encoded-id}?quality=…` | Read `url`, codec, container, manifest transport, encryption and audio-format hints. A `404` is a miss; an empty URL or JSON error is not playable. |
-| `GET /resolve-isrc?isrc=…` (optional) | For a source declaring `isrc`, accept `trackId` or `id`, then resolve and validate the media; 404/null means no match. This is an Eclipse extension also implemented by the inspected Telegram addon. |
+| `GET /resolve-isrc?isrc=…` (optional) | For a source declaring `isrc`, accept `trackId` or `id`, then resolve and validate the media; 404/null means no match. This is an Eclipse extension also implemented by the inspected channel-backed addon. |
 
 Quality tiers are `LOSSLESS`, `HIGH`, `LOW`, mapped to a manifest's declared option values when present.
 Search rows can carry `streamURL`, allowing resolution to skip `/stream`. Support that optimization only

@@ -21,7 +21,7 @@ BOOL SGLegacyGlassAvailable(void) {
 
 #pragma mark - backdrop layer and its filters
 
-// Saturation and contrast boost under the blur, as Telegram does, so the backdrop is not just a flat blur.
+// Saturation and contrast boost under the blur, as in the reference rendering, so the backdrop is not just a flat blur.
 static id SGSaturationFilter(void) {
     static const float matrix[20] = {
         2.6705f, -1.1087999f, -0.1117f, 0.0f, 0.049999997f,
@@ -105,7 +105,7 @@ static id SGMakeMeshTransform(SGMeshVertex *vertices, NSUInteger vertexCount, SG
     return transform;
 }
 
-#pragma mark - displacement field (after Telegram's GenerateMesh.swift, with the lens of adaptive_liquid_glass)
+#pragma mark - displacement field (classic mesh reference, with the lens of adaptive_liquid_glass)
 
 // How the system's glass bends what is behind it, as adaptive_liquid_glass measured it against SwiftUI's own
 // `.glassEffect` (github.com/AymanOmara/adaptive_liquid_glass, MIT; shaders/liquid_glass.frag, "Lens v3", and
@@ -121,7 +121,7 @@ static CGFloat SGLensProfile(CGFloat depth, CGFloat band) {
     return MAX(0, exp(-MAX(0, depth) / decay) - cut) / (1 - cut);
 }
 
-// The classic lens, for the big panes (kClassicMinSide, SGLegacyGlassView.classic): the glass as it first was, ported from Telegram's
+// The classic lens, for the big panes (kClassicMinSide, SGLegacyGlassView.classic): the glass as it first was, based on the classic mesh profile from
 // GenerateMesh.swift, whose bend eases in over a thin band at the edge and is pushed harder still in the strip at the rim.
 // On a sheet the measured lens spread over a wide band and its rim light was faint, so a sheet read as a plain blur.
 static const CGFloat kBezierX1 = 0.816137566137566, kBezierY1 = 0.20502645502645533;
@@ -171,7 +171,7 @@ static CGFloat SGRoundedRectSDF(CGFloat x, CGFloat y, CGFloat width, CGFloat hei
 }
 
 // What a vertex samples from, relative to where it sits: inwards along the rim's normal, by the lens profile of its
-// depth, as a share of the rim's shift; the classic lens by Telegram's eased curve of its share of the band.
+// depth, as a share of the rim's shift; the classic lens by the classic eased curve of its share of the band.
 static void SGDisplacement(CGFloat x, CGFloat y, CGFloat width, CGFloat height, CGFloat radius, CGFloat edgeDistance,
                            BOOL classic, CGFloat *outDx, CGFloat *outDy, CGFloat *outSdf) {
     CGFloat nx, ny;
@@ -215,7 +215,7 @@ static uint32_t SGAddVertex(SGMeshTemplate *t, SGMeshSpec spec, CGFloat baseX, C
     SGDisplacement(baseX + scaleX * spec.refW, baseY + scaleY * spec.refH, spec.refW, spec.refH, spec.radius, spec.edgeDistance,
                    spec.classic, &dx, &dy, &sdf);
     // The measured lens is steep enough at the rim on its own: no boost within the outer strip, which is kept for the
-    // vertices it puts where the lens changes fastest. The classic one has Telegram's smoothstep boost there.
+    // vertices it puts where the lens changes fastest. The classic one has the classic smoothstep boost there.
     CGFloat boost = 1.0;
     if (spec.classic && spec.outerEdgeDistance > 0) {
         CGFloat s = MAX(0.0, MIN(1.0, (spec.outerEdgeDistance + sdf) / spec.outerEdgeDistance));

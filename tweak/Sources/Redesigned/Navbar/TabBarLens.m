@@ -204,7 +204,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     [_rimOverlay addSublayer:_glare];
     [_rimOverlay addSublayer:_longSpecular];
     // The press feedback follows the touch's highlighted state, as in
-    // Telegram's GlassBarButtonComponent. Unlike its non-glass button scale,
+    // the glass bar button reference. Unlike its non-glass button scale,
     // this is a local luminance cue: the tab bar already animates its scale.
     _fingerHighlight = [CAGradientLayer layer];
     _fingerHighlight.name = @"Vitrine.LegacyLensFingerHighlight";

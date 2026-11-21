@@ -526,7 +526,7 @@ Redesigned:
                   apart from the native look's). The playlist, album and artist pages take their field's color from the
                   cover's main color (checked on the Mac by harness/palette/), and come in whole: a black veil over the
                   page until the cover has been read, at most SGRFieldHoldLimit (1 s), then faded away (SGRField.h)
-                  Below iOS 26 every UIAlertController (alert or action sheet) comes up as Telegram's alert, a glass
+                  Below iOS 26 every UIAlertController (alert or action sheet) comes up as the redesigned alert, a glass
                   card with 35pt corners and capsule buttons (SGRAlertScreen.m, swapped in at presentViewController by
                   SGRAlertHook.x); the system's alert is never shown, its handlers and text fields are used as they are.
                   The page behind it is only dimmed a little (kScrimAlert, kScrimSheet), never blurred

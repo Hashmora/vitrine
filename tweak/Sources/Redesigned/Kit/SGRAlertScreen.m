@@ -3,7 +3,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 
-// Telegram's AlertComponent, point for point.
+// the custom glass alert metrics.
 static const CGFloat kAlertWidth = 300;
 static const CGFloat kAlertRadius = 35;
 static const CGFloat kContentTop = 22;
@@ -44,7 +44,7 @@ static SGRAlertHandler handlerOf(UIAlertAction *action) {
 }
 
 static UIColor *destructiveRed(void) {
-    return [UIColor colorWithRed:1.0 green:0x67 / 255.0 blue:0x67 / 255.0 alpha:1];   // Telegram's night itemDestructiveColor
+    return [UIColor colorWithRed:1.0 green:0x67 / 255.0 blue:0x67 / 255.0 alpha:1];   // dark-mode destructive item color
 }
 
 #pragma mark - a button
@@ -118,7 +118,7 @@ static UIColor *destructiveRed(void) {
     return ceil([self.label.text ?: @"" sizeWithAttributes:@{NSFontAttributeName: self.label.font}].width) + 32;
 }
 
-// Telegram dims the fill, not the title: a pressed button to 35%, a disabled one to 20%.
+// The custom alert dims the fill, not the title: a pressed button to 35%, a disabled one to 20%.
 - (void)refresh {
     self.fill.alpha = self.actionEnabled ? (self.highlighted ? 0.35 : 1.0) : 0.2;
     self.label.alpha = self.actionEnabled ? 1.0 : 0.4;
@@ -349,7 +349,7 @@ static UILabel *textLabel(NSString *text, UIFont *font) {
     [self buildButtons];
     for (SGRAlertButton *button in _buttons) [_panel addSubview:button];
 
-    // Press, slide and lift: a button lights while the finger is on it and fires when it lifts there, as Telegram's
+    // Press, slide and lift: a button lights while the finger is on it and fires when it lifts there, as a standard press-and-drag control
     // does. Begins only over a button, so the text fields and the scrolling text keep their own touches.
     UILongPressGestureRecognizer *press = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(pressed:)];
     press.minimumPressDuration = 0;

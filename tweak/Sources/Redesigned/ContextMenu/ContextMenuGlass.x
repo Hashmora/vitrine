@@ -11,7 +11,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "Redesigned/ContextMenu/ContextMenu.h"
-#import "Redesigned/ContextMenu/SGRTelegramDropdown.h"
+#import "Redesigned/ContextMenu/SGRDropdown.h"
 
 // The corners UIKit cuts a menu with. Rounder ones, as iOS 26's menus have, were tried (24 pt): UIKit's own shape under
 // the platter (its shadow and cut-out) kept its 14 pt corners, and the glass's rim light ran round the rounder ones over
@@ -57,8 +57,8 @@ static void glassMenu(UIView *list) {
     if (!platter || platter.bounds.size.width < 1 || platter.bounds.size.height < 1) return;
     if (list.overrideUserInterfaceStyle != UIUserInterfaceStyleDark) list.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
 
-    BOOL telegramDropdown = SGRTelegramDropdownShouldStyle(list, SGRDropdownMenuIsOpenedFromButton());
-    CGFloat radius = telegramDropdown ? MIN(30.0, platter.bounds.size.height * 0.5) : kMenuRadius;
+    BOOL styledDropdown = SGRDropdownShouldStyle(list, SGRDropdownMenuIsOpenedFromButton());
+    CGFloat radius = styledDropdown ? MIN(30.0, platter.bounds.size.height * 0.5) : kMenuRadius;
     UIView *glass = menuGlass(platter, &kMenuGlassKey, SGRMenuDim, radius);
 
     // UIKit's own blur goes; the pane above is the mod's, which is a UIVisualEffectView too when it is not
@@ -67,9 +67,9 @@ static void glassMenu(UIView *list) {
         if (sub != glass && [sub isKindOfClass:UIVisualEffectView.class] && !sub.hidden) sub.hidden = YES;
     }
 
-    if (telegramDropdown) {
-        SGRTelegramDressDropdown(list, platter, glass);
-        SGRTelegramDropdownMatchReferenceGeometry(list);
+    if (styledDropdown) {
+        SGRDropdownDress(list, platter, glass);
+        SGRDropdownMatchReferenceGeometry(list);
         // The reference pass can grow the panel. Refit the pane here, without
         // asking UIKit for an unmeasured or unrelated cell configuration.
         if (!CGRectEqualToRect(glass.frame, platter.bounds)) glass.frame = platter.bounds;
@@ -102,7 +102,7 @@ static void bubbleMenu(UIView *list) {
     // opening midway through. Until the dedicated iOS-26 morph is measured,
     // button dropdowns use *only* UIKit's opening transition. Context menus
     // that are not part of the dropdown port retain their previous motion.
-    if (SGRTelegramDropdownShouldStyle(list, SGRDropdownMenuIsOpenedFromButton())) return;
+    if (SGRDropdownShouldStyle(list, SGRDropdownMenuIsOpenedFromButton())) return;
     SGRGlassBubbleOpen(list, kMenuRadius);
 }
 
@@ -123,7 +123,7 @@ static void bubbleMenu(UIView *list) {
 }
 %end
 
-// Telegram's movable highlight follows UIKit's real highlighted cells.
+// The movable highlight follows UIKit's real highlighted cells.
 // We do not create gesture recognizers that could intercept a menu action.
 // One global entry for all UIKit button dropdowns, not a list of Spotify pages.
 // A menu opened from a UIControl is tagged at first presentation. A long press
@@ -131,7 +131,7 @@ static void bubbleMenu(UIView *list) {
 %hook UIControl
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
     BOOL accepted = %orig;
-    if (accepted) SGRTelegramDropdownControlTouched((UIControl *)self);
+    if (accepted) SGRDropdownControlTouched((UIControl *)self);
     return accepted;
 }
 %end
@@ -141,7 +141,7 @@ static void bubbleMenu(UIView *list) {
 %hook _UIContextMenuCellContentView
 - (void)layoutSubviews {
     %orig;
-    SGRTelegramDropdownContentLaidOut((UIView *)self);
+    SGRDropdownContentLaidOut((UIView *)self);
 }
 %end
 
@@ -151,7 +151,7 @@ static void bubbleMenu(UIView *list) {
 %hook UICollectionView
 - (NSIndexPath *)indexPathForItemAtPoint:(CGPoint)point {
     NSIndexPath *matching = nil;
-    if (SGRTelegramDropdownReferenceHit((UICollectionView *)self, point, &matching)) return matching;
+    if (SGRDropdownReferenceHit((UICollectionView *)self, point, &matching)) return matching;
     return %orig;
 }
 %end
@@ -159,11 +159,11 @@ static void bubbleMenu(UIView *list) {
 %hook UICollectionViewCell
 - (void)setHighlighted:(BOOL)highlighted {
     %orig;
-    SGRTelegramDropdownCellHighlightChanged((UICollectionViewCell *)self);
+    SGRDropdownCellHighlightChanged((UICollectionViewCell *)self);
 }
 - (void)layoutSubviews {
     %orig;
-    SGRTelegramDropdownCellLaidOut((UICollectionViewCell *)self);
+    SGRDropdownCellLaidOut((UICollectionViewCell *)self);
 }
 %end
 
@@ -238,7 +238,7 @@ static void hideUnder(UIView *menuView) {
 %hook _UIContextMenuSubmenuTitleView
 - (void)layoutSubviews {
     %orig;
-    SGRTelegramDropdownSubmenuHeaderLaidOut((UIView *)self);
+    SGRDropdownSubmenuHeaderLaidOut((UIView *)self);
 }
 %end
 
@@ -251,7 +251,7 @@ static void hideUnder(UIView *menuView) {
     // hideUnder path removed it completely, unlike iOS 26 (parent actions
     // remain visible at 50% behind the submenu). Other menus retain their
     // preexisting UIKit presentation until we can measure them.
-    if (SGRTelegramDropdownMatchSubmenuGeometry((UIView *)self))
+    if (SGRDropdownMatchSubmenuGeometry((UIView *)self))
         glassLists((UIView *)self); // refit glass to the final enlarged submenu platter
     else
         hideUnder((UIView *)self);

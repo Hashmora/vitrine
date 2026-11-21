@@ -1,5 +1,5 @@
 // Redesign, iOS < 26: every UIAlertController the app presents (an alert or an action sheet, the mod's own and
-// Spotify's) comes up as SGRAlertScreen, Telegram's alert: a glass card with 35pt corners and capsule buttons,
+// Spotify's) comes up as SGRAlertScreen, the custom alert: a glass card with 35pt corners and capsule buttons,
 // instead of the system's grey one.
 //
 // The swap is made where the alert is presented, so no call site changes: the controller the caller built is

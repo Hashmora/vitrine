@@ -96,7 +96,7 @@ static void updateBottomFade(UIView *stockBar) {
         [parent insertSubview:fade belowSubview:stockBar];
 }
 
-// Telegram's TabSelectionRecognizer: Began the instant a finger lands (no distance or duration threshold), Changed on
+// The tab selection gesture: Began the instant a finger lands (no distance or duration threshold), Changed on
 // every move after, so the bubble follows the finger from the first frame.
 @interface SGRLegacyTabDragRecognizer : UIGestureRecognizer
 @property (nonatomic) CGPoint currentLocation;

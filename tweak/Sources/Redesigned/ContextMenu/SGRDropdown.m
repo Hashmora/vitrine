@@ -1,31 +1,29 @@
-// One shared Telegram-inspired dropdown renderer for button-originated UIKit menus.
-// Telegram's ContextControllerActionsStackNode is not a UIKit system controller:
+// Shared dropdown renderer for button-originated UIKit menus.
 // UIKit owns action dispatch and submenu navigation; this module owns the visual
 // panel, row backgrounds and interactive highlight for every matching UIMenu.
-// No Telegram Swift/AsyncDisplayKit sources or proprietary APIs are embedded.
+// No third-party UI sources are embedded.
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
-#import "SGRTelegramDropdown.h"
+#import "SGRDropdown.h"
+#import "Redesigned/ContextMenu/ContextMenu.h"
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 
-static const CGFloat kTGPanelRadius = 30.0;
-static const CGFloat kTGActionInset = 10.0;
-static const CGFloat kTGHighlightRadius = 20.0;
-// Stage 142 used Telegram's .85 *opaque legacy image* as an additional
-// alpha film over Vitrine's already blurred and darkened panel. That stacks
-// the opacities and produces a nearly black panel. The alpha here is for our
-// *separate* tint layer, not for Telegram's precomposited image.
-static const CGFloat kTGGlassOverlayAlpha = 0.56;
-static const NSTimeInterval kTGHighlightDuration = 0.16;
-static char kTGHighlightKey, kTGStyledKey, kTGMenuRootKey, kTGSeparatorLineKey, kTGReferenceSizedKey;
+static const CGFloat kDropdownPanelRadius = 30.0;
+static const CGFloat kDropdownActionInset = 10.0;
+static const CGFloat kDropdownHighlightRadius = 20.0;
+// An 0.85 alpha film over the already darkened glass over-darkened the panel.
+// This alpha controls a separate tint layer, not the final panel opacity.
+static const CGFloat kDropdownGlassOverlayAlpha = 0.56;
+static const NSTimeInterval kDropdownHighlightDuration = 0.16;
+static char kDropdownHighlightKey, kDropdownStyledKey, kDropdownMenuRootKey, kDropdownSeparatorLineKey, kDropdownReferenceSizedKey;
 static CFTimeInterval sg_lastMenuButtonAt;
 static __weak UIWindow *sg_lastMenuButtonWindow;
 
 // A direct touch on a UIKit control is the common entry point for UIButton.menu,
 // UIBarButtonItem.menu and Spotify's own wrapped buttons. It is deliberately not
 // triggered by a long press on a song/album card.
-void SGRTelegramDropdownControlTouched(UIControl *control) {
+void SGRDropdownControlTouched(UIControl *control) {
     if (!control.window || !SGRedesignedUI() || !SGBelowiOS26()) return;
     sg_lastMenuButtonAt = CACurrentMediaTime();
     sg_lastMenuButtonWindow = control.window;
@@ -44,15 +42,15 @@ static UIView *menuRoot(UIView *list) {
 // Mark the actual menu, not a transient global "Vitrine menu open" flag.
 // Once marked, all of its nested More/submenu lists remain styled even after
 // the original button's touch and the source sheet have finished.
-BOOL SGRTelegramDropdownShouldStyle(UIView *list, BOOL vitrineButtonMenu) {
+BOOL SGRDropdownShouldStyle(UIView *list, BOOL vitrineButtonMenu) {
     UIView *root = menuRoot(list);
     if (!root || !list.window) return NO;
-    if ([objc_getAssociatedObject(root, &kTGMenuRootKey) boolValue]) return YES;
+    if ([objc_getAssociatedObject(root, &kDropdownMenuRootKey) boolValue]) return YES;
     BOOL recent = sg_lastMenuButtonWindow && CACurrentMediaTime() - sg_lastMenuButtonAt < 1.5;
     if (recent && sg_lastMenuButtonWindow.windowScene && list.window.windowScene &&
         sg_lastMenuButtonWindow.windowScene != list.window.windowScene) recent = NO;
     if (!vitrineButtonMenu && !recent) return NO;
-    objc_setAssociatedObject(root, &kTGMenuRootKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(root, &kDropdownMenuRootKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return YES;
 }
 
@@ -68,16 +66,16 @@ static UICollectionView *menuCollection(UIView *platter) {
 // the collection, which has its own opaque backgrounds on iOS 18, and could be
 // covered by the stock menu even when the selection frame was correct.
 static UIView *highlightFor(UICollectionView *collection) {
-    UIView *highlight = objc_getAssociatedObject(collection, &kTGHighlightKey);
+    UIView *highlight = objc_getAssociatedObject(collection, &kDropdownHighlightKey);
     if (!highlight) {
         highlight = [UIView new];
-        highlight.accessibilityIdentifier = @"Vitrine.TelegramDropdown.Selection";
+        highlight.accessibilityIdentifier = @"Vitrine.Dropdown.Selection";
         highlight.userInteractionEnabled = NO;
         highlight.accessibilityElementsHidden = YES;
         highlight.backgroundColor = [UIColor colorWithWhite:1 alpha:0.10];
         highlight.layer.cornerCurve = kCACornerCurveContinuous;
         highlight.alpha = 0;
-        objc_setAssociatedObject(collection, &kTGHighlightKey, highlight, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(collection, &kDropdownHighlightKey, highlight, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (highlight.superview != collection) [collection insertSubview:highlight atIndex:0];
     else if (collection.subviews.firstObject != highlight) [collection sendSubviewToBack:highlight];
@@ -106,13 +104,13 @@ static void updateHighlight(UICollectionView *collection, BOOL animate) {
             const CGFloat tileInset = 6.0;
             target = CGRectInset(frame, tileInset, tileInset);
         } else {
-            target = CGRectMake(kTGActionInset, frame.origin.y,
-                                MAX(0, collection.bounds.size.width - 2 * kTGActionInset), frame.size.height);
+            target = CGRectMake(kDropdownActionInset, frame.origin.y,
+                                MAX(0, collection.bounds.size.width - 2 * kDropdownActionInset), frame.size.height);
         }
     }
     BOOL shown = !CGRectIsEmpty(target);
     if (shown) {
-        highlight.layer.cornerRadius = MIN(kTGHighlightRadius, target.size.height * 0.5);
+        highlight.layer.cornerRadius = MIN(kDropdownHighlightRadius, target.size.height * 0.5);
         if (!animate || CGRectIsEmpty(highlight.frame) || highlight.alpha < 0.01) highlight.frame = target;
     }
     void (^apply)(void) = ^{
@@ -120,7 +118,7 @@ static void updateHighlight(UICollectionView *collection, BOOL animate) {
         highlight.alpha = shown ? 1 : 0;
     };
     if (animate && (shown || highlight.alpha > 0.01)) {
-        [UIView animateWithDuration:kTGHighlightDuration delay:0
+        [UIView animateWithDuration:kDropdownHighlightDuration delay:0
                             options:UIViewAnimationOptionBeginFromCurrentState |
                                     UIViewAnimationOptionAllowUserInteraction
                          animations:apply completion:nil];
@@ -171,7 +169,7 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
     if (!labels.count) return;
     UIView *parent = cell.superview;
     while (parent && ![parent isKindOfClass:UICollectionView.class]) parent = parent.superview;
-    BOOL referenceMenu = [objc_getAssociatedObject(parent, &kTGReferenceSizedKey) boolValue];
+    BOOL referenceMenu = [objc_getAssociatedObject(parent, &kDropdownReferenceSizedKey) boolValue];
 
     if (cell.bounds.size.width < 130) {
         // iOS 26: 78pt tiles with 74pt captions. The older UIKit reserves
@@ -272,19 +270,19 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
 
 // The cell's own layout hook runs before UIKit lays out its inner content
 // view. Apply the stable translations again AFTER that inner layout too.
-void SGRTelegramDropdownContentLaidOut(UIView *content) {
+void SGRDropdownContentLaidOut(UIView *content) {
     if (!content.window || ![NSStringFromClass(content.class) isEqualToString:@"_UIContextMenuCellContentView"]) return;
     UICollectionViewCell *cell = (UICollectionViewCell *)content.superview;
     if (![cell isKindOfClass:UICollectionViewCell.class]) return;
     UIView *list = nil;
     for (UIView *view = cell; view && ![view isKindOfClass:UIWindow.class]; view = view.superview)
         if ([NSStringFromClass(view.class) isEqualToString:@"_UIContextMenuListView"]) { list = view; break; }
-    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kTGMenuRootKey) boolValue]) return;
+    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kDropdownMenuRootKey) boolValue]) return;
     matchDropdownRowContent(cell);
 }
 
 // UIKit rows remain the interactive views with the real UIMenu actions. Make
-// the stock grey/opaque row backgrounds transparent so the shared Telegram
+// the stock grey/opaque row backgrounds transparent so the shared dropdown
 // panel and its inset highlight are what is actually visible.
 static void styleCell(UICollectionViewCell *cell) {
     if (!cell) return;
@@ -311,7 +309,7 @@ static void styleCell(UICollectionViewCell *cell) {
     matchDropdownRowContent(cell);
 }
 
-void SGRTelegramDropdownCellLaidOut(UICollectionViewCell *cell) {
+void SGRDropdownCellLaidOut(UICollectionViewCell *cell) {
     if (!cell.window) return;
     UIView *list = nil;
     for (UIView *view = cell; view && ![view isKindOfClass:UIWindow.class]; view = view.superview) {
@@ -320,11 +318,11 @@ void SGRTelegramDropdownCellLaidOut(UICollectionViewCell *cell) {
             break;
         }
     }
-    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kTGMenuRootKey) boolValue]) return;
+    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kDropdownMenuRootKey) boolValue]) return;
     styleCell(cell);
 }
 
-// Telegram's ContextControllerActionsListSeparatorItemNode: an 18 pt
+// A separator with an 18 pt
 // inset hairline centered in the existing UIKit spacer. Do not change
 // reusable-view sizes: UIKit owns hit areas and the menu's content height.
 static void styleSeparator(UIView *separator) {
@@ -336,14 +334,14 @@ static void styleSeparator(UIView *separator) {
     for (UIView *sub in separator.subviews) {
         if ([sub isKindOfClass:UIVisualEffectView.class]) sub.hidden = YES;
     }
-    UIView *line = objc_getAssociatedObject(separator, &kTGSeparatorLineKey);
+    UIView *line = objc_getAssociatedObject(separator, &kDropdownSeparatorLineKey);
     if (!line) {
         line = [UIView new];
         line.userInteractionEnabled = NO;
         line.accessibilityElementsHidden = YES;
         line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
-        line.accessibilityIdentifier = @"Vitrine.TelegramDropdown.Separator";
-        objc_setAssociatedObject(separator, &kTGSeparatorLineKey, line, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        line.accessibilityIdentifier = @"Vitrine.Dropdown.Separator";
+        objc_setAssociatedObject(separator, &kDropdownSeparatorLineKey, line, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (line.superview != separator) [separator addSubview:line];
     CGFloat pixel = 1.0 / MAX(1.0, UIScreen.mainScreen.scale);
@@ -352,16 +350,16 @@ static void styleSeparator(UIView *separator) {
     if (!CGRectEqualToRect(line.frame, frame)) line.frame = frame;
 }
 
-void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
+void SGRDropdownDress(UIView *list, UIView *platter, UIView *glass) {
     if (!list || !platter || !glass || !platter.window) return;
-    CGFloat radius = MIN(kTGPanelRadius, platter.bounds.size.height * 0.5);
+    CGFloat radius = MIN(kDropdownPanelRadius, platter.bounds.size.height * 0.5);
     platter.layer.cornerRadius = radius;
     platter.layer.cornerCurve = kCACornerCurveContinuous;
     platter.clipsToBounds = YES;
     if (glass.layer.cornerRadius != radius) SGShapeGlass(glass, radius, NO);
 
     // UIKit 18 keeps a 14pt cut-out/shadow outside the actual platter. With
-    // our 30pt Telegram silhouette the old cut-out shows as white, pointed
+    // our 30pt rounded silhouette the old cut-out shows as white, pointed
     // corners around a dark, rounded panel. Mask the *whole list* and remove
     // only that legacy cut-out, not the real content or our specular border.
     if (list.layer.cornerRadius != radius) list.layer.cornerRadius = radius;
@@ -372,17 +370,17 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
             child.hidden = YES;
     }
 
-    // Telegram renders a precomposited legacy panel with #1C1C1C @ .85.
+    // Use a translucent dark-grey fill over the existing glass.
     // Here the CABackdropLayer and an independent body already contribute
     // opacity, so an additional .85 tint makes the final composite too black.
     // Keep the same charcoal hue but lower only this OVERLAY's exposure.
-    SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0.11 alpha:kTGGlassOverlayAlpha]);
+    SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0.11 alpha:kDropdownGlassOverlayAlpha]);
 
     UICollectionView *collection = menuCollection(platter);
     if (collection) {
         collection.backgroundColor = UIColor.clearColor;
         collection.opaque = NO;
-        // Telegram's actions scroll view never shows a system scrollbar. The
+        // Dropdown action lists should not show a system scrollbar. The
         // native UICollectionView may still scroll when a menu is genuinely
         // taller than the viewport; suppress only its indicators, not scrolling.
         if (collection.showsVerticalScrollIndicator) collection.showsVerticalScrollIndicator = NO;
@@ -395,9 +393,9 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
         });
         updateHighlight(collection, NO);
     }
-    if (![objc_getAssociatedObject(platter, &kTGStyledKey) boolValue]) {
-        objc_setAssociatedObject(platter, &kTGStyledKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        SGLog(@"dropdown: shared Telegram panel for UIKit button menu %@", NSStringFromCGRect(platter.bounds));
+    if (![objc_getAssociatedObject(platter, &kDropdownStyledKey) boolValue]) {
+        objc_setAssociatedObject(platter, &kDropdownStyledKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        SGLog(@"dropdown: shared dropdown panel for UIKit button menu %@", NSStringFromCGRect(platter.bounds));
     }
 }
 
@@ -407,8 +405,8 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
 // inferred from an image. We adjust the real UIKit cells and their hit map,
 // rather than stretch just the dark material or draw an inert duplicate menu.
 // Other UIMenu shapes retain native heights until independently measured.
-static char kTGReferenceBusyKey, kTGRefLine1Key, kTGRefLine2Key;
-static char kTGMoreBusyKey, kTGMoreSizedKey, kTGMoreLinesKey, kTGMoreHeaderLineKey;
+static char kDropdownReferenceBusyKey, kDropdownRefLine1Key, kDropdownRefLine2Key;
+static char kDropdownMoreBusyKey, kDropdownMoreSizedKey, kDropdownMoreLinesKey, kDropdownMoreHeaderLineKey;
 
 static NSUInteger menuItemCount(UICollectionView *collection) {
     NSUInteger count = 0;
@@ -548,11 +546,11 @@ static void dressMoreHeader(UIView *header) {
     }
 }
 
-void SGRTelegramDropdownSubmenuHeaderLaidOut(UIView *header) {
+void SGRDropdownSubmenuHeaderLaidOut(UIView *header) {
     if (!header.window || !SGBelowiOS26()) return;
     UIView *list = header.superview;
     while (list && ![NSStringFromClass(list.class) isEqualToString:@"_UIContextMenuListView"]) list = list.superview;
-    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kTGMenuRootKey) boolValue]) return;
+    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kDropdownMenuRootKey) boolValue]) return;
     // A title inside a menu with no separate secondary list is not More.
     UIView *menu = list.superview;
     if (submenuLists(menu).count < 2) return;
@@ -560,10 +558,10 @@ void SGRTelegramDropdownSubmenuHeaderLaidOut(UIView *header) {
 }
 
 static void moreRowLines(UICollectionView *collection, NSArray<UICollectionViewCell *> *cells) {
-    NSMutableArray<UIView *> *lines = objc_getAssociatedObject(collection, &kTGMoreLinesKey);
+    NSMutableArray<UIView *> *lines = objc_getAssociatedObject(collection, &kDropdownMoreLinesKey);
     if (!lines) {
         lines = [NSMutableArray array];
-        objc_setAssociatedObject(collection, &kTGMoreLinesKey, lines, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(collection, &kDropdownMoreLinesKey, lines, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     CGFloat pixel = 1.0 / MAX(1.0, collection.window.screen.scale);
     // The native iOS 18 separators still sit at the old 43.67pt rhythm.
@@ -593,18 +591,18 @@ static void moreRowLines(UICollectionView *collection, NSArray<UICollectionViewC
 
 // Returns YES for a dropdown submenu handled by this adapter. This means
 // the older hideUnder() animation must not run on the same two lists.
-BOOL SGRTelegramDropdownMatchSubmenuGeometry(UIView *menu) {
+BOOL SGRDropdownMatchSubmenuGeometry(UIView *menu) {
     if (!menu.window || ![NSStringFromClass(menu.class) isEqualToString:@"_UIContextMenuView"]) return NO;
     NSArray<UIView *> *lists = submenuLists(menu);
     if (lists.count < 2) return NO;
     UIView *under = lists.firstObject;
-    if (!SGRTelegramDropdownShouldStyle(under, SGRDropdownMenuIsOpenedFromButton())) return NO;
+    if (!SGRDropdownShouldStyle(under, SGRDropdownMenuIsOpenedFromButton())) return NO;
     UIView *front = lists.lastObject;
     UIView *platter = submenuPlatter(front);
     UICollectionView *collection = platter ? menuCollection(platter) : nil;
     if (!collection || menuItemCount(collection) == 0) return YES;
-    if ([objc_getAssociatedObject(menu, &kTGMoreBusyKey) boolValue]) return YES;
-    objc_setAssociatedObject(menu, &kTGMoreBusyKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if ([objc_getAssociatedObject(menu, &kDropdownMoreBusyKey) boolValue]) return YES;
+    objc_setAssociatedObject(menu, &kDropdownMoreBusyKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     // Keep the already-laid-out parent where it opened. The iOS 26 tree has
     // list alpha=1, but its *collection of actions* is dimmed to 0.5.
@@ -665,18 +663,18 @@ BOOL SGRTelegramDropdownMatchSubmenuGeometry(UIView *menu) {
             y += rowHeight;
         }
         // The real cells remain the hit-test targets, not visual copies.
-        objc_setAssociatedObject(collection, &kTGReferenceSizedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(collection, &kDropdownReferenceSizedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         if (collection.contentSize.height < y)
             collection.contentSize = CGSizeMake(collection.contentSize.width, y);
         moreRowLines(collection, cells);
-        referenceLine(collection, &kTGMoreHeaderLineKey, 62);
+        referenceLine(collection, &kDropdownMoreHeaderLineKey, 62);
     }
-    objc_setAssociatedObject(menu, &kTGMoreBusyKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(menu, &kDropdownMoreBusyKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return YES;
 }
 
-BOOL SGRTelegramDropdownReferenceHit(UICollectionView *collection, CGPoint point, NSIndexPath **index) {
-    if (![objc_getAssociatedObject(collection, &kTGReferenceSizedKey) boolValue]) return NO;
+BOOL SGRDropdownReferenceHit(UICollectionView *collection, CGPoint point, NSIndexPath **index) {
+    if (![objc_getAssociatedObject(collection, &kDropdownReferenceSizedKey) boolValue]) return NO;
     // A hit follows the visual cell positions, not UIKit 18's stale flow
     // layout attributes. Required for the action and highlight to agree.
     if (index) *index = nil;
@@ -690,8 +688,8 @@ BOOL SGRTelegramDropdownReferenceHit(UICollectionView *collection, CGPoint point
     return YES;
 }
 
-void SGRTelegramDropdownMatchReferenceGeometry(UIView *list) {
-    if (!list.window || ![objc_getAssociatedObject(menuRoot(list), &kTGMenuRootKey) boolValue]) return;
+void SGRDropdownMatchReferenceGeometry(UIView *list) {
+    if (!list.window || ![objc_getAssociatedObject(menuRoot(list), &kDropdownMenuRootKey) boolValue]) return;
     // menuRoot() deliberately returns the outermost context-menu container to
     // share one style marker across nested More lists. For sizing we need the
     // *inner* menu view, which actually owns the 250pt platter rectangle.
@@ -699,7 +697,7 @@ void SGRTelegramDropdownMatchReferenceGeometry(UIView *list) {
     for (UIView *v = list; v && ![v isKindOfClass:UIWindow.class]; v = v.superview) {
         if ([NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuView"]) { root = v; break; }
     }
-    if (!root || [objc_getAssociatedObject(root, &kTGReferenceBusyKey) boolValue]) return;
+    if (!root || [objc_getAssociatedObject(root, &kDropdownReferenceBusyKey) boolValue]) return;
     // Do not shrink the shared container back to 315pt when More has
     // expanded it to hold the overlay. The parent six cells were already
     // matched before the submenu was presented.
@@ -730,7 +728,7 @@ void SGRTelegramDropdownMatchReferenceGeometry(UIView *list) {
     // different six-item dropdown must not receive unrelated heights.
     if (!hasSubtitle(rows[0]) || !hasSubtitle(rows[1]) || hasSubtitle(rows[2])) return;
 
-    objc_setAssociatedObject(root, &kTGReferenceBusyKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(root, &kDropdownReferenceBusyKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     const CGFloat height = 315.0;
     CGRect frame = root.frame;
     frame.size.height = height;
@@ -763,18 +761,18 @@ void SGRTelegramDropdownMatchReferenceGeometry(UIView *list) {
             [view isKindOfClass:UICollectionViewCell.class]) continue;
         if (view.layer.opacity != 0) view.layer.opacity = 0;
     }
-    referenceLine(collection, &kTGRefLine1Key, 93);
-    referenceLine(collection, &kTGRefLine2Key, 252);
+    referenceLine(collection, &kDropdownRefLine1Key, 93);
+    referenceLine(collection, &kDropdownRefLine2Key, 252);
     CGSize content = collection.contentSize;
     if (content.height < height) collection.contentSize = CGSizeMake(content.width, height);
-    objc_setAssociatedObject(collection, &kTGReferenceSizedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(collection, &kDropdownReferenceSizedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // The reference marker is now active: refit labels and the top SF
     // Symbols in this same pass, without waiting for another UIKit relayout.
     for (UICollectionViewCell *cell in collection.visibleCells) matchDropdownRowContent(cell);
-    objc_setAssociatedObject(root, &kTGReferenceBusyKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(root, &kDropdownReferenceBusyKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-void SGRTelegramDropdownCellHighlightChanged(UICollectionViewCell *cell) {
+void SGRDropdownCellHighlightChanged(UICollectionViewCell *cell) {
     if (!cell.window) return;
     UIView *list = nil;
     for (UIView *view = cell; view && ![view isKindOfClass:UIWindow.class]; view = view.superview) {
@@ -783,7 +781,7 @@ void SGRTelegramDropdownCellHighlightChanged(UICollectionViewCell *cell) {
             break;
         }
     }
-    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kTGMenuRootKey) boolValue]) return;
+    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kDropdownMenuRootKey) boolValue]) return;
     for (UIView *v = cell.superview; v && v != list; v = v.superview) {
         if ([v isKindOfClass:UICollectionView.class]) {
             updateHighlight((UICollectionView *)v, YES);
