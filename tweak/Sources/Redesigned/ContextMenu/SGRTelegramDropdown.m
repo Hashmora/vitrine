@@ -118,6 +118,87 @@ static void updateHighlight(UICollectionView *collection, BOOL animate) {
     } else apply();
 }
 
+// The native iOS 18 menu puts the icons at the *trailing* edge of ordinary
+// actions. iOS 26 and Telegram place them on the leading edge, with a 60pt
+// title start. This is purely a view-level rearrangement: UICollectionView
+// continues to own the cell frames, hit testing and action dispatch. Do not
+// apply it to custom rows or change cell heights behind UIKit's layout.
+static void matchDropdownRowContent(UICollectionViewCell *cell) {
+    UIView *content = cell.contentView;
+    if (!content || cell.bounds.size.width < 40 || cell.bounds.size.height < 30) return;
+
+    NSMutableArray<UIImageView *> *icons = [NSMutableArray array];
+    UIStackView *textStack = nil;
+    for (UIView *child in content.subviews) {
+        if ([child isKindOfClass:UIImageView.class] && !child.hidden) [icons addObject:(UIImageView *)child];
+        if (!textStack && [child isKindOfClass:UIStackView.class]) textStack = (UIStackView *)child;
+    }
+    if (!textStack || icons.count == 0) return;
+
+    // Tiles (Share, Add to Playlist, Add to Queue) keep a three-column
+    // arrangement, but get iOS 26's 12pt labels and 44pt title baseline.
+    if (cell.bounds.size.width < 130) {
+        CGFloat width = cell.bounds.size.width;
+        CGRect tile = cell.frame;
+        NSInteger column = MAX(0, MIN(2, (NSInteger)llround(tile.origin.x / MAX(1, width))));
+        CGFloat desiredCenter = 8.0 + column * 78.0 + 39.0 - tile.origin.x;
+        for (UIImageView *icon in icons) {
+            CGRect f = icon.frame;
+            f.origin.x = desiredCenter - f.size.width * 0.5;
+            f.origin.y = 17.0;
+            if (!CGRectEqualToRect(icon.frame, f)) icon.frame = f;
+        }
+        CGRect t = textStack.frame;
+        t.origin.x = desiredCenter - 37.0;
+        t.origin.y = 44.0;
+        t.size.width = 74.0;
+        if (!CGRectEqualToRect(textStack.frame, t)) textStack.frame = t;
+        for (UIView *v in textStack.arrangedSubviews) {
+            if (![v isKindOfClass:UILabel.class]) continue;
+            UILabel *label = (UILabel *)v;
+            if (fabs(label.font.pointSize - 12.0) > 0.1)
+                label.font = [UIFont systemFontOfSize:12.0 weight:UIFontWeightRegular];
+        }
+        return;
+    }
+
+    // Preserve the original rows and their touch bounds, but put the action
+    // symbol at x=25 and the text at x=60, matching the measured iOS 26 menu.
+    if (cell.bounds.size.width < 180) return;
+    UIImageView *chevron = nil;
+    UIImageView *action = nil;
+    for (UIImageView *icon in icons) {
+        if (icon.bounds.size.width < 15.0 && icons.count > 1) chevron = icon;
+        else if (!action) action = icon;
+    }
+    if (!action) action = icons.firstObject;
+    if (action) {
+        CGRect f = action.frame;
+        f.origin.x = 36.0 - f.size.width * 0.5;
+        f.origin.y = floor((cell.bounds.size.height - f.size.height) * 0.5);
+        if (!CGRectEqualToRect(action.frame, f)) action.frame = f;
+    }
+    if (chevron && chevron != action) {
+        CGRect f = chevron.frame;
+        f.origin.x = cell.bounds.size.width - 30.0 - f.size.width * 0.5;
+        f.origin.y = floor((cell.bounds.size.height - f.size.height) * 0.5);
+        if (!CGRectEqualToRect(chevron.frame, f)) chevron.frame = f;
+    }
+    CGRect t = textStack.frame;
+    t.origin.x = 60.0;
+    t.size.width = MAX(20.0, cell.bounds.size.width - 88.0);
+    t.origin.y = floor((cell.bounds.size.height - t.size.height) * 0.5);
+    if (!CGRectEqualToRect(textStack.frame, t)) textStack.frame = t;
+    if (textStack.arrangedSubviews.count > 1) {
+        UILabel *subtitle = nil;
+        for (UIView *v in textStack.arrangedSubviews) {
+            if ([v isKindOfClass:UILabel.class]) subtitle = (UILabel *)v;
+        }
+        if (subtitle && fabs(subtitle.font.pointSize - 13.0) > 0.1)
+            subtitle.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
+    }
+}
+
 // UIKit rows remain the interactive views with the real UIMenu actions. Make
 // the stock grey/opaque row backgrounds transparent so the shared Telegram
 // panel and its inset highlight are what is actually visible.
@@ -143,6 +224,7 @@ static void styleCell(UICollectionViewCell *cell) {
             child.bounds.size.height > cell.bounds.size.height * 0.75 &&
             child.backgroundColor) child.backgroundColor = UIColor.clearColor;
     });
+    matchDropdownRowContent(cell);
 }
 
 void SGRTelegramDropdownCellLaidOut(UICollectionViewCell *cell) {
