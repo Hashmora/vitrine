@@ -169,7 +169,7 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // so the platter is the lighter surface and the selection reads darker.
     _rest.backgroundColor = SGUseLegacyGlass()
         ? [UIColor colorWithWhite:1 alpha:0.17]
-        : [UIColor colorWithWhite:0 alpha:0.22];
+        : [UIColor colorWithWhite:0 alpha:0.38];
     _rest.layer.cornerCurve = kCACornerCurveCircular;
     [self addSubview:_rest];
     _pane = SGGlassFor(self, &kLensPaneKey);
@@ -797,7 +797,11 @@ static BOOL bubbles(void) {
 // boundary while the bubble is still over the previous item's glyph.
 - (CGFloat)trackingCenterForFingerX:(CGFloat)x {
     if (!_touching) return x;
-    return rubber(_touchAnchorX + (x - _touchStartX), _minCenter, _maxCenter);
+    CGFloat target = _touchAnchorX + (x - _touchStartX);
+    // In Chrome the pill must not rubber-band beyond its end slots.
+    // Legacy Glass retains its original overscroll and refraction.
+    if (!bubbles()) return MAX(_minCenter, MIN(_maxCenter, target));
+    return rubber(target, _minCenter, _maxCenter);
 }
 
 - (void)moveTouchToX:(CGFloat)x {
@@ -948,10 +952,22 @@ static BOOL bubbles(void) {
     *sx = width * (1 + d) / baseWidth;
     *sy = held * (1 - kLensVolume * d);
     CGPoint pose = CGPointMake((st.L + st.R) / 2, CGRectGetMidY(_restFrame));
-    // Never move the lens outwards merely because an edge tab was pressed.
-    // Its center comes from the finger/selection springs. Only cap an actual
-    // excursion to the existing 8pt drag allowance, accounting for its size.
-    if (st.lift > 0.001 && _normalContent && self.superview) {
+    if (!bubbles() && _normalContent && self.superview) {
+        // Chrome's opaque selection stays fully INSIDE the actual capsule,
+        // even if its spring briefly stretches it during a transition.
+        // Keep 4pt clearance at the outer rails to match its original slots.
+        UIView *surface = SGRLensPlatterInHost(self.superview, _normalContent);
+        CGRect platter = [surface convertRect:surface.bounds toView:self.superview];
+        const CGFloat edgeGap = 4;
+        CGFloat safeWidth = MAX(1, CGRectGetWidth(platter) - 2 * edgeGap);
+        *sx = MIN(*sx, safeWidth / baseWidth);
+        CGFloat half = baseWidth * *sx / 2;
+        CGFloat minX = CGRectGetMinX(platter) + edgeGap + half;
+        CGFloat maxX = CGRectGetMaxX(platter) - edgeGap - half;
+        if (maxX >= minX) pose.x = MAX(minX, MIN(maxX, pose.x));
+    } else if (st.lift > 0.001 && _normalContent && self.superview) {
+        // Preserve Stage 114's 8pt optical allowance and outer-edge guard
+        // for the raised Legacy Glass lens; Chrome must not alter it.
         UIView *surface = SGRLensPlatterInHost(self.superview, _normalContent);
         CGRect platter = [surface convertRect:surface.bounds toView:self.superview];
         CGFloat half = baseWidth * *sx / 2;

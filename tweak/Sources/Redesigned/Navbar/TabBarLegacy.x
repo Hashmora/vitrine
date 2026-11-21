@@ -408,10 +408,14 @@ static char kNavDimKey, kCircleDimKey;
     CGFloat quietRadius = quiet.size.height / 2;
     SGShapeGlass(_pane, quietRadius, YES);
     _pane.layer.cornerCurve = kCACornerCurveCircular;
-    SGRDarkenGlass(_pane, &kCircleDimKey, quietRadius, 0.62);
+    // Chrome: exactly the same dim and film as the Now Playing card.
+    // The native-looking Legacy Glass circle retains its own darker tint.
+    SGRDarkenGlass(_pane, &kCircleDimKey, quietRadius,
+                  SGUseLegacyGlass() ? 0.62 : SGRBarDim);
     UIView *film = SGRGlassFilm(self, &kCircleFilmKey, _pane, quietRadius);
     film.layer.cornerCurve = kCACornerCurveCircular;
-    film.backgroundColor = [UIColor colorWithWhite:1 alpha:0.045];
+    film.backgroundColor = SGUseLegacyGlass()
+        ? [UIColor colorWithWhite:1 alpha:0.045] : SGRGlassFilmColor();
     if (_heldEdge) {
         CGRect expanded = CGRectInset(quiet, -8, -8); // 70pt raised circle from 54pt rest
         [CATransaction begin];
@@ -2161,18 +2165,14 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     if (!CGSizeEqualToSize(navGlass.bounds.size, glassFrame.size)) navGlass.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navGlass.center, glassCenter)) navGlass.center = glassCenter;
     SGShapeGlass(navGlass, glassFrame.size.height / 2, NO);
-    // iOS 26's platter is distinctly darker than its clear moving lens.
-    // Scope this tint to the Legacy Tab Bar, not the player's glass. In
-    // chrome mode without glass, flip the balance so the platter reads
-    // lighter and the resting selection sits darker, which matches the
-    // bright mini-player card above it.
-    CGFloat platterDarken = SGUseLegacyGlass() ? 0.63 : 0.16;
-    SGRDarkenGlass(navGlass, &kNavDimKey, glassFrame.size.height / 2, platterDarken);
+    // Chrome matches the Now Playing card's 0.45 dim and 0.16 white film.
+    // Legacy Glass retains its separate dark iOS 26-style platter material.
+    SGRDarkenGlass(navGlass, &kNavDimKey, glassFrame.size.height / 2,
+                  SGUseLegacyGlass() ? 0.63 : SGRBarDim);
 
     UIView *navTint = SGRGlassFilm(host, &kNavTintKey, navGlass, glassFrame.size.height / 2);
     navTint.backgroundColor = SGUseLegacyGlass()
-        ? [UIColor colorWithWhite:1 alpha:0.05]
-        : [UIColor colorWithWhite:1 alpha:0.19];
+        ? [UIColor colorWithWhite:1 alpha:0.05] : SGRGlassFilmColor();
     // SGRGlassFilm sets the film's frame from the pane's; the film is given the pane's bounds and center as well.
     if (!CGSizeEqualToSize(navTint.bounds.size, glassFrame.size)) navTint.bounds = (CGRect){CGPointZero, glassFrame.size};
     if (!CGPointEqualToPoint(navTint.center, glassCenter)) navTint.center = glassCenter;
@@ -2181,14 +2181,11 @@ static void syncBarCore(UIView *stockBar, BOOL rescanSelection) {
     // Its edges bend the backdrop; the icons and captions remain unscaled (TabBarLens.m).
     SGRLegacyLens *selPill = (SGRLegacyLens *)SGLazyChild(host, &kSelPillKey, ^UIView *{ return [SGRLegacyLens new]; });
     if (selPill.superview != host) [host insertSubview:selPill aboveSubview:navTint];
-    // In expanded Split Tabs the capsule selection keeps ONE vertical size
-    // over the entire drag. Previously its size changed from 54 to 58pt
-    // exactly when the hover moved from Search to Create; setRestFrame then
-    // reset the edge springs mid-gesture. Match the separate 58pt button for
-    // every capsule slot in this split-only layout, with no impact on the
-    // ordinary (non-split) bar or its lens implementation.
+    // The original 4pt vertical gap (54pt selected pill inside 62pt bar)
+    // also applies to expanded Split Tabs in BOTH Chrome and Legacy Glass.
+    // Its size stays constant across the entire drag (Stage 113 fix).
     NSUInteger selIndex = [bar.items indexOfObject:bar.selectedItem];
-    CGFloat pillInset = separate ? 2 : kSelPillInset;
+    CGFloat pillInset = kSelPillInset;
     selPill.heldOutset = pillInset + kLensOverhang;
     // The pill follows bar.selectedItem, not Spotify's labels, which repaint late. syncBar is its only writer.
     if (selIndex != NSNotFound && selIndex < sources.count) {
