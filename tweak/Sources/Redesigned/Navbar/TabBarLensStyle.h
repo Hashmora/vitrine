@@ -10,6 +10,15 @@
 #define SGRLegacyHeldBend 1.14
 #define SGRLegacyHeldVerticalReach 0.24
 
+// A single pose constructor for the full tab lens (dx=0, its spring supplies
+// sx/sy) and the compact circles (horizontal finger travel + subtle stretch).
+// Return a view transform, never separately animate a parallel rim layer.
+static inline CGAffineTransform SGRLegacyGlassPoseTransform(CGFloat dx,
+                                                            CGFloat sx,
+                                                            CGFloat sy) {
+    return CGAffineTransformScale(CGAffineTransformMakeTranslation(dx, 0), sx, sy);
+}
+
 static inline void SGRLegacyConfigureDirectionalRim(CAGradientLayer *glare,
                                                      CAShapeLayer *glareMask,
                                                      CAShapeLayer *perimeter,
