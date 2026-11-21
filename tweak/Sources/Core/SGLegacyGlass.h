@@ -60,6 +60,12 @@ BOOL SGLegacyGlassAvailable(void);
 // platter's top/bottom border. Zero by default (sheets/controls unchanged).
 @property (nonatomic) CGFloat lateralVerticalReach;
 
+// Suppress backdrop refraction at an outside edge of a split/compact tab
+// circle, like the full tab lens's outer-edge guard. This masks ONLY the
+// sampled backdrop, not the black content, circle rim or specular highlights.
+// No guard is applied until explicitly requested by a caller.
+- (void)setBackdropOuterEdgeGuardLeft:(BOOL)left right:(BOOL)right;
+
 @end
 
 // The light the system's glass draws along its rim: a thin white line whose brightness follows which way the rim faces,

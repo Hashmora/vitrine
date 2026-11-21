@@ -528,6 +528,8 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
 
 @implementation SGLegacyGlassView {
     CALayer *_backdropLayer;
+    CAGradientLayer *_backdropOuterGuard;
+    BOOL _backdropGuardLeft, _backdropGuardRight;
     SGNoActionsDelegate *_backdropDelegate;
     CGSize _meshSize;
     CGFloat _meshRadius;
@@ -581,6 +583,37 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     [self setNeedsLayout];
 }
 
+// Only the outer crescent of a detached compact tab is guarded. The
+// refraction fade shares the full tab lens's 22%-wide edge profile but lives
+// on the backdrop itself: a mask on self.layer would erase the glass rim and
+// its diagonal highlights along with the unwanted background reflection.
+- (void)setBackdropOuterEdgeGuardLeft:(BOOL)left right:(BOOL)right {
+    if (_backdropGuardLeft == left && _backdropGuardRight == right &&
+        (!left && !right ? _backdropLayer.mask != _backdropOuterGuard :
+         _backdropLayer.mask == _backdropOuterGuard)) return;
+    _backdropGuardLeft = left;
+    _backdropGuardRight = right;
+    if (!left && !right) {
+        if (_backdropLayer.mask == _backdropOuterGuard) _backdropLayer.mask = nil;
+        return;
+    }
+    if (!_backdropOuterGuard) {
+        _backdropOuterGuard = [CAGradientLayer layer];
+        _backdropOuterGuard.startPoint = CGPointMake(0, 0.5);
+        _backdropOuterGuard.endPoint = CGPointMake(1, 0.5);
+        _backdropOuterGuard.locations = @[@0, @0.22, @0.78, @1];
+    }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _backdropOuterGuard.frame = self.bounds;
+    _backdropOuterGuard.colors = @[(id)[UIColor colorWithWhite:1 alpha:left ? 0 : 1].CGColor,
+                                  (id)UIColor.whiteColor.CGColor,
+                                  (id)UIColor.whiteColor.CGColor,
+                                  (id)[UIColor colorWithWhite:1 alpha:right ? 0 : 1].CGColor];
+    if (_backdropLayer.mask != _backdropOuterGuard) _backdropLayer.mask = _backdropOuterGuard;
+    [CATransaction commit];
+}
+
 - (void)setLateralVerticalReach:(CGFloat)lateralVerticalReach {
     lateralVerticalReach = MAX(0, MIN(0.5, lateralVerticalReach));
     if (_lateralVerticalReach == lateralVerticalReach) return;
@@ -630,6 +663,12 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGSize size = self.bounds.size;
+    if (_backdropLayer.mask == _backdropOuterGuard) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        _backdropOuterGuard.frame = self.bounds;
+        [CATransaction commit];
+    }
     CGFloat radius = _capsule ? MIN(size.width, size.height) / 2 : _cornerRadius;
     if (CGSizeEqualToSize(size, _meshSize) && radius == _meshRadius) return;
     BOOL classic = self.classic;
@@ -673,6 +712,7 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     [CATransaction setDisableActions:YES];
     self.layer.cornerRadius = radius;
     _backdropLayer.frame = bounds;
+    if (_backdropLayer.mask == _backdropOuterGuard) _backdropOuterGuard.frame = bounds;
     for (CALayer *sub in self.layer.sublayers) {
         BOOL light = [sub.name isEqualToString:kSpecularName], classic = [sub.name isEqualToString:kClassicSpecularName];
         if ((!light && !classic) || sub.hidden) continue;

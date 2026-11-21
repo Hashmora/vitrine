@@ -286,6 +286,8 @@ static char kNavDimKey, kCircleDimKey;
 - (void)setHeld:(BOOL)held animated:(BOOL)animated;
 // Compact circles retain their 54pt glass; expanded Split Tabs uses 58pt.
 - (void)setCompactSizing:(BOOL)compact;
+// The two outside buttons guard only the OUTWARD backdrop edge.
+- (void)setOutwardRefractionGuardOnLeft:(BOOL)left;
 @end
 
 @implementation SGRLegacyCircle {
@@ -458,6 +460,15 @@ static char kNavDimKey, kCircleDimKey;
     if (_compactSizing == compact) return;
     _compactSizing = compact;
     [self setNeedsLayout];
+}
+
+- (void)setOutwardRefractionGuardOnLeft:(BOOL)left {
+    // Do not mask the entire moving circle: that would also remove its rim.
+    // The glass core masks only its CABackdropLayer, leaving black dim and
+    // both directional highlights untouched at the outer edge.
+    [_heldEdge setBackdropOuterEdgeGuardLeft:left right:!left];
+    if ([_pane isKindOfClass:SGLegacyGlassView.class])
+        [(SGLegacyGlassView *)_pane setBackdropOuterEdgeGuardLeft:left right:!left];
 }
 
 - (void)setShown:(BOOL)shown {
@@ -1723,6 +1734,10 @@ static void placeCompact(UIView *stockBar, SGRLegacyTabBar *bar, UIView *host, N
     SGRLegacyCircle *trail = objc_getAssociatedObject(host, &kTrailKey);
     if (compact && !lead) lead = makeCircle(host, &kLeadKey);
     if (trailSource && (!folded || compact) && !trail) trail = makeCircle(host, &kTrailKey);
+    if (SGUseLegacyGlass()) {
+        [lead setOutwardRefractionGuardOnLeft:YES];
+        [trail setOutwardRefractionGuardOnLeft:NO];
+    }
     [lead setCompactSizing:compact];
     [trail setCompactSizing:compact];
     [UIView performWithoutAnimation:^{
