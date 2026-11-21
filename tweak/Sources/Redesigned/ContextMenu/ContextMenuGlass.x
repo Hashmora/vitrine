@@ -123,6 +123,15 @@ static void bubbleMenu(UIView *list) {
 }
 %end
 
+// The inner content view is constrained separately, after its UICollectionViewCell.
+// Hook its last layout pass so the leading images cannot snap back right.
+%hook _UIContextMenuCellContentView
+- (void)layoutSubviews {
+    %orig;
+    SGRTelegramDropdownContentLaidOut((UIView *)self);
+}
+%end
+
 %hook UICollectionViewCell
 - (void)setHighlighted:(BOOL)highlighted {
     %orig;

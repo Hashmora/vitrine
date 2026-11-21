@@ -8,3 +8,4 @@ BOOL SGRTelegramDropdownShouldStyle(UIView *list, BOOL vitrineButtonMenu);
 void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass);
 void SGRTelegramDropdownCellHighlightChanged(UICollectionViewCell *cell);
 void SGRTelegramDropdownCellLaidOut(UICollectionViewCell *cell);
+void SGRTelegramDropdownContentLaidOut(UIView *content);

@@ -118,11 +118,21 @@ static void updateHighlight(UICollectionView *collection, BOOL animate) {
     } else apply();
 }
 
-// The native iOS 18 menu puts the icons at the *trailing* edge of ordinary
-// actions. iOS 26 and Telegram place them on the leading edge, with a 60pt
-// title start. This is purely a view-level rearrangement: UICollectionView
-// continues to own the cell frames, hit testing and action dispatch. Do not
-// apply it to custom rows or change cell heights behind UIKit's layout.
+// UIKit 18 owns Auto Layout for these private content views, so assigning a
+// frame during the outer cell's layout (Stage 144) is undone immediately by
+// the content view's next constraint pass. A translation on the *original*
+// icon and stack survives that pass, preserves their images/vibrancy, and does
+// not replace any of UIKit's action or hit-testing views.
+static void placeDropdownContent(UIView *view, CGFloat x, CGFloat y) {
+    if (!view) return;
+    // center and bounds describe the untransformed frame: unlike -frame,
+    // they do not include a previous translation. Repeated calls are stable.
+    CGFloat originalX = view.center.x - view.bounds.size.width * 0.5;
+    CGFloat originalY = view.center.y - view.bounds.size.height * 0.5;
+    CGAffineTransform transform = CGAffineTransformMakeTranslation(x - originalX, y - originalY);
+    if (!CGAffineTransformEqualToTransform(view.transform, transform)) view.transform = transform;
+}
+
 static void matchDropdownRowContent(UICollectionViewCell *cell) {
     UIView *content = cell.contentView;
     if (!content || cell.bounds.size.width < 40 || cell.bounds.size.height < 30) return;
@@ -135,24 +145,14 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
     }
     if (!textStack || icons.count == 0) return;
 
-    // Tiles (Share, Add to Playlist, Add to Queue) keep a three-column
-    // arrangement, but get iOS 26's 12pt labels and 44pt title baseline.
     if (cell.bounds.size.width < 130) {
-        CGFloat width = cell.bounds.size.width;
-        CGRect tile = cell.frame;
-        NSInteger column = MAX(0, MIN(2, (NSInteger)llround(tile.origin.x / MAX(1, width))));
-        CGFloat desiredCenter = 8.0 + column * 78.0 + 39.0 - tile.origin.x;
-        for (UIImageView *icon in icons) {
-            CGRect f = icon.frame;
-            f.origin.x = desiredCenter - f.size.width * 0.5;
-            f.origin.y = 17.0;
-            if (!CGRectEqualToRect(icon.frame, f)) icon.frame = f;
-        }
-        CGRect t = textStack.frame;
-        t.origin.x = desiredCenter - 37.0;
-        t.origin.y = 44.0;
-        t.size.width = 74.0;
-        if (!CGRectEqualToRect(textStack.frame, t)) textStack.frame = t;
+        // Top quick actions remain tiles. On iOS 26 the symbol is centered
+        // around y=27 and the caption begins at y=44.667.
+        for (UIImageView *icon in icons)
+            placeDropdownContent(icon, (cell.bounds.size.width - icon.bounds.size.width) * 0.5,
+                                 18.0);
+        placeDropdownContent(textStack, (cell.bounds.size.width - textStack.bounds.size.width) * 0.5,
+                             44.667);
         for (UIView *v in textStack.arrangedSubviews) {
             if (![v isKindOfClass:UILabel.class]) continue;
             UILabel *label = (UILabel *)v;
@@ -162,8 +162,9 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
         return;
     }
 
-    // Preserve the original rows and their touch bounds, but put the action
-    // symbol at x=25 and the text at x=60, matching the measured iOS 26 menu.
+    // On iOS 18 a regular action image sits at x=211, while on iOS 26 it
+    // sits at x~26 and the text starts at x=60. More has two images: the
+    // smaller chevron is trailing, the actual action glyph is leading.
     if (cell.bounds.size.width < 180) return;
     UIImageView *chevron = nil;
     UIImageView *action = nil;
@@ -172,31 +173,37 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
         else if (!action) action = icon;
     }
     if (!action) action = icons.firstObject;
-    if (action) {
-        CGRect f = action.frame;
-        f.origin.x = 36.0 - f.size.width * 0.5;
-        f.origin.y = floor((cell.bounds.size.height - f.size.height) * 0.5);
-        if (!CGRectEqualToRect(action.frame, f)) action.frame = f;
-    }
-    if (chevron && chevron != action) {
-        CGRect f = chevron.frame;
-        f.origin.x = cell.bounds.size.width - 30.0 - f.size.width * 0.5;
-        f.origin.y = floor((cell.bounds.size.height - f.size.height) * 0.5);
-        if (!CGRectEqualToRect(chevron.frame, f)) chevron.frame = f;
-    }
-    CGRect t = textStack.frame;
-    t.origin.x = 60.0;
-    t.size.width = MAX(20.0, cell.bounds.size.width - 88.0);
-    t.origin.y = floor((cell.bounds.size.height - t.size.height) * 0.5);
-    if (!CGRectEqualToRect(textStack.frame, t)) textStack.frame = t;
+    if (action)
+        placeDropdownContent(action, 36.0 - action.bounds.size.width * 0.5,
+                             floor((cell.bounds.size.height - action.bounds.size.height) * 0.5));
+    if (chevron && chevron != action)
+        placeDropdownContent(chevron, cell.bounds.size.width - 30.0 - chevron.bounds.size.width * 0.5,
+                             floor((cell.bounds.size.height - chevron.bounds.size.height) * 0.5));
+
+    placeDropdownContent(textStack, 60.0,
+                         floor((cell.bounds.size.height - textStack.bounds.size.height) * 0.5));
     if (textStack.arrangedSubviews.count > 1) {
-        UILabel *subtitle = nil;
         for (UIView *v in textStack.arrangedSubviews) {
-            if ([v isKindOfClass:UILabel.class]) subtitle = (UILabel *)v;
+            if (![v isKindOfClass:UILabel.class]) continue;
+            UILabel *label = (UILabel *)v;
+            if (label == textStack.arrangedSubviews.lastObject &&
+                fabs(label.font.pointSize - 13.0) > 0.1)
+                label.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
         }
-        if (subtitle && fabs(subtitle.font.pointSize - 13.0) > 0.1)
-            subtitle.font = [UIFont systemFontOfSize:13.0 weight:UIFontWeightRegular];
     }
+}
+
+// The cell's own layout hook runs before UIKit lays out its inner content
+// view. Apply the stable translations again AFTER that inner layout too.
+void SGRTelegramDropdownContentLaidOut(UIView *content) {
+    if (!content.window || ![NSStringFromClass(content.class) isEqualToString:@"_UIContextMenuCellContentView"]) return;
+    UICollectionViewCell *cell = (UICollectionViewCell *)content.superview;
+    if (![cell isKindOfClass:UICollectionViewCell.class]) return;
+    UIView *list = nil;
+    for (UIView *view = cell; view && ![view isKindOfClass:UIWindow.class]; view = view.superview)
+        if ([NSStringFromClass(view.class) isEqualToString:@"_UIContextMenuListView"]) { list = view; break; }
+    if (!list || ![objc_getAssociatedObject(menuRoot(list), &kTGMenuRootKey) boolValue]) return;
+    matchDropdownRowContent(cell);
 }
 
 // UIKit rows remain the interactive views with the real UIMenu actions. Make
