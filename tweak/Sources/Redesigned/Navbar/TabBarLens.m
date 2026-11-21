@@ -347,7 +347,7 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
         _platterEdgePane.lateralRefraction = YES;
         // Reach the top and bottom edges of the already reduced platter
         // without distorting the icons or the full-length straight rails.
-        _platterEdgePane.lateralVerticalReach = 0.32;
+        _platterEdgePane.lateralVerticalReach = 0.28;
         _platterEdgePane.sharp = YES;
         _platterEdgePane.rimless = YES;
         _platterEdgePane.alpha = 0;
