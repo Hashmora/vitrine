@@ -335,29 +335,22 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     [self syncGlyphEdgeStack];
 }
 
-// The optical crescents must share a render coordinate system with the
-// selected artwork. A separate host-level pane sampled a partly clipped copy
-// and made an offset reflection of the icon instead of bending its own edge.
+// The extra glyph-only backdrop was a second, independently positioned
+// optical surface. In Stage 100 its rendered frame diverged from the primary
+// lens by several points at the shoulders; clipping it inside SelectedContentView
+// (Stage 102) prevented spills but could not prevent a displaced dark copy.
+// Keep ONE refracting surface for the platter and the normal accent-copy mask
+// for sharp icons. Do not render the duplicate glyph backdrop at all. This
+// avoids a third mask or a guessed horizontal correction that would recreate
+// either the inner green seam or the outer transparent hole.
 - (void)syncGlyphEdgeStack {
     UIView *host = self.superview;
-    if (!host) return;
-    if (_platterEdgePane) {
-        // UIKit may reorder siblings on late tab layout: restore the optical
-        // sibling between the main scaled glass and both glyph groups.
+    if (_platterEdgePane && host) {
+        // The one remaining edge surface follows the same host coordinates
+        // and transform as the actual capsule, below both glyph groups.
         [host insertSubview:_platterEdgePane aboveSubview:self];
     }
-    if (!_glyphEdgePane) return;
-    // This edge-only refractor samples green selected glyphs, so it must be
-    // clipped by the SAME animated mask as those glyphs. A host-level fallback
-    // is not safe: it bypasses SelectedContentView's live capsule mask and
-    // exposes displaced green pixels outside the bubble at the end tabs.
-    UIView *target = (_tintOverlay && _tintOverlay.superview == host) ? _tintOverlay : nil;
-    if (!target) {
-        [_glyphEdgePane removeFromSuperview];
-        return;
-    }
-    if (_glyphEdgePane.superview != target) [target addSubview:_glyphEdgePane];
-    if (target.subviews.lastObject != _glyphEdgePane) [target bringSubviewToFront:_glyphEdgePane];
+    [_glyphEdgePane removeFromSuperview];
 }
 
 // There is ONE green UIImageView for each tab. The rim backdrop bends pixels
