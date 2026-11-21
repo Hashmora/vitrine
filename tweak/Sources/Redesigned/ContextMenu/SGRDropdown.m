@@ -406,7 +406,7 @@ void SGRDropdownDress(UIView *list, UIView *platter, UIView *glass) {
 // rather than stretch just the dark material or draw an inert duplicate menu.
 // Other UIMenu shapes retain native heights until independently measured.
 static char kDropdownReferenceBusyKey, kDropdownRefLine1Key, kDropdownRefLine2Key;
-static char kDropdownMoreBusyKey, kDropdownMoreSizedKey, kDropdownMoreLinesKey, kDropdownMoreHeaderLineKey;
+static char kDropdownMoreBusyKey, kDropdownMoreLinesKey, kDropdownMoreHeaderLineKey;
 
 static NSUInteger menuItemCount(UICollectionView *collection) {
     NSUInteger count = 0;
