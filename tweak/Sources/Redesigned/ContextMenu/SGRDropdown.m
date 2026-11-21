@@ -250,12 +250,19 @@ static void matchDropdownRowContent(UICollectionViewCell *cell) {
         placeDropdownContent(textStack, 60.0, 10.666667);
         setDropdownFrame(title, CGRectMake(0, 0, 162.0, titleHeight));
         setDropdownFrame(subtitle, CGRectMake(0, subtitleTop, 162.0, 15.666667));
-    } else if (referenceWidth && labels.count == 1 && fabs(cell.bounds.size.height - 42.0) < 1) {
+    } else if (referenceWidth && labels.count == 1 &&
+               (fabs(cell.bounds.size.height - 42.0) < 1 || fabs(cell.bounds.size.height - 64.0) < 1)) {
+        BOOL wraps = cell.bounds.size.height > 55;
+        CGFloat textHeight = wraps ? 42.333333 : 20.333333;
+        UILabel *title = labels.firstObject;
+        if (wraps && title.numberOfLines != 2) title.numberOfLines = 2;
+        if (wraps && fabs(title.preferredMaxLayoutWidth - 162.0) > 0.5)
+            title.preferredMaxLayoutWidth = 162.0;
         CGRect bounds = textStack.bounds;
-        bounds.size.height = 20.333333;
+        bounds.size = CGSizeMake(162, textHeight);
         if (!CGRectEqualToRect(textStack.bounds, bounds)) textStack.bounds = bounds;
         placeDropdownContent(textStack, 60.0, 10.666667);
-        setDropdownFrame(labels.firstObject, CGRectMake(0, 0, labels.firstObject.bounds.size.width, 20.333333));
+        setDropdownFrame(title, CGRectMake(0, 0, 162, textHeight));
     } else {
         // Other button dropdowns retain their own measured line heights.
         placeDropdownContent(textStack, 60.0,
@@ -406,7 +413,8 @@ void SGRDropdownDress(UIView *list, UIView *platter, UIView *glass) {
 // rather than stretch just the dark material or draw an inert duplicate menu.
 // Other UIMenu shapes retain native heights until independently measured.
 static char kDropdownReferenceBusyKey, kDropdownRefLine1Key, kDropdownRefLine2Key;
-static char kDropdownMoreBusyKey, kDropdownMoreLinesKey, kDropdownMoreHeaderLineKey;
+static char kDropdownMoreBusyKey, kDropdownMoreHeaderLineKey;
+static char kDropdownHeaderBackIconKey, kDropdownHeaderActionIconKey;
 
 static NSUInteger menuItemCount(UICollectionView *collection) {
     NSUInteger count = 0;
@@ -513,36 +521,48 @@ static void dressMoreHeader(UIView *header) {
     UIView *content = nil;
     for (UIView *v in header.subviews) {
         if ([NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuCellContentView"]) content = v;
-        // The opaque iOS 18 header strip must not sit above our one-piece
-        // pane: use the same glass as the rows underneath.
+        // The old iOS 18 header strip does not belong above the glass.
         if ([v isKindOfClass:UIVisualEffectView.class] && !v.hidden) v.hidden = YES;
     }
     if (!content) return;
-    UIImageView *chevron = nil, *ellipsis = nil;
+
+    // UIKit 18 creates three images in this order: its small back chevron,
+    // an invisible duplicate action glyph, and the visible action glyph.
+    // Do not rediscover the roles by image width on every layout. Stage 149
+    // changed the back image to chevron.down, which changed its intrinsic
+    // dimensions and made subsequent passes mistake it for the action icon.
+    UIImageView *back = objc_getAssociatedObject(header, &kDropdownHeaderBackIconKey);
+    UIImageView *action = objc_getAssociatedObject(header, &kDropdownHeaderActionIconKey);
+    if (back.superview != content || action.superview != content) {
+        NSMutableArray<UIImageView *> *visible = [NSMutableArray array];
+        for (UIView *v in content.subviews)
+            if ([v isKindOfClass:UIImageView.class] && !v.hidden && v.alpha > 0.05)
+                [visible addObject:(UIImageView *)v];
+        if (visible.count < 2) return;
+        back = visible.firstObject;
+        action = visible.lastObject;
+        objc_setAssociatedObject(header, &kDropdownHeaderBackIconKey, back, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(header, &kDropdownHeaderActionIconKey, action, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+
     UIStackView *text = nil;
-    for (UIView *v in content.subviews) {
-        if ([v isKindOfClass:UIStackView.class]) text = (UIStackView *)v;
-        if (![v isKindOfClass:UIImageView.class] || v.alpha < 0.05 || v.hidden) continue;
-        UIImageView *icon = (UIImageView *)v;
-        if (icon.bounds.size.width <= 16) chevron = icon;
-        else if (icon.bounds.size.width >= 18) ellipsis = icon;
-    }
-    // iOS 26: ellipsis at the leading edge, title at x=60, disclosure at
-    // the trailing edge. Move UIKit's original views rather than cloning.
-    placeDropdownContent(ellipsis, 26, 21);
-    placeDropdownContent(text, 60, 20.667);
-    if (chevron) {
-        static UIImage *down;
-        static dispatch_once_t once;
-        dispatch_once(&once, ^{ down = [UIImage systemImageNamed:@"chevron.down"]; });
-        // UIKit can replace the image during a later layout pass; keep
-        // enforcing the shared trailing disclosure, not just its frame.
-        if (down && chevron.image != down) chevron.image = down;
-        placeDropdownContent(chevron, 213, 26.333);
-    }
+    for (UIView *v in content.subviews)
+        if ([v isKindOfClass:UIStackView.class]) { text = (UIStackView *)v; break; }
+
+    // The reference header is 62pt high. Its inner content occupies 42pt,
+    // inset 10pt from the top; positions below are relative to that content.
+    setDropdownFrame(content, CGRectMake(0, 10, header.bounds.size.width, 42));
+    static UIImage *down;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ down = [UIImage systemImageNamed:@"chevron.down"]; });
+    if (down && back.image != down) back.image = down;
+    placeDropdownContent(action, 26, 11.333333);
+    placeDropdownContent(text, 60, 10.666667);
+    placeDropdownContent(back, 212.666667, 16.333333);
+
     for (UIView *v in header.subviews) {
         if (![NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuSeparatorView"]) continue;
-        if (!v.hidden) v.hidden = YES;  // a single inset rule replaces it
+        if (!v.hidden) v.hidden = YES; // The shared header rule is drawn at y=62.
     }
 }
 
@@ -557,36 +577,13 @@ void SGRDropdownSubmenuHeaderLaidOut(UIView *header) {
     dressMoreHeader(header);
 }
 
-static void moreRowLines(UICollectionView *collection, NSArray<UICollectionViewCell *> *cells) {
-    NSMutableArray<UIView *> *lines = objc_getAssociatedObject(collection, &kDropdownMoreLinesKey);
-    if (!lines) {
-        lines = [NSMutableArray array];
-        objc_setAssociatedObject(collection, &kDropdownMoreLinesKey, lines, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    CGFloat pixel = 1.0 / MAX(1.0, collection.window.screen.scale);
-    // The native iOS 18 separators still sit at the old 43.67pt rhythm.
-    // Hide only those on the reference-sized submenu and draw real rules at
-    // the new action boundaries, without allowing them to receive touches.
-    for (UIView *v in collection.subviews) {
-        if ([v isKindOfClass:UICollectionReusableView.class] && ![v isKindOfClass:UICollectionViewCell.class])
-            v.layer.opacity = 0;
-    }
-    for (NSUInteger i = 0; i < cells.count; i++) {
-        UIView *line = nil;
-        if (i < lines.count) line = lines[i];
-        else {
-            line = [UIView new];
-            line.userInteractionEnabled = NO;
-            line.accessibilityElementsHidden = YES;
-            line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
-            [lines addObject:line];
-        }
-        if (line.superview != collection) [collection addSubview:line];
-        CGFloat y = CGRectGetMaxY(cells[i].frame);
-        CGRect frame = CGRectMake(18, y - pixel * 0.5, MAX(0, collection.bounds.size.width - 36), pixel);
-        if (!CGRectEqualToRect(line.frame, frame)) line.frame = frame;
-        line.hidden = i == cells.count - 1;
-    }
+static void concealMoreRowSeparators(UICollectionView *collection) {
+    // The reference iOS 26 More list has only the rule after its title,
+    // not one divider between every action. Hide the old reusable rules;
+    // the header rule remains a separately positioned view at y=62.
+    for (UIView *v in collection.subviews)
+        if ([v isKindOfClass:UICollectionReusableView.class] &&
+            ![v isKindOfClass:UICollectionViewCell.class]) v.layer.opacity = 0;
 }
 
 // Returns YES for a dropdown submenu handled by this adapter. This means
@@ -620,8 +617,12 @@ BOOL SGRDropdownMatchSubmenuGeometry(UIView *menu) {
 
     NSUInteger count = menuItemCount(collection);
     UIView *header = submenuTitleIn(collection);
-    BOOL measuredMore = count == 13 && fabs(collection.bounds.size.width - 250) < 2
-                        && submenuTitleIs(header, @"More");
+    // The same Spotify More sheet can contain 12 or 13 actions depending on
+    // available commands. Matching only 13 silently left the header and all
+    // hit rectangles in their iOS 18 positions in the latest 12-action audit.
+    BOOL measuredMore = (count == 12 || count == 13) &&
+                        fabs(collection.bounds.size.width - 250) < 2 &&
+                        submenuTitleIs(header, @"More");
     CGFloat naturalBottom = 0;
     NSArray<UICollectionViewCell *> *cells = sortedMenuCells(collection);
     for (UICollectionViewCell *cell in cells)
@@ -630,6 +631,14 @@ BOOL SGRDropdownMatchSubmenuGeometry(UIView *menu) {
     if (height > 1) {
         CGRect root = menu.frame;
         root.size.height = height + 12;
+        // iOS 18 moves the whole panel four points right when More opens.
+        // Anchor the measured submenu to the same trailing 12pt as the
+        // original iOS 26 root, without changing unrelated menus.
+        if (measuredMore) {
+            CGFloat available = menu.superview.bounds.size.width;
+            if (available > 300 && root.size.width > 0)
+                root.origin.x = available - root.size.width - 12;
+        }
         if (!CGRectEqualToRect(root, menu.frame)) menu.frame = root;
         CGRect target = front.frame;
         target.origin.x = 0;
@@ -645,10 +654,10 @@ BOOL SGRDropdownMatchSubmenuGeometry(UIView *menu) {
     if (front.alpha != 1) front.alpha = 1;
     if (collection.alpha != 1) collection.alpha = 1;
 
-    // The 13-action Spotify More sheet has an independently measured 62pt
-    // header + 10pt breathing room, 42pt rows, and a 64pt wrapping row.
-    // Do not impose those heights on unrelated UIMenu contents.
-    if (measuredMore && cells.count == 13) {
+    // The measured More sheet has a 62pt header, a 10pt gap, 42pt
+    // ordinary actions and 64pt wrapping actions. Preserve all UIKit cells,
+    // their index paths, and scroll gestures when the action count varies.
+    if (measuredMore && cells.count == count) {
         if (header) {
             CGRect title = header.frame;
             title.origin.y = 0;
@@ -658,7 +667,23 @@ BOOL SGRDropdownMatchSubmenuGeometry(UIView *menu) {
         }
         CGFloat y = 72;
         for (UICollectionViewCell *cell in cells) {
-            CGFloat rowHeight = cell.bounds.size.height > 55 ? 64 : 42;
+            BOOL wraps = cell.bounds.size.height > 55;
+            // UIKit 18 keeps "Go to artists concerts" on one 164pt line;
+            // UIKit 26 wraps it to the 162pt text column. Measure the
+            // real label, not the action title, so other locale strings work.
+            for (UIView *v in cell.contentView.subviews) {
+                if (![v isKindOfClass:UIStackView.class]) continue;
+                for (UIView *item in ((UIStackView *)v).arrangedSubviews) {
+                    if (![item isKindOfClass:UILabel.class]) continue;
+                    UILabel *label = (UILabel *)item;
+                    if (label.text.length && label.font &&
+                        [label.text sizeWithAttributes:@{NSFontAttributeName: label.font}].width > 162)
+                        wraps = YES;
+                    break;
+                }
+                break;
+            }
+            CGFloat rowHeight = wraps ? 64 : 42;
             positionReferenceRow(cell, CGRectMake(0, y, 250, rowHeight));
             y += rowHeight;
         }
@@ -666,7 +691,7 @@ BOOL SGRDropdownMatchSubmenuGeometry(UIView *menu) {
         objc_setAssociatedObject(collection, &kDropdownReferenceSizedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         if (collection.contentSize.height < y)
             collection.contentSize = CGSizeMake(collection.contentSize.width, y);
-        moreRowLines(collection, cells);
+        concealMoreRowSeparators(collection);
         referenceLine(collection, &kDropdownMoreHeaderLineKey, 62);
     }
     objc_setAssociatedObject(menu, &kDropdownMoreBusyKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
