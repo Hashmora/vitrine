@@ -11,7 +11,18 @@
 
 static char kBoxGlassKey;
 
-static BOOL isAddCell(UIView *cell) {
+// Spotify uses a different element for Blend's identical Add songs row. Limit the extra
+// path to its explicit identifier so other Blend cells are never touched.
+static BOOL isBlendAddCell(UIView *cell) {
+    __block BOOL found = NO;
+    SGForEachView(cell, ^(UIView *view) {
+        if ([view.accessibilityIdentifier isEqualToString:@"Components.UI.AddMediaRow"] &&
+            [view.accessibilityLabel isEqualToString:@"Add songs"]) found = YES;
+    });
+    return found;
+}
+
+static BOOL isPlaylistAddCell(UIView *cell) {
     for (UIView *sub in cell.subviews) {
         if ([NSStringFromClass(sub.class) containsString:@"AddMoreSectionElement"]) return YES;
     }
@@ -22,7 +33,8 @@ static BOOL isAddCell(UIView *cell) {
 - (void)layoutSubviews {
     %orig;
     UIView *cell = (UIView *)self;
-    if (!isAddCell(cell) || !SGRPlaylistHeaderOf(cell)) return;
+    BOOL blend = isBlendAddCell(cell);
+    if (!blend && (!isPlaylistAddCell(cell) || !SGRPlaylistHeaderOf(cell))) return;
     __block UIView *box = nil;
     SGForEachView(cell, ^(UIView *v) {
         if (!box && [v isMemberOfClass:UIView.class] && [NSStringFromClass(v.superview.class) hasSuffix:@"ImageViewHolder"]) box = v;
@@ -31,7 +43,11 @@ static BOOL isAddCell(UIView *cell) {
     // The legacy glass grows under a finger (SGGlassInteractive), and the 48pt ImageViewHolder around the square
     // clips to its bounds, which cut the capsule off at its edges while it was held.
     UIView *holder = box.superview;
-    if (SGUseLegacyGlass() && holder.clipsToBounds) holder.clipsToBounds = NO;
+    if (SGUseLegacyGlass()) {
+        // Blend's ImageViewHolder clips the press/morph exactly like Liked Songs'.
+        // Stop at the cell: the page's collection must still clip scrolled-off rows.
+        SGRUnclipUpTo(holder, ^BOOL(UIView *ancestor) { return ancestor == cell; });
+    }
 }
 %end
 
