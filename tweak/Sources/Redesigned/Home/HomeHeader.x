@@ -394,15 +394,15 @@ static void paintTint(SGRHomeTintView *tint, BOOL animated) {
     CAGradientLayer *layer = (CAGradientLayer *)tint.layer;
     UIColor *friday = tint.superview ? objc_getAssociatedObject(tint.superview, &kFridayColorKey) : nil;
     UIColor *musicCard = tint.superview ? objc_getAssociatedObject(tint.superview, &kMusicCardColorKey) : nil;
-    // Use exactly the same live Music accent as the Friday rim. Do not wait
-    // for the banner's asynchronous UIImage or the banner-specific callback.
-    UIColor *liveMusic = isFriday() ? selectedMusicAccent() : nil;
+    // The banner may remain on Spotify's Music feed after Friday ends.
+    // Its page tint follows the *presence of that banner*, not the calendar:
+    // the revolving header rim is independently gated by isFriday().
+    UIColor *liveMusic = (friday && musicFilterSelected()) ? selectedMusicAccent() : nil;
     UIColor *top = liveMusic ?: (friday ?: (musicCard ?: (sg_pageTint ?: UIColor.blackColor)));
-    // The native selected Music chip is pale (#A2D0FA in Stage 55). Using it
-    // raw as a 480pt backdrop washes out artwork and white labels. Clamp the
-    // Friday Music background to the same contrast-safe field luminance as
-    // the redesigned Home cards; keep the accent itself vivid in the rim.
-    if (isFriday() && musicFilterSelected() && (liveMusic || friday))
+    // Keep the banner background contrast-safe for as long as Spotify keeps
+    // New Music Friday on Music, including Saturday and later. No Friday
+    // accent leaks onto Home or ordinary Music feeds without this banner.
+    if (musicFilterSelected() && (liveMusic || friday))
         top = SGRFieldColorFor(top);
     NSArray *colors = @[(id)top.CGColor, (id)[top colorWithAlphaComponent:0].CGColor];
     if ([layer.colors isEqualToArray:colors]) return;
@@ -518,7 +518,9 @@ void SGRHomeTintFridayBanner(UIView *banner, UIImage *image) {
     while (page && ![page.accessibilityIdentifier hasPrefix:@"HomePageView-"]) page = page.superview;
     if (!page) return;
     BOOL sameImage = objc_getAssociatedObject(page, &kFridayImageKey) == image;
-    UIColor *nativeAccent = isFriday() ? selectedMusicAccent() : nil;
+    // The current Music pill is still a valid color source after midnight;
+    // only the decorative revolving ring follows the day of the week.
+    UIColor *nativeAccent = musicFilterSelected() ? selectedMusicAccent() : nil;
     if (sameImage && (!nativeAccent || [nativeAccent isEqual:objc_getAssociatedObject(page, &kFridayColorKey)])) return;
     objc_setAssociatedObject(page, &kFridayImageKey, image, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (nativeAccent) {
@@ -653,15 +655,25 @@ static void layoutTint(UIView *view) {
                         wrapper.backgroundColor = UIColor.clearColor;
                 }
             }
+            // Identify the actual NMF banner by Spotify's accessibility
+            // label, not just its FullBleedBanner class. Count its presence
+            // even before artwork arrives: otherwise a delayed UIImage can
+            // accidentally clear the Friday tint after the date changes.
             __block UIImageView *bannerImage = nil;
             SGForEachView(root, ^(UIView *part) {
                 if (!bannerImage && [part isKindOfClass:UIImageView.class] &&
-                    part.bounds.size.width >= 100 && ((UIImageView *)part).image)
+                    [part.accessibilityLabel isEqualToString:@"New Music Friday"])
                     bannerImage = (UIImageView *)part;
             });
-            if (bannerImage) {
-                bannerVisible = YES;
-                SGRHomeTintFridayBanner(root, bannerImage.image);
+            if (!bannerImage) continue;
+            bannerVisible = YES;
+            if (bannerImage.image) SGRHomeTintFridayBanner(root, bannerImage.image);
+            // The selected Music accent can arrive before the image. Paint
+            // the existing page tint immediately when the NMF banner exists.
+            UIColor *accent = musicFilterSelected() ? selectedMusicAccent() : nil;
+            if (accent) {
+                objc_setAssociatedObject(page, &kFridayColorKey, accent, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                paintTint(tint, YES);
             }
             break;
         }
