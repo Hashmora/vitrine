@@ -516,6 +516,32 @@ static void showListBehindHeader(UIView *page, UIView *header) {
     }
 }
 
+// Spotify reserves its old full-width tab-bar gutter at the bottom of the
+// library page even though Vitrine floats separate circles and mini-player
+// above the content. The content/list stop 52pt early on a 402x874 device
+// (822pt vs. 874pt); the uncovered region is the black "chin". Extend only
+// the library's scroll viewport into that existing gap, not the chrome or
+// the page's safe area, and leave Spotify's adjusted insets unchanged.
+static void showListUnderFloatingBar(UIView *page) {
+    UIView *content = childNamed(page, @"YourLibraryContentView");
+    if (!content || ![NSStringFromClass(content.class) hasSuffix:@"YourLibraryContentView"]) return;
+    UIScrollView *list = (UIScrollView *)SGRFindByIdentifier(content, SGRLibraryListIdentifier, &kListKey);
+    if (![list isKindOfClass:UIScrollView.class]) return;
+
+    CGFloat gap = CGRectGetHeight(page.bounds) - CGRectGetMaxY(content.frame);
+    // Only the reserved bottom bar gap, never force an arbitrary full-screen
+    // list if Spotify is showing a short sheet or a transition-sized page.
+    if (gap <= 0.5 || gap > 100 || content.frame.origin.y > 0.5) return;
+    CGRect frame = content.frame;
+    frame.size.height += gap;
+    if (!CGRectEqualToRect(content.frame, frame)) content.frame = frame;
+    CGRect listFrame = list.frame;
+    if (CGRectGetMaxY(listFrame) < CGRectGetHeight(content.bounds) - 0.5) {
+        listFrame.size.height += CGRectGetHeight(content.bounds) - CGRectGetMaxY(listFrame);
+        if (!CGRectEqualToRect(list.frame, listFrame)) list.frame = listFrame;
+    }
+}
+
 // Spotify's filter wrappers are marked opaque even with a nil background:
 // on an overlaid scroller that opaque promise can render as a black sheet.
 // Clear only the wrappers, never the actual chips or their glass capsules.
@@ -548,6 +574,7 @@ static void layoutRoot(UIView *page) {
             clearFilterStripe(header);
             showListBehindHeader(page, header);
         }
+        showListUnderFloatingBar(page);
     }
 
     NSArray<UIView *> *trailing = placeRoot(header);
@@ -604,6 +631,7 @@ static void layoutFolder(UIView *page) {
             clearFilterStripe(header);
             showListBehindHeader(page, header);
         }
+        showListUnderFloatingBar(page);
     }
 
     NSArray<UIView *> *placed = placeFolder(header);
