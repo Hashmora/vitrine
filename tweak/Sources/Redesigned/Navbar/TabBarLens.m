@@ -187,7 +187,10 @@ static const CGFloat kPlayStep = 1.0 / 120;
     _rimOverlay = [CALayer layer];
     _rimOverlay.name = @"Vitrine.LegacyLensAboveTabsRim";
     _rimOverlay.zPosition = 100;
-    _rimOverlay.masksToBounds = NO;
+    // The reflection remains above UIKit's artwork, but must not draw outside
+    // the same capsule silhouette as the refracting glass.
+    _rimOverlay.masksToBounds = YES;
+    _rimOverlay.cornerCurve = kCACornerCurveCircular;
     [_rimOverlay addSublayer:_perimeter];
     [_rimOverlay addSublayer:_glare];
     // A second, narrower directional gradient on the EXACT SAME outline.
@@ -253,6 +256,16 @@ static const CGFloat kPlayStep = 1.0 / 120;
 
 static BOOL bubbles(void);
 
+// The UITabBar's bounds are not the rendered platter boundary. The visible
+// capsule may be narrower or shifted while Spotify lays out the buttons.
+// Sample its actual rectangle so refracting panes cannot see its outer rail.
+static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
+    for (UIView *child in host.subviews)
+        if ([child.accessibilityIdentifier isEqualToString:@"Vitrine.LegacyTabBarCapsule"])
+            return child;
+    return fallback;
+}
+
 - (void)ensureGlyphEdgePane {
     UIView *host = self.superview;
     if (!host || !bubbles()) return;
@@ -275,6 +288,8 @@ static BOOL bubbles(void);
         _glyphEdgePane.rimless = YES;
         _glyphEdgePane.alpha = 0;
         _glyphEdgeMask = [CAGradientLayer layer];
+        _glyphEdgeMask.masksToBounds = YES;
+        _glyphEdgeMask.cornerCurve = kCACornerCurveCircular;
         _glyphEdgeMask.startPoint = CGPointMake(0, 0.5);
         _glyphEdgeMask.endPoint = CGPointMake(1, 0.5);
         // Replace the source pixels at the boundary with the actual backdrop
@@ -304,6 +319,8 @@ static BOOL bubbles(void);
         _platterEdgePane.alpha = 0;
         _platterEdgePane.layer.zPosition = 0;
         _platterEdgeMask = [CAGradientLayer layer];
+        _platterEdgeMask.masksToBounds = YES;
+        _platterEdgeMask.cornerCurve = kCACornerCurveCircular;
         _platterEdgeMask.startPoint = CGPointMake(0, 0.5);
         _platterEdgeMask.endPoint = CGPointMake(1, 0.5);
         // The reduced platter has a broader edge than individual glyphs.
@@ -364,6 +381,9 @@ static BOOL bubbles(void);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _glyphEdgeMask.frame = _glyphEdgePane.bounds;
+    _glyphEdgeMask.cornerRadius = CGRectGetHeight(_glyphEdgePane.bounds) / 2;
+    _platterEdgeMask.frame = _platterEdgePane.bounds;
+    _platterEdgeMask.cornerRadius = CGRectGetHeight(_platterEdgePane.bounds) / 2;
     NSArray *colors = @[
         (id)[UIColor colorWithWhite:1 alpha:left].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:left].CGColor,
@@ -419,6 +439,7 @@ static BOOL bubbles(void);
                                             cornerRadius:CGRectGetHeight(pathBounds) / 2];
     CGPathRef outline = opticalPath.CGPath;
     _rimOverlay.bounds = bounds;
+    _rimOverlay.cornerRadius = radius;
     _glareMask.path = outline;
     _perimeter.frame = bounds;
     _perimeter.path = outline;
@@ -430,11 +451,13 @@ static BOOL bubbles(void);
         if (!CGRectEqualToRect(_platterEdgePane.bounds, bounds)) _platterEdgePane.bounds = bounds;
         _platterEdgePane.layer.cornerRadius = radius;
         _platterEdgeMask.frame = bounds;
+        _platterEdgeMask.cornerRadius = radius;
     }
     if (_glyphEdgePane) {
         if (!CGRectEqualToRect(_glyphEdgePane.bounds, bounds)) _glyphEdgePane.bounds = bounds;
         _glyphEdgePane.layer.cornerRadius = radius;
         _glyphEdgeMask.frame = bounds;
+        _glyphEdgeMask.cornerRadius = radius;
     }
     [CATransaction commit];
 }
@@ -633,10 +656,10 @@ static BOOL bubbles(void) {
 // Keep the outer edge of the floating capsule undistorted. At the first
 // and last tabs the 116pt lifted lens slightly crosses the platter's edge;
 // its outermost refraction would otherwise bend the capsule boundary.
-// Suppress only the outward ~18% of the optical pane, progressively over
-// the final 24pt of travel. The inner crescent remains fully refractive.
+// Suppress the outward sampling band before the shader reaches the platter
+// rail. The center and internal tab boundaries retain their refraction.
 - (void)updateOuterEdgeGuard {
-    UIView *bar = _normalContent;
+    UIView *bar = SGRLensPlatterInHost(self.superview, _normalContent);
     if (!_glassOn || !bar || !self.superview || CGRectIsEmpty(_restFrame)) {
         if (_pane.layer.mask == _outerEdgeGuard) _pane.layer.mask = nil;
         [self updateGlyphEdgeMaskLeft:1 right:1];
@@ -646,21 +669,18 @@ static BOOL bubbles(void) {
     [self getPose:[self state] center:&center sx:&sx sy:&sy];
     CGRect barInHost = [bar convertRect:bar.bounds toView:self.superview];
     CGFloat halfWidth = self.bounds.size.width * sx / 2;
-    // The first and last centers have about -4pt of external overlap on the
-    // measured Apple layout. Leave a small border-safe band beyond that.
+    // Clearances are measured from the rendered capsule, not UITabBar bounds;
+    // the two can differ during layout and at the edge tabs.
     CGFloat leftClearance = center.x - halfWidth - CGRectGetMinX(barInHost);
     CGFloat rightClearance = CGRectGetMaxX(barInHost) - center.x - halfWidth;
-    // Preserve almost all of the outward optical band at both endpoints.
-    // Stage 26 reduced these alphas to zero, so the scaled platter edge
-    // appeared completely unbent at Home and Create.
-    // Only the OUTWARD ends are protected. Do not disable refraction at
-    // internal tab boundaries: they must still bend the scaled platter.
-    // Fade out sampling BEFORE the optical crescent reaches either outer
-    // platter rail. The old +3pt tolerance let the refraction sample a sliver
-    // of the tabbar's own dark/light boundary (a visible duplicate line).
-    // The central 56% of the lens and internal tab boundaries stay clear.
-    CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance - 9) / 24));
-    CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance - 9) / 24));
+    // Protect only whichever outward end approaches the capsule rail.
+    // Interior tab boundaries still use the normal refraction strength.
+    // The shader samples beyond the visible edge. Leave a protected band
+    // before the outer rail, then fade into the undistorted center. This also
+    // gates the icon-sampling pane: no displaced icon can protrude past the rim.
+    // Internal tab boundaries retain their refraction.
+    CGFloat leftAlpha = MAX(0, MIN(1, (leftClearance - 20) / 18));
+    CGFloat rightAlpha = MAX(0, MIN(1, (rightClearance - 20) / 18));
     // Both the 0.92x platter lens and the 1x icon-edge lens obey the same
     // outer-edge guard at Home / Create.
     [self updateGlyphEdgeMaskLeft:leftAlpha right:rightAlpha];
@@ -672,14 +692,20 @@ static BOOL bubbles(void) {
         _outerEdgeGuard = [CAGradientLayer layer];
         _outerEdgeGuard.startPoint = CGPointMake(0, 0.5);
         _outerEdgeGuard.endPoint = CGPointMake(1, 0.5);
-        _outerEdgeGuard.locations = @[@0, @0.22, @0.78, @1];
+        _outerEdgeGuard.masksToBounds = YES;
+        _outerEdgeGuard.cornerCurve = kCACornerCurveCircular;
+        // Hold the outward edge clear before the refraction blend begins.
+        _outerEdgeGuard.locations = @[@0, @0.13, @0.35, @0.65, @0.87, @1];
     }
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _outerEdgeGuard.frame = _pane.bounds;
+    _outerEdgeGuard.cornerRadius = CGRectGetHeight(_pane.bounds) / 2;
     _outerEdgeGuard.colors = @[(id)[UIColor colorWithWhite:1 alpha:leftAlpha].CGColor,
+                               (id)[UIColor colorWithWhite:1 alpha:leftAlpha].CGColor,
                                (id)UIColor.whiteColor.CGColor,
                                (id)UIColor.whiteColor.CGColor,
+                               (id)[UIColor colorWithWhite:1 alpha:rightAlpha].CGColor,
                                (id)[UIColor colorWithWhite:1 alpha:rightAlpha].CGColor];
     if (_pane.layer.mask != _outerEdgeGuard) _pane.layer.mask = _outerEdgeGuard;
     [CATransaction commit];
@@ -921,7 +947,8 @@ static BOOL bubbles(void) {
     // Its center comes from the finger/selection springs. Only cap an actual
     // excursion to the existing 8pt drag allowance, accounting for its size.
     if (st.lift > 0.001 && _normalContent && self.superview) {
-        CGRect platter = [_normalContent convertRect:_normalContent.bounds toView:self.superview];
+        UIView *surface = SGRLensPlatterInHost(self.superview, _normalContent);
+        CGRect platter = [surface convertRect:surface.bounds toView:self.superview];
         CGFloat half = baseWidth * *sx / 2;
         CGFloat minX = CGRectGetMinX(platter) - kLensLeftOverscroll + half;
         CGFloat maxX = CGRectGetMaxX(platter) + kLensOverscroll - half;
