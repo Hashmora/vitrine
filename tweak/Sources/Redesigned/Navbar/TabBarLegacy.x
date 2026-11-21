@@ -300,6 +300,13 @@ static char kNavDimKey, kCircleDimKey;
     CAGradientLayer *_heldLongSpecular;
     CAShapeLayer *_heldSpecularPath;
     CALayer *_heldRimOverlay;
+    CAGradientLayer *_quietGlare;
+    CAShapeLayer *_quietGlarePath;
+    CAShapeLayer *_quietPerimeter;
+    CAGradientLayer *_quietLongSpecular;
+    CAShapeLayer *_quietSpecularPath;
+    CALayer *_quietRimOverlay;
+    BOOL _outwardGuardLeft;
     BOOL _held;
     CGFloat _trackingStartX, _trackingDX;
     CAShapeLayer *_heldPerimeter;
@@ -379,6 +386,26 @@ static char kNavDimKey, kCircleDimKey;
         _heldGlow.mask = _heldGlowMask;
         _heldRimOverlay = [CALayer layer];
         _heldRimOverlay.name = @"Vitrine.LegacyCompactAboveGlyphRim";
+        _quietGlare = [CAGradientLayer layer];
+        _quietGlarePath = [CAShapeLayer layer];
+        _quietPerimeter = [CAShapeLayer layer];
+        _quietLongSpecular = [CAGradientLayer layer];
+        _quietSpecularPath = [CAShapeLayer layer];
+        SGRLegacyConfigureDirectionalRim(_quietGlare, _quietGlarePath,
+                                         _quietPerimeter, _quietLongSpecular,
+                                         _quietSpecularPath);
+        _quietGlare.opacity = 1;
+        _quietPerimeter.opacity = 1;
+        _quietLongSpecular.opacity = 1;
+        _quietRimOverlay = [CALayer layer];
+        _quietRimOverlay.name = @"Vitrine.LegacyCompactQuietRim";
+        _quietRimOverlay.zPosition = 100;
+        _quietRimOverlay.masksToBounds = YES;
+        _quietRimOverlay.cornerCurve = kCACornerCurveCircular;
+        [_quietRimOverlay addSublayer:_quietPerimeter];
+        [_quietRimOverlay addSublayer:_quietGlare];
+        [_quietRimOverlay addSublayer:_quietLongSpecular];
+        [_pane.layer addSublayer:_quietRimOverlay];
         _heldRimOverlay.zPosition = 100;
         _heldRimOverlay.masksToBounds = YES;
         _heldRimOverlay.cornerCurve = kCACornerCurveCircular;
@@ -418,6 +445,18 @@ static char kNavDimKey, kCircleDimKey;
     film.layer.cornerCurve = kCACornerCurveCircular;
     film.backgroundColor = SGUseLegacyGlass()
         ? [UIColor colorWithWhite:1 alpha:0.045] : SGRGlassFilmColor();
+    if (_quietRimOverlay) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        _quietRimOverlay.bounds = (CGRect){CGPointZero, quiet.size};
+        _quietRimOverlay.position = CGPointMake(CGRectGetMidX(_pane.bounds), CGRectGetMidY(_pane.bounds));
+        _quietRimOverlay.cornerRadius = quietRadius;
+        SGRLegacyLayoutDirectionalRim(_quietRimOverlay.bounds, _quietGlare,
+                                      _quietGlarePath, _quietPerimeter,
+                                      _quietLongSpecular, _quietSpecularPath);
+        _quietRimOverlay.hidden = !_outwardGuardLeft || !_shown || _capsuleBacked;
+        [CATransaction commit];
+    }
     if (_heldEdge) {
         CGRect expanded = CGRectInset(quiet, -8, -8); // 70pt raised circle from 54pt rest
         [CATransaction begin];
@@ -463,12 +502,14 @@ static char kNavDimKey, kCircleDimKey;
 }
 
 - (void)setOutwardRefractionGuardOnLeft:(BOOL)left {
+    _outwardGuardLeft = left;
     // Do not mask the entire moving circle: that would also remove its rim.
     // The glass core masks only its CABackdropLayer, leaving black dim and
     // both directional highlights untouched at the outer edge.
     [_heldEdge setBackdropOuterEdgeGuardLeft:left right:!left];
     if ([_pane isKindOfClass:SGLegacyGlassView.class])
         [(SGLegacyGlassView *)_pane setBackdropOuterEdgeGuardLeft:left right:!left];
+    if (_quietRimOverlay) _quietRimOverlay.hidden = !left || !_shown || _capsuleBacked;
 }
 
 - (void)setShown:(BOOL)shown {
@@ -478,6 +519,7 @@ static char kNavDimKey, kCircleDimKey;
     SGRShowGlass(_pane, shown && !_capsuleBacked);
     _film.alpha = shown && !_capsuleBacked ? 1 : 0;
     _glyph.alpha = shown ? 1 : 0;
+    if (_quietRimOverlay) _quietRimOverlay.hidden = !_outwardGuardLeft || !shown || _capsuleBacked;
     self.transform = shown ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.6, 0.6);
     self.userInteractionEnabled = shown;
     if (!shown) { [self setHeld:NO animated:NO]; [self setCreateOpen:NO]; }
@@ -488,6 +530,7 @@ static char kNavDimKey, kCircleDimKey;
     _capsuleBacked = backed;
     SGRShowGlass(_pane, _shown && !backed);
     _film.alpha = _shown && !backed ? 1 : 0;
+    if (_quietRimOverlay) _quietRimOverlay.hidden = !_outwardGuardLeft || !_shown || backed;
 }
 
 - (void)holdGlyphOnly:(CGFloat)alpha {
@@ -496,6 +539,7 @@ static char kNavDimKey, kCircleDimKey;
     SGRShowGlass(_pane, NO);
     _film.alpha = 0;
     _glyph.alpha = alpha;
+    if (_quietRimOverlay) _quietRimOverlay.hidden = YES;
     self.transform = CGAffineTransformIdentity;
     self.userInteractionEnabled = NO;
     [self setHeld:NO animated:NO];
