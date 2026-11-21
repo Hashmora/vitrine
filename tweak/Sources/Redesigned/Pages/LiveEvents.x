@@ -29,7 +29,16 @@
 
 static char kListKey, kBellKey, kSavedKey, kBellPinKey, kSavedPinKey, kTitleGlassKey;
 static char kEntityTitleKey, kEntityChipKey, kEntityFillKey;
-static char kCollapsedHeroMaskKey, kCollapsedHeroTouchKey, kCollapsedHeroA11yKey;
+static char kEntityHeaderScrollKey, kEntityHeaderReferenceKey, kEntityHeaderMotionKey;
+static char kEntityHeaderBaseTransformKey, kEntityHeaderInitialClipKey;
+
+// A scroll can replace its Encore header without being recreated. Keep the
+// current HeaderLayout weakly so its content is not retained by the observer.
+@interface SGRWeakEntityHeader : NSObject
+@property (nonatomic, weak) UIView *view;
+@end
+@implementation SGRWeakEntityHeader
+@end
 
 static Class sg_galleryPage;
 
@@ -199,59 +208,133 @@ static void dressEntityBar(UIView *bar) {
         SGRGlassTitleCapsule(title, &kEntityTitleKey, SGRTitleWidth(label), title.bounds.size.width, nil);
 }
 
-// Spotify leaves the HeaderLayout partially expanded after scrolling to the
-// top: the Event's ticket card or the Venue's Follow/Share/genre chips stop
-// under the navigation bar instead of continuing to scroll out. The old
-// gradient-only treatment did not affect these *content* views: they live in
-// _safeAreaView, a sibling of _backgroundViewContainer.
+// Native HeaderLayout does not always move its contents for the whole scroll.
+// On Event and Venue pages the header may stop shrinking while the list still
+// advances, leaving the ticket card or genre/action chips "frozen" below Back.
+// Stage 125 removed ALL _safeAreaView pixels at 33% of the hero displacement:
+// this cut the card in half and produced an abrupt black area mid-scroll.
 //
-// Mask only that content subtree once its hero is mostly collapsed. The
-// _foregroundViewContainer (Back and title) remains pinned, and the collection
-// underneath is completely untouched. On returning to the top, restore both
-// drawing and interaction. Never hide an arranged SwiftUI/Encore view itself.
-static void concealCollapsedEntityContent(UIView *header) {
+// Instead, first let Spotify run its normal collapsing layout. Only once a
+// continuing list scroll no longer moves the native hero do we advance the
+// hero CONTENT by the extra scroll amount, behind its existing safe-area clip.
+// Nothing suddenly disappears; it slides out with the same finger movement.
+// The foreground navigation remains a separate, stationary sibling.
+static void advanceStalledEntityContent(UIView *header) {
     NSString *identifier = header.accessibilityIdentifier;
-    if (![identifier isEqualToString:@"Components.UI.EventHeaderEntityPage"] &&
-        ![identifier isEqualToString:@"Components.UI.VenueHeaderEntityPage"]) return;
-    if (!entityRootOf(header)) return;
-    UIView *clip = nil;
-    for (UIView *sub in header.subviews) {
-        if ([sub.accessibilityIdentifier isEqualToString:@"_clippingView"]) { clip = sub; break; }
+    BOOL event = [identifier isEqualToString:@"Components.UI.EventHeaderEntityPage"];
+    if (!event && ![identifier isEqualToString:@"Components.UI.VenueHeaderEntityPage"]) return;
+    UIView *root = entityRootOf(header);
+    if (!root) return;
+    UICollectionView *list = nil;
+    NSString *listID = event ? @"LiveEventPage.ContentScrollView" : @"VenuePage.ContentScrollView";
+    for (UIView *child in root.subviews) {
+        if ([child isKindOfClass:UICollectionView.class] &&
+            [child.accessibilityIdentifier isEqualToString:listID]) {
+            list = (UICollectionView *)child;
+            break;
+        }
     }
-    UIView *background = nil, *safeArea = nil;
-    for (UIView *sub in clip.subviews) {
-        if ([sub.accessibilityIdentifier isEqualToString:@"_backgroundViewContainer"]) background = sub;
-        if ([sub.accessibilityIdentifier isEqualToString:@"_safeAreaView"]) safeArea = sub;
+    if (!list) return;
+    UIView *clip = nil, *background = nil, *safeArea = nil;
+    for (UIView *child in header.subviews) {
+        if ([child.accessibilityIdentifier isEqualToString:@"_clippingView"]) {
+            clip = child;
+            break;
+        }
+    }
+    for (UIView *child in clip.subviews) {
+        if ([child.accessibilityIdentifier isEqualToString:@"_backgroundViewContainer"]) background = child;
+        if ([child.accessibilityIdentifier isEqualToString:@"_safeAreaView"]) safeArea = child;
     }
     if (!background || !safeArea || header.bounds.size.height < 1) return;
-    // HeaderView retains its full-height bounds and a negative Y as Spotify
-    // collapses it. This is measured on the live hierarchy, unlike a fixed
-    // 189/216/243pt threshold that would fail for another event or venue.
-    UIView *fullHero = nil;
-    for (UIView *sub in background.subviews) {
-        if (sub.bounds.size.height >= header.bounds.size.height - 1) { fullHero = sub; break; }
-    }
-    if (!fullHero || fullHero.bounds.size.height < 140) return;
-    CGFloat progress = MAX(0, -fullHero.frame.origin.y) / fullHero.bounds.size.height;
-    BOOL collapsed = progress > 0.33;
-    CALayer *empty = objc_getAssociatedObject(safeArea, &kCollapsedHeroMaskKey);
-    if (collapsed) {
-        if (!empty) {
-            empty = [CALayer layer]; // empty bounds: mask removes only the frozen header content
-            objc_setAssociatedObject(safeArea, &kCollapsedHeroMaskKey, empty, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            objc_setAssociatedObject(safeArea, &kCollapsedHeroTouchKey, @(safeArea.userInteractionEnabled), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            objc_setAssociatedObject(safeArea, &kCollapsedHeroA11yKey, @(safeArea.accessibilityElementsHidden), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    UIView *hero = nil, *content = nil;
+    for (UIView *child in background.subviews) {
+        if (child.bounds.size.height >= header.bounds.size.height - 1) {
+            hero = child;
+            break;
         }
-        if (safeArea.layer.mask != empty) safeArea.layer.mask = empty;
-        safeArea.userInteractionEnabled = NO;
-        safeArea.accessibilityElementsHidden = YES;
-    } else if (empty) {
-        if (safeArea.layer.mask == empty) safeArea.layer.mask = nil;
-        NSNumber *touch = objc_getAssociatedObject(safeArea, &kCollapsedHeroTouchKey);
-        NSNumber *a11y = objc_getAssociatedObject(safeArea, &kCollapsedHeroA11yKey);
-        if (touch) safeArea.userInteractionEnabled = touch.boolValue;
-        if (a11y) safeArea.accessibilityElementsHidden = a11y.boolValue;
     }
+    for (UIView *child in safeArea.subviews) {
+        if ([child.accessibilityIdentifier isEqualToString:@"_headerContentContainer"]) {
+            content = child;
+            break;
+        }
+    }
+    if (!hero || !content || hero.bounds.size.height < 140) return;
+
+    NSMutableDictionary *motion = objc_getAssociatedObject(header, &kEntityHeaderMotionKey);
+    if (!motion || [motion[@"content"] nonretainedObjectValue] != content) {
+        motion = [NSMutableDictionary dictionaryWithDictionary:@{
+            @"content": [NSValue valueWithNonretainedObject:content],
+            @"offset": @(list.contentOffset.y),
+            @"heroY": @(hero.frame.origin.y),
+            @"nativeCenterY": @(content.center.y),
+            @"height": @(header.bounds.size.height),
+            @"extra": @0.0
+        }];
+        objc_setAssociatedObject(header, &kEntityHeaderMotionKey, motion, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CGFloat offset = list.contentOffset.y;
+    CGFloat heroY = hero.frame.origin.y;
+    CGFloat height = header.bounds.size.height;
+    CGFloat extra = [motion[@"extra"] doubleValue];
+    CGFloat deltaScroll = offset - [motion[@"offset"] doubleValue];
+    CGFloat deltaHero = heroY - [motion[@"heroY"] doubleValue];
+    CGFloat deltaHeight = height - [motion[@"height"] doubleValue];
+    // UIView.center is not affected by our transform, so this tests whether
+    // Spotify itself is still moving the content during the collapse.
+    CGFloat deltaNative = content.center.y - [motion[@"nativeCenterY"] doubleValue];
+    BOOL movingHero = fabs(deltaHero) > 0.75 || fabs(deltaHeight) > 0.75 || fabs(deltaNative) > 0.75;
+    if (heroY > -12 || movingHero) {
+        // Native header is still collapsing (or is expanding again): never
+        // compensate during this part of Spotify's animation.
+        extra = 0;
+    } else if (deltaScroll > 0.5) {
+        // Header position is stationary but scroll progresses downwards.
+        extra = MIN(hero.bounds.size.height, extra + deltaScroll);
+    } else if (deltaScroll < -0.5) {
+        // Scroll back through exactly the extra travel before letting the
+        // native header expand; no sudden reverse visibility transition.
+        extra = MAX(0, extra + deltaScroll);
+    }
+    motion[@"offset"] = @(offset);
+    motion[@"heroY"] = @(heroY);
+    motion[@"nativeCenterY"] = @(content.center.y);
+    motion[@"height"] = @(height);
+    motion[@"extra"] = @(extra);
+
+    NSValue *base = objc_getAssociatedObject(content, &kEntityHeaderBaseTransformKey);
+    if (!base) {
+        base = [NSValue valueWithCGAffineTransform:content.transform];
+        objc_setAssociatedObject(content, &kEntityHeaderBaseTransformKey, base, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    CGAffineTransform expected = CGAffineTransformTranslate(base.CGAffineTransformValue, 0, -extra);
+    if (!CGAffineTransformEqualToTransform(content.transform, expected)) content.transform = expected;
+    NSNumber *initialClip = objc_getAssociatedObject(safeArea, &kEntityHeaderInitialClipKey);
+    if (!initialClip) {
+        initialClip = @(safeArea.clipsToBounds);
+        objc_setAssociatedObject(safeArea, &kEntityHeaderInitialClipKey, initialClip, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    // Clip only the moving CONTENT, never the pinned nav or the artwork.
+    BOOL shouldClip = extra > 0.5 || initialClip.boolValue;
+    if (safeArea.clipsToBounds != shouldClip) safeArea.clipsToBounds = shouldClip;
+
+    SGRWeakEntityHeader *reference = objc_getAssociatedObject(list, &kEntityHeaderReferenceKey);
+    if (!reference) {
+        reference = [SGRWeakEntityHeader new];
+        objc_setAssociatedObject(list, &kEntityHeaderReferenceKey, reference, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    reference.view = header;
+    SGRFollowOffset(list, &kEntityHeaderScrollKey, ^(UIScrollView *watched) {
+        // Read the settled frame after Spotify's own scrolling/layout pass;
+        // observing an offset before that layout would falsely detect a stall.
+        __weak UIScrollView *weakScroll = watched;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIScrollView *scroll = weakScroll;
+            SGRWeakEntityHeader *ref = objc_getAssociatedObject(scroll, &kEntityHeaderReferenceKey);
+            if (ref.view.window) advanceStalledEntityContent(ref.view);
+        });
+    });
 }
 
 // The genre tags on Event and Venue pages are LiveEvents_ECMKit.ConceptChipView,
@@ -294,7 +377,7 @@ static void dressEntityConceptChip(UIView *chip) {
     Class bar = SGRSwiftClass(@"EncoreConsumerMobile_BaseKit", @"HeaderNavigationBar");
     if (bar) SGRPassView(bar, ^(UIView *view) { dressEntityBar(view); });
     Class header = SGRSwiftClass(@"LegacyUI_ECMCoreKit", @"HeaderLayout");
-    if (header) SGRPassView(header, ^(UIView *view) { concealCollapsedEntityContent(view); });
+    if (header) SGRPassView(header, ^(UIView *view) { advanceStalledEntityContent(view); });
     Class concept = SGRSwiftClass(@"LiveEvents_ECMKit", @"ConceptChipView");
     if (concept) SGRPassView(concept, ^(UIView *view) { dressEntityConceptChip(view); });
 }
