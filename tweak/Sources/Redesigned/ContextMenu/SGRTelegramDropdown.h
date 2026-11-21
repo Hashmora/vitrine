@@ -9,3 +9,8 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass);
 void SGRTelegramDropdownCellHighlightChanged(UICollectionViewCell *cell);
 void SGRTelegramDropdownCellLaidOut(UICollectionViewCell *cell);
 void SGRTelegramDropdownContentLaidOut(UIView *content);
+
+// A measured six-action geometry parity pass (iOS 18 => iOS 26). Does not
+// replace UIApplication action dispatch or the highlight gesture recognizer.
+void SGRTelegramDropdownMatchReferenceGeometry(UIView *list);
+BOOL SGRTelegramDropdownReferenceHit(UICollectionView *collection, CGPoint point, NSIndexPath **index);

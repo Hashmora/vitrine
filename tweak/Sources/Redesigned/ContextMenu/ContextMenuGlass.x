@@ -67,7 +67,13 @@ static void glassMenu(UIView *list) {
         if (sub != glass && [sub isKindOfClass:UIVisualEffectView.class] && !sub.hidden) sub.hidden = YES;
     }
 
-    if (telegramDropdown) SGRTelegramDressDropdown(list, platter, glass);
+    if (telegramDropdown) {
+        SGRTelegramDressDropdown(list, platter, glass);
+        SGRTelegramDropdownMatchReferenceGeometry(list);
+        // The reference pass can grow the panel. Refit the pane here, without
+        // asking UIKit for an unmeasured or unrelated cell configuration.
+        if (!CGRectEqualToRect(glass.frame, platter.bounds)) glass.frame = platter.bounds;
+    }
     static dispatch_once_t once;
     dispatch_once(&once, ^{ SGLog(@"context menu: glass over a platter of %@", NSStringFromCGRect(platter.bounds)); });
 }
@@ -129,6 +135,17 @@ static void bubbleMenu(UIView *list) {
 - (void)layoutSubviews {
     %orig;
     SGRTelegramDropdownContentLaidOut((UIView *)self);
+}
+%end
+
+// UICollectionView normally consults its cached iOS 18 layout when deciding
+// which action was tapped. For a measured, repositioned dropdown use the
+// actual visible cell rectangles instead, so its hit areas stay aligned.
+%hook UICollectionView
+- (NSIndexPath *)indexPathForItemAtPoint:(CGPoint)point {
+    NSIndexPath *matching = nil;
+    if (SGRTelegramDropdownReferenceHit((UICollectionView *)self, point, &matching)) return matching;
+    return %orig;
 }
 %end
 

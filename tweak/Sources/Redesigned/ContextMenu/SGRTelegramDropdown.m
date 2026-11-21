@@ -319,6 +319,155 @@ void SGRTelegramDressDropdown(UIView *list, UIView *platter, UIView *glass) {
     }
 }
 
+// The player button menu has six native actions. The iOS 18 layout gives
+// them a 265.7pt platter; the same actions on iOS 26 occupy 315pt. These
+// reference metrics were measured with SG_DRIVER on both simulators, *not*
+// inferred from an image. We adjust the real UIKit cells and their hit map,
+// rather than stretch just the dark material or draw an inert duplicate menu.
+// Other UIMenu shapes retain native heights until independently measured.
+static char kTGReferenceSizedKey, kTGReferenceBusyKey, kTGRefLine1Key, kTGRefLine2Key;
+
+static NSUInteger menuItemCount(UICollectionView *collection) {
+    NSUInteger count = 0;
+    for (NSInteger section = 0; section < collection.numberOfSections; section++)
+        count += [collection numberOfItemsInSection:section];
+    return count;
+}
+
+static BOOL hasSubtitle(UICollectionViewCell *cell) {
+    for (UIView *v in cell.contentView.subviews) {
+        if (![v isKindOfClass:UIStackView.class]) continue;
+        NSUInteger labels = 0;
+        for (UIView *item in ((UIStackView *)v).arrangedSubviews)
+            if ([item isKindOfClass:UILabel.class]) labels++;
+        return labels >= 2;
+    }
+    return NO;
+}
+
+static void makeReferenceTitleWrap(UICollectionViewCell *cell) {
+    for (UIView *v in cell.contentView.subviews) {
+        if (![v isKindOfClass:UIStackView.class]) continue;
+        for (UIView *item in ((UIStackView *)v).arrangedSubviews) {
+            if (![item isKindOfClass:UILabel.class]) continue;
+            UILabel *label = (UILabel *)item;
+            if (label != ((UIStackView *)v).arrangedSubviews.firstObject) continue;
+            if (label.numberOfLines != 2) label.numberOfLines = 2;
+            if (fabs(label.preferredMaxLayoutWidth - 162.0) > 0.5) label.preferredMaxLayoutWidth = 162.0;
+            if (label.lineBreakMode != NSLineBreakByWordWrapping) label.lineBreakMode = NSLineBreakByWordWrapping;
+            break;
+        }
+    }
+}
+
+static void positionReferenceRow(UICollectionViewCell *cell, CGRect target) {
+    if (!CGRectEqualToRect(cell.frame, target)) cell.frame = target;
+    // Keep UICollectionViewCell's content view aligned with the adjusted
+    // actual touch rectangle, rather than letting the old 64pt clip survive.
+    if (!CGRectEqualToRect(cell.contentView.frame, cell.bounds)) cell.contentView.frame = cell.bounds;
+    matchDropdownRowContent(cell);
+}
+
+static void referenceLine(UICollectionView *collection, const void *key, CGFloat y) {
+    UIView *line = objc_getAssociatedObject(collection, key);
+    if (!line) {
+        line = [UIView new];
+        line.userInteractionEnabled = NO;
+        line.accessibilityElementsHidden = YES;
+        line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+        objc_setAssociatedObject(collection, key, line, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (line.superview != collection) [collection addSubview:line];
+    CGFloat pixel = 1.0 / MAX(1, collection.window.screen.scale);
+    CGRect target = CGRectMake(24, y, MAX(0, collection.bounds.size.width - 48), pixel);
+    if (!CGRectEqualToRect(line.frame, target)) line.frame = target;
+}
+
+BOOL SGRTelegramDropdownReferenceHit(UICollectionView *collection, CGPoint point, NSIndexPath **index) {
+    if (![objc_getAssociatedObject(collection, &kTGReferenceSizedKey) boolValue]) return NO;
+    // A hit follows the visual cell positions, not UIKit 18's stale flow
+    // layout attributes. Required for the action and highlight to agree.
+    if (index) *index = nil;
+    for (UICollectionViewCell *cell in collection.visibleCells) {
+        if (!CGRectContainsPoint(cell.frame, point)) continue;
+        NSIndexPath *found = [collection indexPathForCell:cell];
+        if (found) { if (index) *index = found; return YES; }
+    }
+    // Do not fall back to UIKit's original indices in the inter-row gaps:
+    // its cached 18.x positions could otherwise select the wrong action.
+    return YES;
+}
+
+void SGRTelegramDropdownMatchReferenceGeometry(UIView *list) {
+    if (!list.window || ![objc_getAssociatedObject(menuRoot(list), &kTGMenuRootKey) boolValue]) return;
+    // menuRoot() deliberately returns the outermost context-menu container to
+    // share one style marker across nested More lists. For sizing we need the
+    // *inner* menu view, which actually owns the 250pt platter rectangle.
+    UIView *root = nil;
+    for (UIView *v = list; v && ![v isKindOfClass:UIWindow.class]; v = v.superview) {
+        if ([NSStringFromClass(v.class) isEqualToString:@"_UIContextMenuView"]) { root = v; break; }
+    }
+    if (!root || [objc_getAssociatedObject(root, &kTGReferenceBusyKey) boolValue]) return;
+    UIView *platter = nil;
+    for (UIView *v in list.subviews)
+        if ([v isMemberOfClass:UIView.class] && v.bounds.size.width > 200) { platter = v; break; }
+    UICollectionView *collection = platter ? menuCollection(platter) : nil;
+    if (!collection || fabs(collection.bounds.size.width - 250) > 2 || menuItemCount(collection) != 6) return;
+    NSArray<UICollectionViewCell *> *cells = collection.visibleCells;
+    if (cells.count != 6) return;
+    NSMutableArray<UICollectionViewCell *> *tiles = [NSMutableArray array];
+    NSMutableArray<UICollectionViewCell *> *rows = [NSMutableArray array];
+    for (UICollectionViewCell *cell in cells) {
+        if (cell.bounds.size.width < 130) [tiles addObject:cell];
+        else [rows addObject:cell];
+    }
+    if (tiles.count != 3 || rows.count != 3) return;
+    [tiles sortUsingComparator:^NSComparisonResult(UICollectionViewCell *a, UICollectionViewCell *b) {
+        return CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame) ? NSOrderedAscending :
+               CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame) ? NSOrderedDescending : NSOrderedSame;
+    }];
+    [rows sortUsingComparator:^NSComparisonResult(UICollectionViewCell *a, UICollectionViewCell *b) {
+        return CGRectGetMinY(a.frame) < CGRectGetMinY(b.frame) ? NSOrderedAscending :
+               CGRectGetMinY(a.frame) > CGRectGetMinY(b.frame) ? NSOrderedDescending : NSOrderedSame;
+    }];
+    // Only the measured quick-actions + two subtitles + More pattern. A
+    // different six-item dropdown must not receive unrelated heights.
+    if (!hasSubtitle(rows[0]) || !hasSubtitle(rows[1]) || hasSubtitle(rows[2])) return;
+
+    objc_setAssociatedObject(root, &kTGReferenceBusyKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    const CGFloat height = 315.0;
+    CGRect frame = root.frame;
+    frame.size.height = height;
+    if (!CGRectEqualToRect(root.frame, frame)) root.frame = frame;
+    CGRect bounds = list.frame;
+    bounds.size.height = height;
+    if (!CGRectEqualToRect(list.frame, bounds)) list.frame = bounds;
+    bounds = platter.frame;
+    bounds.size.height = height;
+    if (!CGRectEqualToRect(platter.frame, bounds)) platter.frame = bounds;
+
+    for (NSUInteger i = 0; i < 3; i++)
+        positionReferenceRow(tiles[i], CGRectMake(8 + 78 * i, 0, 78, 93));
+    positionReferenceRow(rows[0], CGRectMake(0, 104, 250, 80));
+    positionReferenceRow(rows[1], CGRectMake(0, 184, 250, 58));
+    positionReferenceRow(rows[2], CGRectMake(0, 263, 250, 42));
+    makeReferenceTitleWrap(rows[0]);
+
+    // Native 8pt spacers are at the wrong positions. Keep them in the data
+    // source but suppress only their paint; use the measured one-pixel lines.
+    for (UIView *view in collection.subviews) {
+        if (![view isKindOfClass:UICollectionReusableView.class] ||
+            [view isKindOfClass:UICollectionViewCell.class]) continue;
+        if (view.layer.opacity != 0) view.layer.opacity = 0;
+    }
+    referenceLine(collection, &kTGRefLine1Key, 93);
+    referenceLine(collection, &kTGRefLine2Key, 252);
+    CGSize content = collection.contentSize;
+    if (content.height < height) collection.contentSize = CGSizeMake(content.width, height);
+    objc_setAssociatedObject(collection, &kTGReferenceSizedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(root, &kTGReferenceBusyKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
 void SGRTelegramDropdownCellHighlightChanged(UICollectionViewCell *cell) {
     if (!cell.window) return;
     UIView *list = nil;
