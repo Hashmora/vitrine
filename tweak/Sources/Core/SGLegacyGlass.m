@@ -1,4 +1,5 @@
 #import "SGLegacyGlass.h"
+#import "SGLegacyGlassRim.h"
 #import "SGRuntime.h"
 #import "SGLog.h"
 #import <objc/runtime.h>
@@ -387,143 +388,85 @@ static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CG
     return transform;
 }
 
-#pragma mark - the rim's light
+#pragma mark - common directional specular
 
-// The light the system's glass draws along its rim, as adaptive_liquid_glass measured it (shaders/liquid_glass.frag,
-// regularDark): a white line kRimWidth wide whose brightness follows which way the rim faces, kRimIntensity times
-// max(n . L, 0) where the rim faces the light, top left (lightAngle -3 pi / 4), and kRimBack of that where it faces
-// away, so the sides are lit by their slant and the corners across the light are dark. No colour fringe: the measured
-// glass has none (dispersion 0), and ours, with a brighter glare, drew the sides as a frosted white outline.
-//
-// The brightness is a small picture of the rim's normal at every point (the normal changes slowly, so a point per
-// pixel is enough), cached by size, under a mask of the line itself, which stays sharp.
-static const CGFloat kRimWidth = 1.36, kRimIntensity = 0.33, kRimBack = 0.35;
+// Every Legacy glass pane now uses the same three-part rim as the compact
+// leading tab circle (Stage 134). Old panes used a CPU-generated normal-map
+// highlight, and "classic" panes a separate weaker diagonal gradient. Both
+// profiles are replaced here; the underlying CABackdrop refraction is unchanged.
 static NSString *const kSpecularName = @"sg.specular";
-
-static CGPathRef rimPath(CGRect bounds, CGFloat inset, CGFloat radius) {
-    CGRect rect = CGRectInset(bounds, inset, inset);
-    CGFloat r = MAX(0, MIN(radius - inset, MIN(rect.size.width, rect.size.height) / 2));
-    return [UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:r].CGPath;
-}
-
-static CAShapeLayer *stroke(CGColorRef color, CGFloat width) {
-    CAShapeLayer *line = [CAShapeLayer layer];
-    line.fillColor = nil;
-    line.strokeColor = color;
-    line.lineWidth = width;
-    return line;
-}
-
-// White at the rim's brightness for its normal at each point, a point per pixel.
-// An object, so the caller holds it however soon the cache lets it go.
-static id SGRimLight(CGSize size, CGFloat radius) {
-    static NSCache<NSString *, id> *cache;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 32; });
-    size_t w = (size_t)MAX(2, ceil(size.width)), h = (size_t)MAX(2, ceil(size.height));
-    radius = MIN(radius, MIN(size.width, size.height) / 2);
-    NSString *key = [NSString stringWithFormat:@"%zu %zu %.1f", w, h, radius];
-    id cached = [cache objectForKey:key];
-    if (cached) return cached;
-
-    const CGFloat lx = -M_SQRT1_2, ly = -M_SQRT1_2;   // towards the light, top left, in the layer's y-down space
-    uint8_t *pixels = calloc(w * h, 4);
-    for (size_t y = 0; y < h; y++) {
-        for (size_t x = 0; x < w; x++) {
-            CGFloat nx, ny;
-            SGRoundedRectSDF(x + 0.5, y + 0.5, size.width, size.height, radius, &nx, &ny);
-            CGFloat facing = nx * lx + ny * ly;
-            CGFloat a = kRimIntensity * (MAX(facing, 0) + kRimBack * MAX(-facing, 0));
-            uint8_t v = (uint8_t)lround(MIN(1, a) * 255);
-            uint8_t *p = pixels + (y * w + x) * 4;
-            p[0] = p[1] = p[2] = p[3] = v;   // premultiplied white
-        }
-    }
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    CGContextRef context = CGBitmapContextCreate(pixels, w, h, 8, w * 4, space, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
-    CGImageRef image = context ? CGBitmapContextCreateImage(context) : NULL;
-    if (context) CGContextRelease(context);
-    CGColorSpaceRelease(space);
-    free(pixels);
-    if (!image) return nil;
-    id object = (__bridge_transfer id)image;
-    [cache setObject:object forKey:key];
-    return object;
-}
-
-// The classic pane's rim: the glare it first had, a one point line bright at the top-left and the bottom-right corners
-// and gone along the rest.
 static NSString *const kClassicSpecularName = @"sg.specular.classic";
+static NSString *const kGlareName = @"sg.specular.glare";
+static NSString *const kPerimeterName = @"sg.specular.perimeter";
+static NSString *const kLongSpecularName = @"sg.specular.long";
 
-void SGLegacyGlassClassicSpecular(CALayer *host, CGRect bounds, CGFloat radius) {
-    if (@available(iOS 26.0, *)) return;
-    if (!host || bounds.size.width < 2 || bounds.size.height < 2) return;
-    CAGradientLayer *rim = nil;
-    for (CALayer *sub in host.sublayers) {
-        if ([sub.name isEqualToString:kClassicSpecularName]) rim = (CAGradientLayer *)sub;
-        if ([sub.name isEqualToString:kSpecularName]) sub.hidden = YES;
-    }
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    if (!rim) {
-        rim = [CAGradientLayer layer];
-        rim.name = kClassicSpecularName;
-        rim.startPoint = CGPointMake(0, 0);
-        rim.endPoint = CGPointMake(1, 1);
-        rim.locations = @[@0, @0.28, @0.72, @1];
-        rim.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.75].CGColor,
-                       (id)[UIColor colorWithWhite:1 alpha:0].CGColor,
-                       (id)[UIColor colorWithWhite:1 alpha:0].CGColor,
-                       (id)[UIColor colorWithWhite:1 alpha:0.55].CGColor];
-        rim.zPosition = 100;
-        rim.mask = stroke(UIColor.whiteColor.CGColor, 1);
-        [host addSublayer:rim];
-    }
-    rim.hidden = NO;
-    rim.frame = bounds;
-    CAShapeLayer *line = (CAShapeLayer *)rim.mask;
-    line.frame = rim.bounds;
-    line.path = rimPath(rim.bounds, 0.5, radius);
-    [CATransaction commit];
+static CALayer *subWithName(CALayer *host, NSString *name) {
+    for (CALayer *sub in host.sublayers) if ([sub.name isEqualToString:name]) return sub;
+    return nil;
+}
+
+// Used by host-backed controls (whose normal pane can be hidden during a
+// capsule-to-circle transition) and by other callers that need a rim only.
+void SGLegacyGlassSetSpecularHidden(CALayer *host, BOOL hidden) {
+    CALayer *rim = subWithName(host, kSpecularName);
+    if (rim && rim.hidden != hidden) rim.hidden = hidden;
 }
 
 void SGLegacyGlassSpecular(CALayer *host, CGRect bounds, CGFloat radius) {
     if (@available(iOS 26.0, *)) return;
     if (!host || bounds.size.width < 2 || bounds.size.height < 2) return;
-    CALayer *rim = nil;
-    for (CALayer *sub in host.sublayers) {
-        if ([sub.name isEqualToString:kSpecularName]) rim = sub;
-        // A pane that has grown out of the big panes' size draws this rim instead of theirs.
-        if ([sub.name isEqualToString:kClassicSpecularName]) sub.hidden = YES;
-    }
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
+    CALayer *oldClassic = subWithName(host, kClassicSpecularName);
+    if (oldClassic) oldClassic.hidden = YES;
+    CALayer *rim = subWithName(host, kSpecularName);
     if (!rim) {
         rim = [CALayer layer];
         rim.name = kSpecularName;
-        rim.contentsGravity = kCAGravityResize;
-        // Over everything else in the host: a thin line, and the film or content under it must not hide it.
         rim.zPosition = 100;
-        rim.mask = stroke(UIColor.whiteColor.CGColor, kRimWidth);
+        rim.masksToBounds = YES;
+        rim.cornerCurve = kCACornerCurveCircular;
+        CAGradientLayer *glare = [CAGradientLayer layer];
+        glare.name = kGlareName;
+        CAShapeLayer *perimeter = [CAShapeLayer layer];
+        perimeter.name = kPerimeterName;
+        CAGradientLayer *longSpecular = [CAGradientLayer layer];
+        longSpecular.name = kLongSpecularName;
+        CAShapeLayer *glareMask = [CAShapeLayer layer];
+        CAShapeLayer *specularMask = [CAShapeLayer layer];
+        SGLegacyConfigureDirectionalRim(glare, glareMask, perimeter,
+                                        longSpecular, specularMask);
+        [rim addSublayer:perimeter];
+        [rim addSublayer:glare];
+        [rim addSublayer:longSpecular];
         [host addSublayer:rim];
     }
     rim.hidden = NO;
     rim.frame = bounds;
-    id light = SGRimLight(bounds.size, radius);
-    if (light != rim.contents) rim.contents = light;
-    CAShapeLayer *line = (CAShapeLayer *)rim.mask;
-    line.frame = rim.bounds;
-    line.path = rimPath(rim.bounds, kRimWidth / 2, radius);
+    rim.cornerRadius = MAX(0, MIN(radius, MIN(bounds.size.width, bounds.size.height) / 2));
+    CAGradientLayer *glare = (CAGradientLayer *)subWithName(rim, kGlareName);
+    CAShapeLayer *perimeter = (CAShapeLayer *)subWithName(rim, kPerimeterName);
+    CAGradientLayer *longSpecular = (CAGradientLayer *)subWithName(rim, kLongSpecularName);
+    if (glare && perimeter && longSpecular) {
+        SGLegacyLayoutDirectionalRim((CGRect){CGPointZero, bounds.size}, radius,
+                                     glare, (CAShapeLayer *)glare.mask, perimeter,
+                                     longSpecular, (CAShapeLayer *)longSpecular.mask);
+    }
     [CATransaction commit];
+}
+
+// Classic large sheets and small controls share the same light, not a separate
+// "classic" gradient: one consistent Legacy glass optical signature.
+void SGLegacyGlassClassicSpecular(CALayer *host, CGRect bounds, CGFloat radius) {
+    SGLegacyGlassSpecular(host, bounds, radius);
 }
 
 #pragma mark - SGLegacyGlassView
 
 // A pane resized again this soon after the last time is being resized frame by frame (a bar's stand-in following the
-// player as it closes, BarTransition.x): the mesh is made for the pane's proportions rather than its points, and the rim's
-// light stretches with its layer, so in between only frames move and both are made again once the size has stood still
-// for kSettle. Made on every frame, the light's bitmap (every pixel worked out on the CPU) and the mesh dropped frames on
-// an iPhone 11.
+// player as it closes, BarTransition.x): the mesh is made for the pane's proportions rather than its points.
+// During this burst the common directional rim tracks the bounds, while the expensive mesh rebuild waits for
+// kSettle. Rebuilding the mesh on every frame dropped frames on an iPhone 11.
 static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
 
 @implementation SGLegacyGlassView {
@@ -705,7 +648,7 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     [CATransaction commit];
 }
 
-// The frames alone, mid-resize: the mesh and the rim's light keep the size they were made for.
+// During resize bursts, keep the rim path aligned without rebuilding the mesh.
 - (void)followSize:(CGSize)size radius:(CGFloat)radius {
     CGRect bounds = self.bounds;
     [CATransaction begin];
@@ -714,12 +657,16 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     _backdropLayer.frame = bounds;
     if (_backdropLayer.mask == _backdropOuterGuard) _backdropOuterGuard.frame = bounds;
     for (CALayer *sub in self.layer.sublayers) {
-        BOOL light = [sub.name isEqualToString:kSpecularName], classic = [sub.name isEqualToString:kClassicSpecularName];
-        if ((!light && !classic) || sub.hidden) continue;
+        if (![sub.name isEqualToString:kSpecularName] || sub.hidden) continue;
         sub.frame = bounds;
-        CAShapeLayer *line = (CAShapeLayer *)sub.mask;
-        line.frame = sub.bounds;
-        line.path = rimPath(sub.bounds, light ? kRimWidth / 2 : 0.5, radius);
+        sub.cornerRadius = radius;
+        CAGradientLayer *glare = (CAGradientLayer *)subWithName(sub, kGlareName);
+        CAShapeLayer *perimeter = (CAShapeLayer *)subWithName(sub, kPerimeterName);
+        CAGradientLayer *longSpecular = (CAGradientLayer *)subWithName(sub, kLongSpecularName);
+        if (glare && perimeter && longSpecular)
+            SGLegacyLayoutDirectionalRim((CGRect){CGPointZero, bounds.size}, radius,
+                                         glare, (CAShapeLayer *)glare.mask, perimeter,
+                                         longSpecular, (CAShapeLayer *)longSpecular.mask);
     }
     [CATransaction commit];
 }

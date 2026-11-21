@@ -68,11 +68,9 @@ BOOL SGLegacyGlassAvailable(void);
 
 @end
 
-// The light the system's glass draws along its rim: a thin white line whose brightness follows which way the rim faces,
-// brightest towards the top left, faint across from it (as adaptive_liquid_glass measured it). Kept as one sublayer of
-// `host`, made on the first call and set to `bounds` and `radius` on every one; a pane draws its own (SGLegacyGlassView)
-// and a film over a pane calls this too, as it covers the pane's. Does nothing on iOS 26 and later, where the system's
-// glass has its own.
+// Unified three-part directional rim: same diagonal glare, fine perimeter and
+// long specular on all Legacy panes, their films, and detached compact controls.
+// The host-layer variant supports shapes whose backdrop is hidden temporarily.
 void SGLegacyGlassSpecular(CALayer *host, CGRect bounds, CGFloat radius);
-// The classic pane's rim (SGLegacyGlassView.classic), the same way: its diagonal glare, in place of the other.
 void SGLegacyGlassClassicSpecular(CALayer *host, CGRect bounds, CGFloat radius);
+void SGLegacyGlassSetSpecularHidden(CALayer *host, BOOL hidden);

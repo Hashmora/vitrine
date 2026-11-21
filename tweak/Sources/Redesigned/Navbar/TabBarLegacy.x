@@ -300,12 +300,6 @@ static char kNavDimKey, kCircleDimKey;
     CAGradientLayer *_heldLongSpecular;
     CAShapeLayer *_heldSpecularPath;
     CALayer *_heldRimOverlay;
-    CAGradientLayer *_quietGlare;
-    CAShapeLayer *_quietGlarePath;
-    CAShapeLayer *_quietPerimeter;
-    CAGradientLayer *_quietLongSpecular;
-    CAShapeLayer *_quietSpecularPath;
-    CALayer *_quietRimOverlay;
     BOOL _outwardGuardLeft;
     BOOL _held;
     CGFloat _trackingStartX, _trackingDX;
@@ -386,31 +380,6 @@ static char kNavDimKey, kCircleDimKey;
         _heldGlow.mask = _heldGlowMask;
         _heldRimOverlay = [CALayer layer];
         _heldRimOverlay.name = @"Vitrine.LegacyCompactAboveGlyphRim";
-        _quietGlare = [CAGradientLayer layer];
-        _quietGlarePath = [CAShapeLayer layer];
-        _quietPerimeter = [CAShapeLayer layer];
-        _quietLongSpecular = [CAGradientLayer layer];
-        _quietSpecularPath = [CAShapeLayer layer];
-        SGRLegacyConfigureDirectionalRim(_quietGlare, _quietGlarePath,
-                                         _quietPerimeter, _quietLongSpecular,
-                                         _quietSpecularPath);
-        _quietGlare.opacity = 1;
-        _quietPerimeter.opacity = 1;
-        _quietLongSpecular.opacity = 1;
-        _quietRimOverlay = [CALayer layer];
-        _quietRimOverlay.name = @"Vitrine.LegacyCompactQuietRim";
-        _quietRimOverlay.zPosition = 100;
-        _quietRimOverlay.masksToBounds = YES;
-        _quietRimOverlay.cornerCurve = kCACornerCurveCircular;
-        [_quietRimOverlay addSublayer:_quietPerimeter];
-        [_quietRimOverlay addSublayer:_quietGlare];
-        [_quietRimOverlay addSublayer:_quietLongSpecular];
-        // The leading circle rolls out of the bar's capsule, which owns the
-        // resting glass after a normal minimise. Its own _pane is deliberately
-        // hidden in capsule-backed mode: a rim inside _pane.layer could never
-        // be visible there. Put the thin reflection above the circle's glyph,
-        // independently of the hidden backdrop, like the tab lens's host rim.
-        [self.layer addSublayer:_quietRimOverlay];
         _heldRimOverlay.zPosition = 100;
         _heldRimOverlay.masksToBounds = YES;
         _heldRimOverlay.cornerCurve = kCACornerCurveCircular;
@@ -450,18 +419,12 @@ static char kNavDimKey, kCircleDimKey;
     film.layer.cornerCurve = kCACornerCurveCircular;
     film.backgroundColor = SGUseLegacyGlass()
         ? [UIColor colorWithWhite:1 alpha:0.045] : SGRGlassFilmColor();
-    if (_quietRimOverlay) {
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        _quietRimOverlay.bounds = (CGRect){CGPointZero, quiet.size};
-        // Host-layer coordinates, not the hidden _pane's local coordinates.
-        _quietRimOverlay.position = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
-        _quietRimOverlay.cornerRadius = quietRadius;
-        SGRLegacyLayoutDirectionalRim(_quietRimOverlay.bounds, _quietGlare,
-                                      _quietGlarePath, _quietPerimeter,
-                                      _quietLongSpecular, _quietSpecularPath);
-        _quietRimOverlay.hidden = !_outwardGuardLeft || !_shown;
-        [CATransaction commit];
+    // Use the SAME common specular as chips, player and normal buttons.
+    // This particular rim must live on the circle host: minimisation hides
+    // _pane and lets the tab capsule supply the circle's glass backdrop.
+    if (SGUseLegacyGlass() && _outwardGuardLeft) {
+        SGLegacyGlassSpecular(self.layer, quiet, quietRadius);
+        SGLegacyGlassSetSpecularHidden(self.layer, !_shown);
     }
     if (_heldEdge) {
         CGRect expanded = CGRectInset(quiet, -8, -8); // 70pt raised circle from 54pt rest
@@ -508,14 +471,17 @@ static char kNavDimKey, kCircleDimKey;
 }
 
 - (void)setOutwardRefractionGuardOnLeft:(BOOL)left {
-    _outwardGuardLeft = left;
+    if (_outwardGuardLeft != left) {
+        _outwardGuardLeft = left;
+        [self setNeedsLayout];
+    }
     // Do not mask the entire moving circle: that would also remove its rim.
     // The glass core masks only its CABackdropLayer, leaving black dim and
     // both directional highlights untouched at the outer edge.
     [_heldEdge setBackdropOuterEdgeGuardLeft:left right:!left];
     if ([_pane isKindOfClass:SGLegacyGlassView.class])
         [(SGLegacyGlassView *)_pane setBackdropOuterEdgeGuardLeft:left right:!left];
-    if (_quietRimOverlay) _quietRimOverlay.hidden = !left || !_shown;
+    SGLegacyGlassSetSpecularHidden(self.layer, !left || !_shown);
 }
 
 - (void)setShown:(BOOL)shown {
@@ -525,7 +491,7 @@ static char kNavDimKey, kCircleDimKey;
     SGRShowGlass(_pane, shown && !_capsuleBacked);
     _film.alpha = shown && !_capsuleBacked ? 1 : 0;
     _glyph.alpha = shown ? 1 : 0;
-    if (_quietRimOverlay) _quietRimOverlay.hidden = !_outwardGuardLeft || !shown;
+    SGLegacyGlassSetSpecularHidden(self.layer, !_outwardGuardLeft || !shown);
     self.transform = shown ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.6, 0.6);
     self.userInteractionEnabled = shown;
     if (!shown) { [self setHeld:NO animated:NO]; [self setCreateOpen:NO]; }
@@ -536,8 +502,8 @@ static char kNavDimKey, kCircleDimKey;
     _capsuleBacked = backed;
     SGRShowGlass(_pane, _shown && !backed);
     _film.alpha = _shown && !backed ? 1 : 0;
-    // Unlike _pane, the resting rim remains visible after the capsule roll.
-    if (_quietRimOverlay) _quietRimOverlay.hidden = !_outwardGuardLeft || !_shown;
+    // Unlike _pane, the shared specular stays visible after the capsule roll.
+    SGLegacyGlassSetSpecularHidden(self.layer, !_outwardGuardLeft || !_shown);
 }
 
 - (void)holdGlyphOnly:(CGFloat)alpha {
@@ -546,7 +512,7 @@ static char kNavDimKey, kCircleDimKey;
     SGRShowGlass(_pane, NO);
     _film.alpha = 0;
     _glyph.alpha = alpha;
-    if (_quietRimOverlay) _quietRimOverlay.hidden = YES;
+    SGLegacyGlassSetSpecularHidden(self.layer, YES);
     self.transform = CGAffineTransformIdentity;
     self.userInteractionEnabled = NO;
     [self setHeld:NO animated:NO];
