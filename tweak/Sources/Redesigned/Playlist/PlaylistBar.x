@@ -120,8 +120,25 @@ static void apply(UIView *bar) {
     // identity before Spotify lays out, so what is read here is always the layout's own centre, and the move
     // is written only then: a pass of ours with a move on already (didMoveToWindow, a gradient added) leaves it.
     CGFloat middle = [title.superview convertPoint:title.center toView:nil].y;
-    CGFloat shift = (bar.window.safeAreaInsets.top + SGRGlassCircleSize / 2) - middle;
-    if (title.transform.ty == 0 && shift != 0 && fabs(shift) < 20) title.transform = CGAffineTransformMakeTranslation(0, shift);
+    CGFloat target = bar.window.safeAreaInsets.top + SGRGlassCircleSize / 2;
+    // Artist's HeaderNavigationBar belongs to a collapsing ImageHeaderView, unlike
+    // the button pinned to the stationary artist page. Its origin moves as the
+    // photo collapses and sometimes differs from the window safe-area position.
+    // Measure against the *actual* Back glass instead of a predicted inset so
+    // the name remains on the same horizontal line as Back and More.
+    BOOL pinnedArtist = NO;
+    UIView *artistPage = SGRArtistPageOf(bar);
+    SGRMirrorButton *back = SGRPinnedBackIn(artistPage);
+    if (back.window && back.superview && !back.hidden) {
+        target = [back.superview convertPoint:back.center toView:nil].y;
+        pinnedArtist = YES;
+    }
+    CGFloat shift = target - middle;
+    // The collapsing header's position may differ more than the other pages'
+    // 20pt tolerance. Never drag an offscreen title across the page, though.
+    CGFloat maximumShift = pinnedArtist ? 48 : 20;
+    if (CGAffineTransformIsIdentity(title.transform) && fabs(shift) > 0.5 &&
+        fabs(shift) < maximumShift) title.transform = CGAffineTransformMakeTranslation(0, shift);
     SGRGlassTitleCapsule(title, &kBubbleKey, SGRTitleWidth(text), title.bounds.size.width, nil);
 }
 
