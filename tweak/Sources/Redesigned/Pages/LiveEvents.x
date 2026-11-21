@@ -28,6 +28,7 @@
 #import "Pages.h"
 
 static char kListKey, kBellKey, kSavedKey, kBellPinKey, kSavedPinKey, kTitleGlassKey;
+static char kEntityTitleKey, kEntityChipKey, kEntityFillKey;
 
 static Class sg_galleryPage;
 
@@ -125,10 +126,117 @@ static void dressGallery(UIViewController *controller) {
     listUnderBars(controller, @"GalleryPage.ContentScrollView");
 }
 
+// Event and Venue detail pages do not use the hub/gallery controller. Their
+// HeaderNavigationBar moves inside a collapsing HeaderLayout, while the
+// ContentScrollView and the header share one *stationary* page root. Pin Back
+// to that root: pinning it to the bar makes it wander sideways as the header
+// animates. Match pages by their concrete list identifiers, not by the bar
+// class (which is also used throughout Spotify).
+static UIView *entityRootOf(UIView *piece) {
+    if (!piece.window) return nil;
+    for (UIView *v = piece; v && ![v isKindOfClass:UIWindow.class]; v = v.superview) {
+        if (v.bounds.size.width < 280 ||
+            v.bounds.size.height < piece.window.bounds.size.height * 0.75) continue;
+        for (UIView *child in v.subviews) {
+            if (![child isKindOfClass:UICollectionView.class]) continue;
+            NSString *identifier = child.accessibilityIdentifier;
+            if ([identifier isEqualToString:@"LiveEventPage.ContentScrollView"] ||
+                [identifier isEqualToString:@"VenuePage.ContentScrollView"]) return v;
+        }
+    }
+    return nil;
+}
+
+static void hideEntityScrim(UIView *view) {
+    // An empty layer mask is safer than hiding an Encore/SwiftUI header view:
+    // hidden changes can disturb the stack's layout, and its own layout can
+    // restore the gradient's opacity as the hero collapses.
+    if (!view || (view.layer.mask && CGRectIsEmpty(view.layer.mask.bounds))) return;
+    view.layer.mask = [CALayer layer];
+}
+
+static void dressEntityBar(UIView *bar) {
+    UIView *root = entityRootOf(bar);
+    if (!root || bar.bounds.size.width < 1) return;
+
+    UIView *back = nil;
+    UIView *title = nil;
+    UILabel *label = nil;
+    for (UIView *child in bar.subviews) {
+        NSString *name = NSStringFromClass(child.class);
+        if ([name containsString:@"GradientView"]) hideEntityScrim(child);
+        if ([child.accessibilityIdentifier isEqualToString:@"Components.Header.UI.BackButton"]) back = child;
+        if (![name hasSuffix:@"EncoreLabel"]) continue;
+        for (UIView *inner in child.subviews) {
+            if (![inner isKindOfClass:UILabel.class] || !((UILabel *)inner).text.length) continue;
+            title = child;
+            label = (UILabel *)inner;
+            break;
+        }
+    }
+    // Only the painted background of HeaderLayout is removed. Do not mask
+    // the hero's own artwork/gradient; it carries event details and tags.
+    for (UIView *up = bar.superview; up && up != root; up = up.superview) {
+        if (![up.accessibilityIdentifier isEqualToString:@"Components.UI.EventHeaderEntityPage"] &&
+            ![up.accessibilityIdentifier isEqualToString:@"Components.UI.VenueHeaderEntityPage"]) continue;
+        for (UIView *section in up.subviews) {
+            if (![section.accessibilityIdentifier isEqualToString:@"_clippingView"]) continue;
+            for (UIView *background in section.subviews) {
+                if (![background.accessibilityIdentifier isEqualToString:@"_backgroundViewContainer"]) continue;
+                SGForEachView(background, ^(UIView *v) {
+                    if ([NSStringFromClass(v.class) containsString:@"GradientView"]) hideEntityScrim(v);
+                });
+            }
+        }
+        break;
+    }
+
+    if (SGIsVisibleColor(bar.layer.backgroundColor)) bar.backgroundColor = UIColor.clearColor;
+    if (back) SGRPinnedBackOf(root, back);
+    else SGRPlacePinnedBack(root);
+    if (title && title.bounds.size.width > 1)
+        SGRGlassTitleCapsule(title, &kEntityTitleKey, SGRTitleWidth(label), title.bounds.size.width, nil);
+}
+
+// The genre tags on Event and Venue pages are LiveEvents_ECMKit.ConceptChipView,
+// not Encore_ChipsKit.ChipView. Reuse the library chip material, without
+// changing the tap target or a scroll view's own clipping/scroll behavior.
+static void dressEntityConceptChip(UIView *chip) {
+    UIView *root = entityRootOf(chip);
+    if (!root || chip.bounds.size.width < 1 || chip.bounds.size.height < 1) return;
+    UIView *fill = objc_getAssociatedObject(chip, &kEntityFillKey);
+    if (fill && fill.superview != chip) fill = nil;
+    if (!fill) {
+        for (UIView *child in chip.subviews) {
+            if (![child isMemberOfClass:UIView.class] ||
+                fabs(child.bounds.size.width - chip.bounds.size.width) > 2 ||
+                fabs(child.bounds.size.height - chip.bounds.size.height) > 2) continue;
+            if (child.layer.cornerRadius < 6) continue;
+            fill = child;
+            break;
+        }
+        if (!fill) return;
+        objc_setAssociatedObject(chip, &kEntityFillKey, fill, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    SGRGlassChip(chip, fill, NO, &kEntityChipKey);
+    SGRHoldClear(fill);
+    if (SGUseLegacyGlass()) SGRUnclipUpTo(chip.superview, ^BOOL(UIView *v) {
+        // The last wrapper may clip a pressed capsule, but leave the actual
+        // scroll view and page root clipped as intended.
+        return [v.superview isKindOfClass:UIScrollView.class] || v.superview == root;
+    });
+}
+
 %ctor {
     if (!SGRedesignedUI() || !SGBelowiOS26()) return;
     // The header's buttons and the list's rows are made after the first layout.
     SGRPassSwiftController(@"LiveEvents_LiveEventsPageImpl", @"LiveEventsPageViewController", ^(UIViewController *c) { dress(c); });
     sg_galleryPage = SGRSwiftClass(@"LiveEvents_GalleryPageImpl", @"GalleryPageViewController");
     SGRPassController(sg_galleryPage, ^(UIViewController *c) { dressGallery(c); });
+    // The same stable-root handler covers Event details (#4 and #6), their
+    // expanded hero (#5), and Venue details (#7).
+    Class bar = SGRSwiftClass(@"EncoreConsumerMobile_BaseKit", @"HeaderNavigationBar");
+    if (bar) SGRPassView(bar, ^(UIView *view) { dressEntityBar(view); });
+    Class concept = SGRSwiftClass(@"LiveEvents_ECMKit", @"ConceptChipView");
+    if (concept) SGRPassView(concept, ^(UIView *view) { dressEntityConceptChip(view); });
 }
