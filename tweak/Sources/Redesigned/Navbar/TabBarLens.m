@@ -256,6 +256,23 @@ static const CGFloat kPlayStep = 1.0 / 120;
 
 static BOOL bubbles(void);
 
+// The expanded tab-bar host animates its *sublayerTransform* (1.057x), not
+// the individual views. UIKit convertPoint: from that host into one of its
+// immediate children inverses the host scale, even though both the lens and
+// the selected-content copy are siblings under the very same transform.
+// As a result, nested glyph refraction and the tint/cutout masks drift towards
+// the middle by (hostMidX - lensMidX) * (1 - 1/1.057) while pressed.
+// For untransformed direct children, map their frame origins instead: this
+// preserves the shared host coordinates and the same animation on every pane.
+static CGPoint SGRLensPointInHostChild(UIView *host, UIView *child, CGPoint point) {
+    if (!host || !child) return point;
+    if (child.superview == host && CGAffineTransformIsIdentity(child.transform)) {
+        return CGPointMake(point.x - CGRectGetMinX(child.frame) + CGRectGetMinX(child.bounds),
+                           point.y - CGRectGetMinY(child.frame) + CGRectGetMinY(child.bounds));
+    }
+    return [host convertPoint:point toView:child];
+}
+
 // The UITabBar's bounds are not the rendered platter boundary. The visible
 // capsule may be narrower or shifted while Spotify lays out the buttons.
 // Sample its actual rectangle so refracting panes cannot see its outer rail.
@@ -649,7 +666,7 @@ static BOOL bubbles(void) {
 - (CGPathRef)newNormalCutoutPathAt:(CGPoint)center sx:(CGFloat)sx sy:(CGFloat)sy {
     UIView *bar = _normalContent;
     if (!bar || !self.superview) return nil;
-    CGPoint inside = [self.superview convertPoint:center toView:bar];
+    CGPoint inside = SGRLensPointInHostChild(self.superview, bar, center);
     CGFloat width = self.bounds.size.width * sx;
     CGFloat height = self.bounds.size.height * sy;
     CGRect hole = CGRectMake(inside.x - width / 2, inside.y - height / 2, width, height);
@@ -973,7 +990,7 @@ static BOOL bubbles(void) {
 // use that bar's coordinates, not the surrounding host's coordinates.
 - (CGPoint)tintPointForHostPoint:(CGPoint)point {
     if (!_tintOverlay || !self.superview) return point;
-    return [self.superview convertPoint:point toView:_tintOverlay];
+    return SGRLensPointInHostChild(self.superview, _tintOverlay, point);
 }
 
 - (void)applyPose {
@@ -1035,7 +1052,7 @@ static BOOL bubbles(void) {
     }
     if (_glyphEdgePane && _glyphEdgePane.superview) {
         UIView *edgeHost = _glyphEdgePane.superview;
-        CGPoint edgeCenter = [self.superview convertPoint:center toView:edgeHost];
+        CGPoint edgeCenter = SGRLensPointInHostChild(self.superview, edgeHost, center);
         [UIView performWithoutAnimation:^{
             if (!CGRectEqualToRect(self->_glyphEdgePane.bounds, self.bounds)) self->_glyphEdgePane.bounds = self.bounds;
             self->_glyphEdgePane.center = edgeCenter;
@@ -1313,7 +1330,7 @@ static BOOL bubbles(void) {
             CGPoint hostCenter;
             CGFloat xScale, yScale;
             [self getPose:all[i] center:&hostCenter sx:&xScale sy:&yScale];
-            CGPoint localCenter = [self.superview convertPoint:hostCenter toView:self->_glyphEdgePane.superview];
+            CGPoint localCenter = SGRLensPointInHostChild(self.superview, self->_glyphEdgePane.superview, hostCenter);
             [edgeXs addObject:@(localCenter.x)];
         }
         edgeRun(@"lens.x", @"position.x", edgeXs);
