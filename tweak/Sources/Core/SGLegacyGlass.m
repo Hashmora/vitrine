@@ -400,6 +400,13 @@ static NSString *const kGlareName = @"sg.specular.glare";
 static NSString *const kPerimeterName = @"sg.specular.perimeter";
 static NSString *const kLongSpecularName = @"sg.specular.long";
 
+// A detached compact rim (Home in the minimized tab bar) is painted once
+// directly onto its control. A normal pane is composited with its translucent
+// material, content and optional tint; full-strength rim light on all those
+// surfaces made chips look chrome-white next to the quiet leading circle.
+// Keep the directional profile identical; normalize the pane's exposure.
+static const float kPaneSpecularExposure = 0.48f;
+
 static CALayer *subWithName(CALayer *host, NSString *name) {
     for (CALayer *sub in host.sublayers) if ([sub.name isEqualToString:name]) return sub;
     return nil;
@@ -634,6 +641,11 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     } else {
         SGLegacyGlassSpecular(self.layer, self.bounds, radius);
     }
+    // Both classic sheets and smaller controls use one exposure. The
+    // separately hosted leading compact rim remains at full strength.
+    CALayer *paneRim = subWithName(self.layer, kSpecularName);
+    if (paneRim && !paneRim.hidden && paneRim.opacity != kPaneSpecularExposure)
+        paneRim.opacity = kPaneSpecularExposure;
     _meshSize = size;
     _meshRadius = radius;
 

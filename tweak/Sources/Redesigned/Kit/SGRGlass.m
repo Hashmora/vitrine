@@ -352,11 +352,12 @@ UIView *SGRGlassFilm(UIView *host, const void *key, UIView *glass, CGFloat radiu
     if (film.superview != host) [host insertSubview:film aboveSubview:glass];
     if (!CGRectEqualToRect(film.frame, glass.frame)) film.frame = glass.frame;
     if (film.layer.cornerRadius != radius) film.layer.cornerRadius = radius;
-    // The film covers its pane, and with it the pane's own highlight, so the film carries one.
-    if ([glass isKindOfClass:SGLegacyGlassView.class]) {
-        if (((SGLegacyGlassView *)glass).classic) SGLegacyGlassClassicSpecular(film.layer, film.bounds, radius);
-        else SGLegacyGlassSpecular(film.layer, film.bounds, radius);
-    }
+    // Stage 137 gave both the pane and this translucent film the same
+    // three-stroke specular. They stack into a white outline on floating
+    // bars and cards. Keep the film as a tint only: the pane is the sole
+    // source of that glass element's specular. The raised tab lens draws its
+    // own directional rim separately, as before.
+    SGLegacyGlassSetSpecularHidden(film.layer, YES);
     return film;
 }
 
