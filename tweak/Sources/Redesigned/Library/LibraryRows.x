@@ -34,7 +34,6 @@ static void roundCorners(UIView *artwork, CGFloat radius) {
 }
 
 
-
 static BOOL isLibraryActionRow(UIView *row) {
     NSString *identifier = row.accessibilityIdentifier;
     return [identifier isEqualToString:@"AddArtist.Row.Library"]
@@ -72,6 +71,19 @@ static void glassLibraryAction(UIView *cell) {
     if (!thumb || fabs(thumb.bounds.size.width - 64) > 2 || fabs(thumb.bounds.size.height - 64) > 2) return;
 
     UIView *fill = actionFillInThumb(thumb);
+    // Spotify's solid placeholder sits ABOVE the glass. Stage 133 added the
+    // lens below it but did not clear the old #1F1F1F paint: it was invisible.
+    // Keep the plus/import UIImageView, only remove the opaque backgrounds.
+    for (UIView *sub in thumb.subviews) {
+        if (sub == fill || [NSStringFromClass(sub.class) hasSuffix:@"EncoreImageView"]) {
+            if (sub.backgroundColor) sub.backgroundColor = UIColor.clearColor;
+            if (sub.layer.backgroundColor) sub.layer.backgroundColor = NULL;
+            if (sub.opaque) sub.opaque = NO;
+            if (sub.layer.opaque) sub.layer.opaque = NO;
+        }
+    }
+    if (thumb.opaque) thumb.opaque = NO;
+    if (thumb.layer.opaque) thumb.layer.opaque = NO;
     if (fill) SGRHoldClear(fill);
 
     UIView *glass = SGGlassFor(thumb, &kAddRowGlassKey);
@@ -83,8 +95,10 @@ static void glassLibraryAction(UIView *cell) {
     SGShapeGlass(glass, radius, NO);
     if (glass.layer.borderWidth > 0) glass.layer.borderWidth = 0;
     SGRGlassSetFilm(glass, YES, radius);
-    if (fill && glass.superview != thumb) [thumb insertSubview:glass belowSubview:fill];
-    else if (glass.superview != thumb) [thumb insertSubview:glass atIndex:0];
+    // Keep the lens at the back of the holder, behind the native glyph.
+    // UIKit can reorder subviews during reuse; restore that order on layout.
+    if (glass.superview != thumb || thumb.subviews.firstObject != glass)
+        [thumb insertSubview:glass atIndex:0];
     if (SGUseLegacyGlass()) SGRUnclipUpTo(thumb, ^BOOL(UIView *v) { return v == cell; });
 }
 
