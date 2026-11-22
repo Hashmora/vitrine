@@ -10,6 +10,22 @@
 static char kNativeDropdownOverlay, kNativeDropdownSuppressed;
 
 static char kDropdownAuditLastMenuKey, kDropdownAuditRecordCountKey;
+static char kDropdownAuditOriginalConfigurationKey;
+
+static NSString *sgrDropdownAuditPointer(id object) {
+    return object ? [NSString stringWithFormat:@"%p", object] : @"";
+}
+
+static BOOL sgrDropdownAuditIsTextInput(UIView *view, id delegate) {
+    NSString *viewName = NSStringFromClass(view.class);
+    NSString *delegateName = delegate ? NSStringFromClass([delegate class]) : @"";
+    return [view isKindOfClass:UITextView.class] ||
+           [view isKindOfClass:UITextField.class] ||
+           [viewName containsString:@"TextField"] ||
+           [viewName containsString:@"TextView"] ||
+           [delegateName containsString:@"TextContextMenu"];
+}
+
 
 // Diagnostics only: inventory each distinct UIButton.menu without changing
 // the menu's ownership or whether UIKit is allowed to present it.
@@ -69,6 +85,80 @@ static void sgrDropdownAuditButton(UIButton *button) {
         @"supported": @(supported),
         @"reason": supported ? @"supported" :
             [counts[@"deferred"] unsignedIntegerValue] ? @"unresolved-deferred" : @"no-usable-children"
+    });
+}
+
+// Stage 172: trace the actual configuration callback without replacing the
+// menu model or presenting anything. Each delegate's original IMP is retained
+// on the concrete class. For inherited implementations we install an override
+// on the subclass; this avoids changing every instance of a UIKit superclass.
+static id sgrDropdownAuditConfiguration(id delegate, SEL selector, id interaction, CGPoint location) {
+    typedef id (*ConfigIMP)(id, SEL, id, CGPoint);
+    ConfigIMP original = NULL;
+    for (Class cls = object_getClass(delegate); cls; cls = class_getSuperclass(cls)) {
+        NSValue *value = objc_getAssociatedObject((id)cls, &kDropdownAuditOriginalConfigurationKey);
+        if (value) {
+            original = (ConfigIMP)[value pointerValue];
+            break;
+        }
+    }
+    // Never synthesize an empty configuration. This should be unreachable:
+    // we install the replacement only after saving its original implementation.
+    if (!original) return nil;
+    id configuration = original(delegate, selector, interaction, location);
+    UIView *view = nil;
+    SEL viewSelector = NSSelectorFromString(@"view");
+    if ([interaction respondsToSelector:viewSelector])
+        view = ((UIView *(*)(id, SEL))objc_msgSend)(interaction, viewSelector);
+    if (sgrDropdownAuditIsTextInput(view, delegate)) return configuration;
+    id actionProvider = nil;
+    if ([configuration respondsToSelector:@selector(actionProvider)])
+        actionProvider = ((id (*)(id, SEL))objc_msgSend)(configuration, @selector(actionProvider));
+    sgrDropdownAuditRecord(@{
+        @"kind": @"configuration",
+        @"class": view ? NSStringFromClass(view.class) : @"",
+        @"owner": view ? sgrDropdownAuditOwner(view) : @"",
+        @"id": view.accessibilityIdentifier ?: @"",
+        @"label": view.accessibilityLabel ?: @"",
+        @"delegate": NSStringFromClass([delegate class]),
+        @"interaction": NSStringFromClass([interaction class]),
+        @"interactionPointer": sgrDropdownAuditPointer(interaction),
+        @"anchorPointer": sgrDropdownAuditPointer(view),
+        @"hasConfiguration": @(configuration != nil),
+        @"hasActionProvider": @(actionProvider != nil),
+        @"configurationClass": configuration ? NSStringFromClass([configuration class]) : @""
+    });
+    return configuration;
+}
+
+static void sgrDropdownAuditHookDelegate(id delegate) {
+    if (!delegate) return;
+    Class cls = object_getClass(delegate);
+    if (!cls) return;
+    // Never swizzle UIKit's own generic delegates globally. We only need
+    // app-specific menu configuration callbacks, not system text/edit menus.
+    NSString *delegateClassName = NSStringFromClass(cls);
+    if ([delegateClassName hasPrefix:@"UI"] ||
+        [delegateClassName hasPrefix:@"_UI"]) return;
+    SEL selector = @selector(contextMenuInteraction:configurationForMenuAtLocation:);
+    Method inheritedOrOwn = class_getInstanceMethod(cls, selector);
+    if (!inheritedOrOwn) return;
+    IMP original = method_getImplementation(inheritedOrOwn);
+    if (original == (IMP)sgrDropdownAuditConfiguration) return;
+    if (objc_getAssociatedObject((id)cls, &kDropdownAuditOriginalConfigurationKey)) return;
+    const char *signature = method_getTypeEncoding(inheritedOrOwn);
+    // Record before replacing; the wrapper can always find the original.
+    objc_setAssociatedObject((id)cls, &kDropdownAuditOriginalConfigurationKey,
+                             [NSValue valueWithPointer:(void *)original],
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!class_addMethod(cls, selector, (IMP)sgrDropdownAuditConfiguration, signature)) {
+        Method ownMethod = class_getInstanceMethod(cls, selector);
+        method_setImplementation(ownMethod, (IMP)sgrDropdownAuditConfiguration);
+    }
+    sgrDropdownAuditRecord(@{
+        @"kind": @"delegate-hook",
+        @"delegate": NSStringFromClass(cls),
+        @"selector": NSStringFromSelector(selector)
     });
 }
 
@@ -166,8 +256,15 @@ static void updateNative(UIButton *button) {
             delegate = ((id (*)(id, SEL))objc_msgSend)(interaction, selector);
         } @catch (__unused NSException *exception) {}
     }
+    // Text editing interactions are not Spotify dropdowns. The Stage 170
+    // buffer was dominated by them, obscuring actual menu entrypoints.
+    if (sgrDropdownAuditIsTextInput(self, delegate)) return;
+    if ([interaction isKindOfClass:UIContextMenuInteraction.class])
+        sgrDropdownAuditHookDelegate(delegate);
     sgrDropdownAuditRecord(@{
         @"kind": @"interaction", @"interaction": name,
+        @"interactionPointer": sgrDropdownAuditPointer(interaction),
+        @"anchorPointer": sgrDropdownAuditPointer(self),
         @"class": NSStringFromClass(self.class),
         @"owner": sgrDropdownAuditOwner(self),
         @"id": self.accessibilityIdentifier ?: @"",
@@ -195,6 +292,32 @@ static void updateNative(UIButton *button) {
 - (void)setShowsMenuAsPrimaryAction:(BOOL)showsMenuAsPrimaryAction {
     %orig;
     if (showsMenuAsPrimaryAction) [self setNeedsLayout];
+}
+%end
+
+// A Spotify menu can also be a dedicated presented controller, rather than
+// UIButton.menu or UIContextMenuInteraction. Record such presentations; don't
+// replace or intercept their lifecycle.
+%hook UIViewController
+- (void)presentViewController:(UIViewController *)presented animated:(BOOL)animated
+                  completion:(void (^)(void))completion {
+    NSString *name = presented ? NSStringFromClass(presented.class) : @"";
+    NSString *lower = name.lowercaseString;
+    if (([lower containsString:@"menu"] ||
+         [lower containsString:@"popover"] ||
+         [lower containsString:@"actioncontroller"]) &&
+        ![lower containsString:@"text"]) {
+        sgrDropdownAuditRecord(@{
+            @"kind": @"presentation",
+            @"class": name,
+            @"owner": NSStringFromClass(self.class),
+            @"presenterPointer": sgrDropdownAuditPointer(self),
+            @"presentedPointer": sgrDropdownAuditPointer(presented),
+            @"style": @(presented.modalPresentationStyle),
+            @"animated": @(animated)
+        });
+    }
+    %orig;
 }
 %end
 
