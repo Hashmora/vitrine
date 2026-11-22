@@ -201,7 +201,7 @@ static CGFloat quickHeight(NSUInteger count) {
 
 // UIKit 26 leaves 11pt after the quick tile group, 21pt before a
 // standalone submenu, and 10pt at the foot. Those gaps are part of the
-// menu layout, not padding supplied by the backdrop.
+// menu layout, not padding supplied by a screen-wide overlay.
 static CGFloat gapBeforeGroup(NSArray<NSArray<SGRDropdownItem *> *> *groups, NSUInteger index, BOOL hasHeader) {
     if (!index || hasHeader) return 0;
     NSArray<SGRDropdownItem *> *group = groups[index];
@@ -473,18 +473,9 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)backTapped { if (self.back) self.back(); }
 @end
 
-// A UIView owns the size of its backing layer on iOS. CALayer's macOS-only
-// autoresizingMask API cannot be used by a tweak built against the iOS SDK.
-@interface SGRDropdownHazeView : UIView
-@end
-@implementation SGRDropdownHazeView
-+ (Class)layerClass { return CAGradientLayer.class; }
-@end
-
 @interface SGRDropdownPresentation : NSObject
 @property (nonatomic, strong) UIWindow *window;
 @property (nonatomic, strong) UIViewController *root;
-@property (nonatomic, strong) UIView *backdrop;
 @property (nonatomic, weak) UIView *anchor;
 @property (nonatomic, strong) UIMenu *rootMenu;
 @property (nonatomic, strong) UIViewController *embedded;
@@ -522,23 +513,6 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     self.root.view = [[UIView alloc] initWithFrame:self.window.bounds];
     self.root.view.backgroundColor = UIColor.clearColor;
     self.window.rootViewController = self.root;
-    // UIKit 26 gives the floating menu a softly lit, vertically fading
-    // background. Without this surrounding material our Legacy Glass reads
-    // almost black against the unmodified Spotify player, and the parent's
-    // text shows too clearly through the nested panel.
-    self.backdrop = [[SGRDropdownHazeView alloc] initWithFrame:self.root.view.bounds];
-    self.backdrop.userInteractionEnabled = NO;
-    self.backdrop.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.backdrop.alpha = 0;
-    // The UIView autoresizes with its container; UIKit resizes the gradient
-    // backing layer together with it, including after a window size change.
-    CAGradientLayer *haze = (CAGradientLayer *)self.backdrop.layer;
-    haze.colors = @[(id)[UIColor colorWithWhite:0.40 alpha:0.66].CGColor,
-                    (id)[UIColor colorWithWhite:0.40 alpha:0.70].CGColor,
-                    (id)[UIColor colorWithWhite:0.40 alpha:0.55].CGColor,
-                    (id)[UIColor clearColor].CGColor];
-    haze.locations = @[@0, @0.15, @0.40, @0.63];
-    [self.root.view addSubview:self.backdrop];
     UIControl *outside = [[UIControl alloc] initWithFrame:self.root.view.bounds];
     outside.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
     [outside addTarget:self action:@selector(outsideTapped) forControlEvents:UIControlEventTouchUpInside];
@@ -687,7 +661,6 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         panel.alpha = 1;
         panel.transform = CGAffineTransformIdentity;
         if (parent) parent.alpha = 0.5;
-        else self.backdrop.alpha = 1;
     } completion:nil];
 }
 static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
@@ -765,7 +738,6 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     for (SGRDropdownPanel *panel in self.panels) [panel.resolution cancel];
     [self.panels removeAllObjects];
     self.root = nil;
-    self.backdrop = nil;
     if (finish) finish(element);
 }
 - (void)dismiss:(UIMenuElement *)element {
