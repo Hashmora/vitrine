@@ -140,7 +140,11 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // sampled pixels and the accent glyphs share the same coordinate system.
     // The 0.92x platter lens remains a separate surface underneath the tabs.
     SGLegacyGlassView *_glyphEdgePane;
+    // Two independent refraction apertures: the dynamic side crescents and
+    // the subtle top/bottom strip. Their alphas combine in one capsule mask.
+    CALayer *_glyphCompositeMask;
     CAGradientLayer *_glyphEdgeMask;
+    CAGradientLayer *_glyphCapMask;
     // Independent refraction of the 0.92x platter; never samples glyphs.
     SGLegacyGlassView *_platterEdgePane;
     CAGradientLayer *_platterEdgeMask;
@@ -292,7 +296,10 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
         // Keep the rim sample close to the very same glyph. Excessive mesh
         // shift read like a separate offset / horizontally smeared green copy.
         _glyphEdgePane.lensScale = 0.86;
-        _glyphEdgePane.lateralRefraction = YES;
+        // This pane samples the glyphs themselves (not the platter). Give
+        // the mesh its full top/bottom displacement as well as the sides;
+        // the two masks below keep the visible deformation in the rim only.
+        _glyphEdgePane.lateralRefraction = NO;
         _glyphEdgePane.sharp = YES;
         _glyphEdgePane.rimless = YES;
         _glyphEdgePane.alpha = 0;
@@ -305,7 +312,24 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
         // sample, fading to a clear aperture before reaching the glyph's
         // central strokes. A faint outer sample made two green outlines.
         _glyphEdgeMask.locations = @[@0, @0.09, @0.19, @0.25, @0.75, @0.81, @0.91, @1];
-        _glyphEdgePane.layer.mask = _glyphEdgeMask;
+        _glyphCapMask = [CAGradientLayer layer];
+        _glyphCapMask.startPoint = CGPointMake(0.5, 0);
+        _glyphCapMask.endPoint = CGPointMake(0.5, 1);
+        _glyphCapMask.locations = @[@0, @0.16, @0.35, @0.65, @0.84, @1];
+        _glyphCapMask.colors = @[
+            (id)[UIColor colorWithWhite:1 alpha:0.57].CGColor,
+            (id)[UIColor colorWithWhite:1 alpha:0.22].CGColor,
+            (id)UIColor.clearColor.CGColor,
+            (id)UIColor.clearColor.CGColor,
+            (id)[UIColor colorWithWhite:1 alpha:0.22].CGColor,
+            (id)[UIColor colorWithWhite:1 alpha:0.57].CGColor
+        ];
+        _glyphCompositeMask = [CALayer layer];
+        _glyphCompositeMask.masksToBounds = YES;
+        _glyphCompositeMask.cornerCurve = kCACornerCurveCircular;
+        [_glyphCompositeMask addSublayer:_glyphEdgeMask];
+        [_glyphCompositeMask addSublayer:_glyphCapMask];
+        _glyphEdgePane.layer.mask = _glyphCompositeMask;
     }
     if (!_platterEdgePane) {
         // This pane is BELOW both glyph groups, but ABOVE the primary
@@ -397,8 +421,14 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     if (!_glyphEdgeMask) return;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    _glyphEdgeMask.frame = _glyphEdgePane.bounds;
-    _glyphEdgeMask.cornerRadius = CGRectGetHeight(_glyphEdgePane.bounds) / 2;
+    CGRect glyphBounds = _glyphEdgePane.bounds;
+    _glyphCompositeMask.frame = glyphBounds;
+    _glyphCompositeMask.cornerRadius = CGRectGetHeight(glyphBounds) / 2;
+    _glyphEdgeMask.frame = glyphBounds;
+    _glyphEdgeMask.cornerRadius = CGRectGetHeight(glyphBounds) / 2;
+    // Keep the vertical refraction away from the round outward ends, where
+    // the moving bubble can extend past the tab bar's actual capsule.
+    _glyphCapMask.frame = CGRectInset(glyphBounds, MIN(13, glyphBounds.size.width * 0.12), 0);
     _platterEdgeMask.frame = _platterEdgePane.bounds;
     _platterEdgeMask.cornerRadius = CGRectGetHeight(_platterEdgePane.bounds) / 2;
     NSArray *colors = @[
@@ -460,8 +490,11 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     if (_glyphEdgePane) {
         if (!CGRectEqualToRect(_glyphEdgePane.bounds, bounds)) _glyphEdgePane.bounds = bounds;
         _glyphEdgePane.layer.cornerRadius = radius;
+        _glyphCompositeMask.frame = bounds;
+        _glyphCompositeMask.cornerRadius = radius;
         _glyphEdgeMask.frame = bounds;
         _glyphEdgeMask.cornerRadius = radius;
+        _glyphCapMask.frame = CGRectInset(bounds, MIN(13, bounds.size.width * 0.12), 0);
     }
     [CATransaction commit];
 }
