@@ -304,6 +304,8 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic, strong) UIMenu *menu;
 @property (nonatomic, strong) SGRDropdownResolution *resolution;
 @property (nonatomic) BOOL isSubmenu;
+// Only the Home filter has a compact leading selection indicator on iOS 26.
+@property (nonatomic) BOOL homeFilterRoot;
 @property (nonatomic) BOOL waitingForDeferred;
 @property (nonatomic, copy) void (^choose)(UIMenuElement *element);
 @property (nonatomic, copy) void (^back)(void);
@@ -434,9 +436,21 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         chevron.frame = CGRectMake(210, (h-16)/2, 9, 16);
         [press addSubview:chevron];
     } else if ([element isKindOfClass:UIAction.class] && ((UIAction *)element).state == UIMenuElementStateOn) {
-        UIImageView *tick = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"checkmark"]];
+        UIImageView *tick;
+        if (self.homeFilterRoot) {
+            // Keep the UIAction state intact (also for accessibility), but
+            // match the native Home filter: small check in the leading icon slot.
+            UIImageSymbolConfiguration *symbol =
+                [UIImageSymbolConfiguration configurationWithPointSize:13 weight:UIImageSymbolWeightMedium];
+            tick = [[UIImageView alloc] initWithImage:
+                [UIImage systemImageNamed:@"checkmark" withConfiguration:symbol]];
+            tick.contentMode = UIViewContentModeCenter; // don't stretch 13pt to 24pt
+            tick.frame = CGRectMake(14, (h-22)/2, 24, 22);
+        } else {
+            tick = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"checkmark"]];
+            tick.frame = CGRectMake(206, (h-20)/2, 18, 20);
+        }
         tick.tintColor = UIColor.whiteColor;
-        tick.frame = CGRectMake(206, (h-20)/2, 18, 20);
         [press addSubview:tick];
     }
     [self.body addSubview:press];
@@ -588,6 +602,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 @property (nonatomic, strong) UIWindow *window;
 @property (nonatomic, strong) UIViewController *root;
 @property (nonatomic, weak) UIView *anchor;
+@property (nonatomic) BOOL homeFilterAnchor;
 @property (nonatomic, strong) UIMenu *rootMenu;
 @property (nonatomic, strong) UIViewController *embedded;
 @property (nonatomic) BOOL embeddedFollowsContentSize;
@@ -608,6 +623,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (CGRect)embeddedFrameForSize:(CGSize)size;
 - (void)loadMenu:(UIMenu *)menu intoPanel:(SGRDropdownPanel *)panel title:(NSString *)title maximum:(CGFloat)maximum;
 - (void)reflowPanel:(SGRDropdownPanel *)panel;
+- (CGFloat)homeFilterYForHeight:(CGFloat)height;
 - (void)animatePanelAppearance:(SGRDropdownPanel *)panel over:(SGRDropdownPanel *)parent;
 @end
 
@@ -615,6 +631,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (BOOL)start:(UIMenu *)menu from:(UIView *)anchor finish:(SGRDropdownFinish)finish {
     if (!anchor.window.windowScene || !menu) return NO;
     self.anchor = anchor;
+    self.homeFilterAnchor = [anchor.accessibilityLabel isEqualToString:@"Filter Home"];
     self.rootMenu = menu;
     self.finish = finish;
     self.panels = [NSMutableArray array];
@@ -732,21 +749,47 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         livePanel.scroll.contentOffset = CGPointMake(offset.x, MIN(offset.y, maxOffset));
     };
 }
-- (void)reflowPanel:(SGRDropdownPanel *)panel {
-    CGRect frame = panel.frame;
-    frame.size.height = panel.actualHeight;
-    if (panel == self.panels.firstObject) {
-        CGFloat top = MAX(62, self.window.safeAreaInsets.top);
-        CGFloat bottom = CGRectGetHeight(self.window.bounds) - self.window.safeAreaInsets.bottom - 12;
-        // Grow toward the top when async data arrives near the screen's foot;
-        // do not hide actions outside the window or replay the opening motion.
-        CGFloat y = MIN(self.origin.origin.y, MAX(top, bottom - panel.actualHeight));
-        self.origin = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
-        frame.origin.y = y;
-    } else {
-        frame.origin.y = [self submenuYForHeight:panel.actualHeight];
+// Home filter lives in Spotify's moving header. Resolve its CURRENT button
+// origin in the overlay window on each data refresh; the generic origin is
+// only a snapshot of the initial deferred (often one-row) menu.
+- (CGFloat)homeFilterYForHeight:(CGFloat)height {
+    CGFloat top = MAX(62, self.window.safeAreaInsets.top);
+    CGFloat bottom = CGRectGetHeight(self.root.view.bounds) - self.window.safeAreaInsets.bottom - 12;
+    CGFloat wanted = self.origin.origin.y;
+    if (self.anchor.window) {
+        CGRect inSourceWindow = [self.anchor convertRect:self.anchor.bounds toView:nil];
+        CGRect inOverlay = [self.window convertRect:inSourceWindow fromWindow:self.anchor.window];
+        if (!CGRectIsNull(inOverlay) && !CGRectIsEmpty(inOverlay)) wanted = CGRectGetMinY(inOverlay);
     }
-    panel.frame = frame;
+    // Prefer exact top-edge alignment; only move up if the panel physically
+    // cannot fit below the button within the safe viewport.
+    CGFloat y = MIN(MAX(wanted, top), MAX(top, bottom - height));
+    CGFloat scale = UIScreen.mainScreen.scale;
+    return round(y * scale) / scale;
+}
+- (void)reflowPanel:(SGRDropdownPanel *)panel {
+    if (panel == self.panels.firstObject && self.homeFilterAnchor) {
+        CGFloat y = [self homeFilterYForHeight:panel.actualHeight];
+        self.origin = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
+        // `frame` is undefined under the opening scale transform. Configure
+        // already set bounds: move only the center to prevent a reflow jump.
+        panel.center = CGPointMake(CGRectGetMidX(self.origin), y + panel.actualHeight/2);
+    } else {
+        CGRect frame = panel.frame;
+        frame.size.height = panel.actualHeight;
+        if (panel == self.panels.firstObject) {
+            CGFloat top = MAX(62, self.window.safeAreaInsets.top);
+            CGFloat bottom = CGRectGetHeight(self.window.bounds) - self.window.safeAreaInsets.bottom - 12;
+            // Grow toward the top when async data arrives near the screen's foot;
+            // do not hide actions outside the window or replay the opening motion.
+            CGFloat y = MIN(self.origin.origin.y, MAX(top, bottom - panel.actualHeight));
+            self.origin = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
+            frame.origin.y = y;
+        } else {
+            frame.origin.y = [self submenuYForHeight:panel.actualHeight];
+        }
+        panel.frame = frame;
+    }
     for (SGRDropdownPanel *other in self.panels) {
         if (other == panel || other == self.panels.firstObject) continue;
         CGRect next = other.frame;
@@ -759,6 +802,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     SGRDropdownPanel *parent = self.panels.lastObject;
     SGRDropdownPanel *panel = [[SGRDropdownPanel alloc] initWithFrame:CGRectZero];
     panel.isSubmenu = title.length > 0;
+    panel.homeFilterRoot = !parent && self.homeFilterAnchor;
     __weak SGRDropdownPresentation *weakSelf = self;
     panel.choose = ^(UIMenuElement *element) { [weakSelf choose:element]; };
     panel.back = ^{ [weakSelf popMenu]; };
@@ -775,6 +819,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     [self.root.view addSubview:panel];
     [self.panels addObject:panel];
     [self.menuIDs addObject:menu.identifier ?: menu.title ?: @""];
+    if (panel.homeFilterRoot) [self reflowPanel:panel];
     panel.alpha = 0;
     panel.transform = dropdownEnteringTransform();
     panel.waitingForDeferred = YES;
@@ -889,7 +934,8 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     CGFloat bottom = CGRectGetHeight(self.window.bounds) - self.window.safeAreaInsets.bottom - 12;
     [self loadMenu:menu intoPanel:first title:nil maximum:MIN(kPanelMaximum, MAX(1, bottom-self.origin.origin.y))];
     [first.resolution begin];
-    first.frame = CGRectMake(self.origin.origin.x, self.origin.origin.y, kWidth, first.actualHeight);
+    if (self.homeFilterAnchor) [self reflowPanel:first];
+    else first.frame = CGRectMake(self.origin.origin.x, self.origin.origin.y, kWidth, first.actualHeight);
     first.scroll.contentOffset = offset;
     if (self.panels.count < 2) return;
     for (NSUInteger i=1; i<self.panels.count; ++i) {
