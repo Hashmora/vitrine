@@ -7,6 +7,7 @@
 
 static const CGFloat kWidth = 250, kRadius = 30, kInset = 10;
 static const CGFloat kRow = 42, kSubtitle = 58, kQuick = 93, kHeader = 62;
+static const CGFloat kSectionGap = 11, kSubmenuSectionGap = 21, kBottomPadding = 10, kSubmenuDrop = 12;
 static const CGFloat kPanelMaximum = 520;
 // Lightweight presentation transitions only. The touch-driven iOS 26 morph
 // remains a separate task; never replay an open transition on a data refresh.
@@ -84,28 +85,52 @@ static NSArray<NSArray<SGRDropdownItem *> *> *groupsOf(UIMenu *menu) {
     return groups;
 }
 
+// Measure labels at the same width and font that the panel actually uses.
+// English character counts are not a reliable proxy for the number of lines.
+static BOOL needsWrappedTitle(UIMenuElement *element) {
+    NSString *title = element.title;
+    if (!title.length) return NO;
+    UIFont *font = [UIFont systemFontOfSize:17 weight:UIFontWeightRegular];
+    CGRect size = [title boundingRectWithSize:CGSizeMake(162, CGFLOAT_MAX)
+                                     options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
+                                  attributes:@{ NSFontAttributeName: font } context:nil];
+    return size.size.height > font.lineHeight * 1.4;
+}
+
 static CGFloat rowHeight(UIMenuElement *element) {
-    if (element.subtitle.length) return [element.title isEqualToString:@"Speed, Pitch & Reverb"] ? 80 : kSubtitle;
-    if (element.title.length > 33) return 64;
+    if (element.subtitle.length) return needsWrappedTitle(element) ? 80 : kSubtitle;
+    if (needsWrappedTitle(element)) return 64;
     return kRow;
+}
+
+// UIKit 26 leaves 11pt after the quick tile group, 21pt before a
+// standalone submenu, and 10pt at the foot. Those gaps are part of the
+// menu layout, not padding supplied by the backdrop.
+static CGFloat gapBeforeGroup(NSArray<NSArray<SGRDropdownItem *> *> *groups, NSUInteger index, BOOL hasHeader) {
+    if (!index || hasHeader) return 0;
+    NSArray<SGRDropdownItem *> *group = groups[index];
+    if (group.count == 1 && [group.firstObject.element isKindOfClass:UIMenu.class])
+        return kSubmenuSectionGap;
+    return kSectionGap;
 }
 
 static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     CGFloat height = withHeader ? kHeader + 10 : 0;
     NSArray<NSArray<SGRDropdownItem *> *> *groups = groupsOf(menu);
     for (NSUInteger i = 0; i < groups.count; ++i) {
+        height += gapBeforeGroup(groups, i, withHeader);
         NSArray<SGRDropdownItem *> *group = groups[i];
-        if (i) height += 1;
         if (group.firstObject.tile) height += kQuick;
         else for (SGRDropdownItem *item in group) height += rowHeight(item.element);
     }
-    return height;
+    return height + kBottomPadding;
 }
 
 @interface SGRDropdownPress : UIControl
 @property (nonatomic, strong) UIMenuElement *element;
 @property (nonatomic, copy) void (^pick)(UIMenuElement *element);
 @property (nonatomic, strong) UIView *highlight;
+@property (nonatomic) BOOL isTile;
 @end
 @implementation SGRDropdownPress
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -126,6 +151,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     self.highlight.frame = CGRectInset(self.bounds, 2, 2);
+    self.highlight.layer.cornerRadius = self.isTile ? 18 : MIN(20, CGRectGetHeight(self.highlight.bounds) / 2);
 }
 - (void)setHighlighted:(BOOL)highlighted {
     [super setHighlighted:highlighted];
@@ -181,7 +207,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     // opacity of the reference surface here, rather than letting the artwork
     // and the previous menu read sharply through the live glass material.
     if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0.11
-                                                        alpha:self.isSubmenu ? 0.83 : 0.76]);
+                                                        alpha:self.isSubmenu ? 0.72 : 0.62]);
     self.scroll.frame = self.bounds;
 }
 static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
@@ -206,7 +232,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     UIColor *foreground = (dropdownAttributes(element) & UIMenuElementAttributesDestructive)
         ? [UIColor colorWithRed:1 green:0.36 blue:0.34 alpha:enabled ? 1 : 0.38]
         : [UIColor colorWithWhite:1 alpha:enabled ? 1 : 0.38];
-    UIImageView *glyph = [[UIImageView alloc] initWithFrame:CGRectMake(14, (h-21)/2, 21, 21)];
+    UIImageView *glyph = [[UIImageView alloc] initWithFrame:CGRectMake(14, (h-24)/2, 24, 24)];
     glyph.image = [element.image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
     glyph.tintColor = foreground;
     glyph.contentMode = UIViewContentModeScaleAspectFit;
@@ -218,7 +244,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     CGFloat labelY = tallSubtitle ? 9 : (element.subtitle.length ? 9 : (wrapsTitle ? 10 : (h-22)/2));
     CGFloat labelHeight = tallSubtitle || wrapsTitle ? 44 : 23;
     CGFloat labelWidth = tallSubtitle ? 144 : 166;
-    UILabel *name = textLabel(element.title, [UIFont systemFontOfSize:16 weight:UIFontWeightRegular], foreground);
+    UILabel *name = textLabel(element.title, [UIFont systemFontOfSize:17 weight:UIFontWeightRegular], foreground);
     name.frame = CGRectMake(50, labelY, labelWidth, labelHeight);
     name.numberOfLines = tallSubtitle || wrapsTitle ? 2 : 1;
     [press addSubview:name];
@@ -255,7 +281,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         press.pick = self.choose;
         press.accessibilityLabel = element.title;
         press.enabled = !(dropdownAttributes(element) & UIMenuElementAttributesDisabled);
-        press.highlight.layer.cornerRadius = 18;
+        press.isTile = YES;
         UIImageView *image = [[UIImageView alloc] initWithFrame:CGRectMake((tileWidth-26)/2, 14, 26, 26)];
         image.image = [element.image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
         image.tintColor = [UIColor colorWithWhite:1 alpha:press.enabled ? 1 : 0.4];
@@ -312,7 +338,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         label.frame = CGRectMake(60, 19, 145, 24);
         [head addSubview:label];
         [self.body addSubview:head];
-        UIView *line = [[UIView alloc] initWithFrame:CGRectMake(18, kHeader, kWidth-36, 1.0/UIScreen.mainScreen.scale)];
+        UIView *line = [[UIView alloc] initWithFrame:CGRectMake(24, kHeader, kWidth-48, 1.0/UIScreen.mainScreen.scale)];
         line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.13];
         [self.body addSubview:line];
         y = kHeader+10;
@@ -320,15 +346,19 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     NSArray<NSArray<SGRDropdownItem *> *> *groups = groupsOf(menu);
     for (NSUInteger i=0; i<groups.count; ++i) {
         NSArray<SGRDropdownItem *> *group = groups[i];
-        if (i) {
-            UIView *separator = [[UIView alloc] initWithFrame:CGRectMake(18, y, kWidth-36, 1.0/UIScreen.mainScreen.scale)];
-            separator.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
+        CGFloat gap = gapBeforeGroup(groups, i, title.length > 0);
+        if (gap > 0) {
+            CGFloat lineY = y + (gap == kSubmenuSectionGap ? 10 :
+                                 groups[i-1].firstObject.tile ? 0 : 5);
+            UIView *separator = [[UIView alloc] initWithFrame:CGRectMake(24, lineY, kWidth-48, 1.0/UIScreen.mainScreen.scale)];
+            separator.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
             [self.body addSubview:separator];
-            y += 1;
+            y += gap;
         }
         if (group.firstObject.tile) { [self addQuick:group at:y]; y += kQuick; }
         else for (SGRDropdownItem *item in group) { [self addRow:item at:y]; y += rowHeight(item.element); }
     }
+    y += kBottomPadding;
     self.body.frame = CGRectMake(0, 0, kWidth, y);
     self.scroll.contentSize = self.body.bounds.size;
     self.actualHeight = MIN(MAX(1, y), maximum);
@@ -385,7 +415,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     CGRect from = [anchor convertRect:anchor.bounds toView:nil];
     CGFloat width = CGRectGetWidth(self.window.bounds);
     CGFloat x = MIN(width-kWidth-12, MAX(12, CGRectGetMaxX(from)-kWidth));
-    CGFloat top = MAX(62, self.window.safeAreaInsets.top+8);
+    CGFloat top = MAX(62, self.window.safeAreaInsets.top);
     CGFloat y = CGRectGetMinY(from) <= top + 24 ? top : CGRectGetMinY(from);
     CGFloat available = CGRectGetHeight(self.window.bounds)-self.window.safeAreaInsets.bottom-12;
     CGFloat wanted = MIN(kPanelMaximum, contentHeight(menu, NO));
@@ -432,11 +462,15 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     __weak SGRDropdownPresentation *weakSelf = self;
     panel.choose = ^(UIMenuElement *element) { [weakSelf choose:element]; };
     panel.back = ^{ [weakSelf popMenu]; };
-    CGFloat available = CGRectGetHeight(self.root.view.bounds) - MAX(62, self.window.safeAreaInsets.top+8) - self.window.safeAreaInsets.bottom - 12;
+    // Submenus have their own top edge, 12pt below the parent. If space is
+    // limited, scroll inside the panel rather than moving it over the parent.
+    CGFloat ceiling = MAX(62, self.window.safeAreaInsets.top);
+    CGFloat bottom = CGRectGetHeight(self.root.view.bounds) - self.window.safeAreaInsets.bottom - 12;
+    CGFloat y = parent ? CGRectGetMinY(parent.frame) + kSubmenuDrop : self.origin.origin.y;
+    y = MIN(MAX(ceiling, y), MAX(ceiling, bottom - 120));
+    CGFloat available = MAX(1, bottom - y);
     [panel configure:menu title:title maxHeight:MIN(kPanelMaximum, available)];
-    CGRect frame = CGRectMake(self.origin.origin.x, self.origin.origin.y, kWidth, panel.actualHeight);
-    if (CGRectGetMaxY(frame) > CGRectGetHeight(self.root.view.bounds)-self.window.safeAreaInsets.bottom-12)
-        frame.origin.y = MAX(62, CGRectGetHeight(self.root.view.bounds)-self.window.safeAreaInsets.bottom-12-frame.size.height);
+    CGRect frame = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
     panel.frame = frame;
     [self.root.view addSubview:panel];
     [self.panels addObject:panel];
@@ -498,7 +532,8 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     self.rootMenu = menu;
     SGRDropdownPanel *first = self.panels.firstObject;
     CGPoint offset = first.scroll.contentOffset;
-    [first configure:menu title:nil maxHeight:MIN(kPanelMaximum, CGRectGetHeight(self.window.bounds)-100)];
+    CGFloat bottom = CGRectGetHeight(self.window.bounds) - self.window.safeAreaInsets.bottom - 12;
+    [first configure:menu title:nil maxHeight:MIN(kPanelMaximum, MAX(1, bottom-self.origin.origin.y))];
     first.frame = CGRectMake(self.origin.origin.x, self.origin.origin.y, kWidth, first.actualHeight);
     first.scroll.contentOffset = offset;
     if (self.panels.count < 2) return;
@@ -507,8 +542,10 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
         if (!sub) continue;
         SGRDropdownPanel *panel = self.panels[i];
         CGPoint prior = panel.scroll.contentOffset;
-        [panel configure:sub title:sub.title maxHeight:MIN(kPanelMaximum, CGRectGetHeight(self.window.bounds)-100)];
+        CGFloat desiredY = CGRectGetMinY(self.panels[i-1].frame) + kSubmenuDrop;
+        [panel configure:sub title:sub.title maxHeight:MIN(kPanelMaximum, MAX(1, bottom-desiredY))];
         CGRect frame = panel.frame;
+        frame.origin.y = desiredY;
         frame.size.height = panel.actualHeight;
         panel.frame = frame;
         panel.scroll.contentOffset = prior;
