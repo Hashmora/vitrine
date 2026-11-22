@@ -435,6 +435,24 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     [self pushMenu:menu title:nil];
     return YES;
 }
+// A submenu keeps the same lower edge as the menu stack, rather than a
+// constant offset from its parent top. On the measured iOS 26 player menu,
+// a 418pt More panel begins at y=164, while a 508pt More begins at y=74:
+// both end at y=582 (root y=62 + max stack height 520).
+- (CGFloat)submenuStackBottom {
+    CGFloat safeBottom = CGRectGetHeight(self.root.view.bounds) - self.window.safeAreaInsets.bottom - 12;
+    return MIN(safeBottom, CGRectGetMinY(self.origin) + kPanelMaximum);
+}
+- (CGFloat)minimumSubmenuTop {
+    CGFloat bottom = [self submenuStackBottom];
+    return MIN(bottom - 1, MAX(62, CGRectGetMinY(self.origin) + kSubmenuDrop));
+}
+- (CGFloat)submenuYForHeight:(CGFloat)height {
+    return MAX([self minimumSubmenuTop], [self submenuStackBottom] - height);
+}
+- (CGFloat)submenuAvailableHeight {
+    return MAX(1, [self submenuStackBottom] - [self minimumSubmenuTop]);
+}
 - (void)outsideTapped { [self dismiss:nil]; }
 - (void)backTapped { [self popMenu]; }
 - (void)popMenu {
@@ -473,14 +491,13 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     __weak SGRDropdownPresentation *weakSelf = self;
     panel.choose = ^(UIMenuElement *element) { [weakSelf choose:element]; };
     panel.back = ^{ [weakSelf popMenu]; };
-    // Submenus have their own top edge, 12pt below the parent. If space is
-    // limited, scroll inside the panel rather than moving it over the parent.
-    CGFloat ceiling = MAX(62, self.window.safeAreaInsets.top);
-    CGFloat bottom = CGRectGetHeight(self.root.view.bounds) - self.window.safeAreaInsets.bottom - 12;
-    CGFloat y = parent ? CGRectGetMinY(parent.frame) + kSubmenuDrop : self.origin.origin.y;
-    y = MIN(MAX(ceiling, y), MAX(ceiling, bottom - 120));
-    CGFloat available = MAX(1, bottom - y);
-    [panel configure:menu title:title maxHeight:MIN(kPanelMaximum, available)];
+    // The root retains its anchor. Submenus share a lower edge with the
+    // reference's 520pt menu stack; shorter menus begin farther down while
+    // long menus use the available height and scroll internally.
+    CGFloat maximum = parent ? [self submenuAvailableHeight] :
+        MAX(1, [self submenuStackBottom] - self.origin.origin.y);
+    [panel configure:menu title:title maxHeight:MIN(kPanelMaximum, maximum)];
+    CGFloat y = parent ? [self submenuYForHeight:panel.actualHeight] : self.origin.origin.y;
     CGRect frame = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
     panel.frame = frame;
     [self.root.view addSubview:panel];
@@ -553,10 +570,9 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
         if (!sub) continue;
         SGRDropdownPanel *panel = self.panels[i];
         CGPoint prior = panel.scroll.contentOffset;
-        CGFloat desiredY = CGRectGetMinY(self.panels[i-1].frame) + kSubmenuDrop;
-        [panel configure:sub title:sub.title maxHeight:MIN(kPanelMaximum, MAX(1, bottom-desiredY))];
+        [panel configure:sub title:sub.title maxHeight:MIN(kPanelMaximum, [self submenuAvailableHeight])];
         CGRect frame = panel.frame;
-        frame.origin.y = desiredY;
+        frame.origin.y = [self submenuYForHeight:panel.actualHeight];
         frame.size.height = panel.actualHeight;
         panel.frame = frame;
         panel.scroll.contentOffset = prior;
