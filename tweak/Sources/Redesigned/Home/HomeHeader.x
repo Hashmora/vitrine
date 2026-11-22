@@ -106,6 +106,12 @@ static UILabel *titleIn(UIView *header) {
 // The header's views, found once: the page lays out again as it appears, and the walk names classes.
 static __weak UIView *sg_header;
 static __weak UIStackView *sg_stack;
+// Spotify's feed chip can finish its state transition after the menu is
+// dismissed. Remember the selection made *through this menu* so reopening it
+// immediately shows one checked action even while the hidden chip is stale.
+// Reset on a different Spotify header stack; never persist across accounts.
+static __weak UIStackView *sg_filterSelectionStack;
+static NSString *sg_filterSelectionID;
 static __weak UIView *sg_scrim;
 static UIControl *connectButton(UIView *window);
 
@@ -137,12 +143,29 @@ static BOOL chosen(UIControl *chip) {
 static NSArray<UIMenuElement *> *menuElements(void) {
     NSMutableArray<UIMenuElement *> *elements = [NSMutableArray array];
     NSMutableArray<UIMenuElement *> *filters = [NSMutableArray array];
-    for (UIControl *chip in chips(sg_stack)) {
+    if (sg_filterSelectionStack != sg_stack) {
+        sg_filterSelectionStack = sg_stack;
+        sg_filterSelectionID = nil;
+    }
+    NSArray<UIControl *> *available = chips(sg_stack);
+    NSString *nativeSelection = nil;
+    for (UIControl *chip in available) {
+        if (chosen(chip)) { nativeSelection = chip.accessibilityIdentifier; break; }
+    }
+    // A local tap is authoritative until Spotify replaces the stack. Native
+    // selection remains the fallback for first open and external navigation.
+    NSString *selected = sg_filterSelectionID ?: nativeSelection;
+    for (UIControl *chip in available) {
         __weak UIControl *weakChip = chip;
+        NSString *chipID = [chip.accessibilityIdentifier copy];
         UIAction *action = [UIAction actionWithTitle:chip.accessibilityLabel ?: @"" image:nil identifier:nil handler:^(UIAction *a) {
-            if (weakChip) SGRActivate(weakChip);
+            UIControl *live = weakChip;
+            if (!live) return;
+            sg_filterSelectionStack = sg_stack;
+            sg_filterSelectionID = chipID;
+            SGRActivate(live);
         }];
-        action.state = chosen(chip) ? UIMenuElementStateOn : UIMenuElementStateOff;
+        action.state = [chipID isEqualToString:selected] ? UIMenuElementStateOn : UIMenuElementStateOff;
         [filters addObject:action];
     }
     if (filters.count) [elements addObject:[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:filters]];
