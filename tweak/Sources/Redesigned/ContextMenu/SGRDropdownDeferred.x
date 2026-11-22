@@ -205,16 +205,31 @@ void SGRDropdownDeferredRequest(UIDeferredMenuElement *element, UIResponder *anc
     return element;
 }
 %end
-%hook UIDeferredMenuElementProvider
-+ (instancetype)providerWithElementProvider:(SGRDropdownDeferredBlock)block {
-    id provider = %orig(block);
+%end
+
+// Do not name UIDeferredMenuElementProvider as a compile-time type here.
+// The class was introduced in iOS 26, while Vitrine targets iOS 16. Logos
+// otherwise emits unguarded references in its generated C functions even
+// though the hook group is only initialized at runtime on iOS 26.
+static IMP sgrDropdownOriginalResponderFactory;
+
+static id sgrDropdownCapturedResponderFactory(id cls, SEL command, SGRDropdownDeferredBlock block) {
+    if (!sgrDropdownOriginalResponderFactory) return nil;
+    id provider = ((id (*)(id, SEL, SGRDropdownDeferredBlock))sgrDropdownOriginalResponderFactory)
+        (cls, command, block);
     if (provider && block)
         objc_setAssociatedObject(provider, &kResponderProviderBlockKey, [block copy],
                                  OBJC_ASSOCIATION_COPY_NONATOMIC);
     return provider;
 }
-%end
-%end
+
+static void sgrDropdownHookResponderFactory(Class providerClass) {
+    SEL selector = NSSelectorFromString(@"providerWithElementProvider:");
+    Method factory = class_getClassMethod(providerClass, selector);
+    if (!factory || sgrDropdownOriginalResponderFactory) return;
+    sgrDropdownOriginalResponderFactory =
+        method_setImplementation(factory, (IMP)sgrDropdownCapturedResponderFactory);
+}
 
 %ctor {
     if (!SGRedesignedUI()) return;
@@ -222,6 +237,8 @@ void SGRDropdownDeferredRequest(UIDeferredMenuElement *element, UIResponder *anc
     Class providerClass = NSClassFromString(@"UIDeferredMenuElementProvider");
     if (providerClass &&
         [UIDeferredMenuElement respondsToSelector:NSSelectorFromString(@"elementUsingFocusWithIdentifier:shouldCacheItems:")] &&
-        [providerClass respondsToSelector:NSSelectorFromString(@"providerWithElementProvider:")])
+        [providerClass respondsToSelector:NSSelectorFromString(@"providerWithElementProvider:")]) {
+        sgrDropdownHookResponderFactory(providerClass);
         %init(SGRDropdownResponderProviders);
+    }
 }
