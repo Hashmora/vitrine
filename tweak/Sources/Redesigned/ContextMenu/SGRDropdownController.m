@@ -92,20 +92,22 @@ static NSArray<NSArray<SGRDropdownItem *> *> *groupsOf(UIMenu *menu) {
 // pushed, not while their parent is displayed.
 @interface SGRDropdownResolution : NSObject
 @property (nonatomic, strong) UIMenu *source;
+@property (nonatomic, weak) UIResponder *anchor;
 @property (nonatomic, strong) NSMutableDictionary<NSValue *, NSArray<UIMenuElement *> *> *results;
 @property (nonatomic, strong) NSMutableSet<NSValue *> *requested;
 @property (nonatomic, copy) void (^didChange)(UIMenu *snapshot);
 @property (nonatomic) BOOL cancelled;
-- (instancetype)initWithMenu:(UIMenu *)menu;
+- (instancetype)initWithMenu:(UIMenu *)menu anchor:(UIResponder *)anchor;
 - (UIMenu *)snapshot;
 - (void)begin;
 - (void)cancel;
 @end
 
 @implementation SGRDropdownResolution
-- (instancetype)initWithMenu:(UIMenu *)menu {
+- (instancetype)initWithMenu:(UIMenu *)menu anchor:(UIResponder *)anchor {
     if ((self = [super init])) {
         self.source = menu;
+        self.anchor = anchor;
         self.results = [NSMutableDictionary dictionary];
         self.requested = [NSMutableSet set];
     }
@@ -157,7 +159,7 @@ static UIAction *statusAction(NSString *title) {
             if ([self.requested containsObject:key]) continue;
             [self.requested addObject:key];
             __weak SGRDropdownResolution *weakSelf = self;
-            SGRDropdownDeferredRequest((UIDeferredMenuElement *)element, ^(NSArray<UIMenuElement *> *ready) {
+            SGRDropdownDeferredRequest((UIDeferredMenuElement *)element, self.anchor, ^(NSArray<UIMenuElement *> *ready) {
                 SGRDropdownResolution *strongSelf = weakSelf;
                 if (!strongSelf || strongSelf.cancelled) return;
                 // A nested deferred provider may be returned by another provider.
@@ -526,7 +528,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     CGFloat available = CGRectGetHeight(self.window.bounds)-self.window.safeAreaInsets.bottom-12;
     // Deferred-only menus must reserve a loading row before their callbacks
     // arrive; otherwise UIKit buttons near the bottom anchor a 10pt panel.
-    SGRDropdownResolution *probe = [[SGRDropdownResolution alloc] initWithMenu:menu];
+    SGRDropdownResolution *probe = [[SGRDropdownResolution alloc] initWithMenu:menu anchor:self.anchor];
     CGFloat wanted = MIN(kPanelMaximum, contentHeight([probe snapshot], NO));
     if (y+wanted > available) y = MAX(top, available-wanted);
     self.origin = CGRectMake(x, y, kWidth, wanted);
@@ -589,7 +591,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 // late callbacks must never reconstruct a dismissed or replaced menu.
 - (void)loadMenu:(UIMenu *)menu intoPanel:(SGRDropdownPanel *)panel title:(NSString *)title maximum:(CGFloat)maximum {
     [panel.resolution cancel];
-    SGRDropdownResolution *resolution = [[SGRDropdownResolution alloc] initWithMenu:menu];
+    SGRDropdownResolution *resolution = [[SGRDropdownResolution alloc] initWithMenu:menu anchor:self.anchor];
     panel.resolution = resolution;
     [panel configure:[resolution snapshot] title:title maxHeight:maximum];
     __weak SGRDropdownPresentation *weakSelf = self;
@@ -758,7 +760,7 @@ BOOL SGRDropdownPresent(UIView *anchor, UIMenu *menu, SGRDropdownFinish finished
     if (!anchor.window || !menu) return NO;
     // If Spotify supplied a responder-chain or pre-hook provider with no
     // accessible block, never steal the native presentation and show a blank.
-    if (!SGRDropdownDeferredMenuSupported(menu)) return NO;
+    if (!SGRDropdownDeferredMenuSupported(menu, anchor)) return NO;
     if (sg_currentDropdown) {
         if (sg_currentDropdown.anchor == anchor && sg_currentDropdown.window && !sg_currentDropdown.closing) return YES;
         // Replacing an existing menu is immediate: no dying overlay above the
@@ -776,7 +778,7 @@ BOOL SGRDropdownPresent(UIView *anchor, UIMenu *menu, SGRDropdownFinish finished
     return YES;
 }
 void SGRDropdownUpdate(UIView *anchor, UIMenu *menu) {
-    if (sg_currentDropdown.anchor == anchor && SGRDropdownDeferredMenuSupported(menu))
+    if (sg_currentDropdown.anchor == anchor && SGRDropdownDeferredMenuSupported(menu, anchor))
         [sg_currentDropdown update:menu];
 }
 BOOL SGRDropdownIsPresentingFrom(UIView *anchor) {

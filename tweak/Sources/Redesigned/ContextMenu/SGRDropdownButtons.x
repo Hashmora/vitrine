@@ -9,7 +9,7 @@
 static char kNativeDropdownOverlay, kNativeDropdownSuppressed;
 
 // Only adopt menus whose deferred providers were captured at construction.
-// Unknown/responder-based providers remain with UIKit, never empty in Vitrine.
+// Unsupported providers keep native presentation instead of an empty panel.
 @interface SGRDropdownNativeOverlay : UIControl
 @property (nonatomic, weak) UIButton *sourceButton;
 @end
@@ -39,7 +39,7 @@ static char kNativeDropdownOverlay, kNativeDropdownSuppressed;
 
 static BOOL eligible(UIButton *button) {
     if (!SGRedesignedUI() || !SGBelowiOS26() || !button.menu || !button.window.windowScene) return NO;
-    if (!button.menu.children.count || !SGRDropdownDeferredMenuSupported(button.menu)) return NO;
+    if (!button.menu.children.count || !SGRDropdownDeferredMenuSupported(button.menu, button)) return NO;
     NSString *name = NSStringFromClass(button.class);
     if ([name hasPrefix:@"SGRMenu"] || [name hasPrefix:@"SGRDropdown"]) return NO;
     return YES;

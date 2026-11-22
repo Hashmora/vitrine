@@ -2,15 +2,17 @@
 // elements. UIKit does not expose the provider on an existing element. The
 // renderer calls these original blocks and owns the resulting menu visuals.
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import "Core/SGCore.h"
 #import "SGRDropdownDeferred.h"
 
-static char kDeferredStateKey;
+static char kDeferredStateKey, kResponderProviderBlockKey;
 static const NSTimeInterval kDeferredTimeout = 12;
 
 @interface SGRDropdownDeferredState : NSObject
 @property (nonatomic, copy) SGRDropdownDeferredBlock provider;
 @property (nonatomic) BOOL cachesResult;
+@property (nonatomic) BOOL responderBased;
 @property (nonatomic) BOOL hasCache;
 @property (nonatomic, strong) NSArray<UIMenuElement *> *cachedElements;
 @property (nonatomic, strong) NSMutableArray *waiting;
@@ -29,21 +31,79 @@ static void capture(UIDeferredMenuElement *element, SGRDropdownDeferredBlock pro
     objc_setAssociatedObject(element, &kDeferredStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-static BOOL supportedElements(NSArray<UIMenuElement *> *elements, NSUInteger depth) {
+// UIKit's focus-based deferred path asks the active responder chain for a
+// Provider. The public factory's block is retained by our creation hook.
+static SGRDropdownDeferredBlock providerInChain(UIDeferredMenuElement *element, UIResponder *start) {
+    SEL selector = NSSelectorFromString(@"providerForDeferredMenuElement:");
+    NSUInteger depth = 0;
+    for (UIResponder *responder = start; responder && depth++ < 64; responder = responder.nextResponder) {
+        if (![responder respondsToSelector:selector]) continue;
+        @try {
+            id provider = ((id (*)(id, SEL, id))objc_msgSend)(responder, selector, element);
+            SGRDropdownDeferredBlock block = objc_getAssociatedObject(provider, &kResponderProviderBlockKey);
+            if (block) return block;
+        } @catch (NSException *exception) {
+            SGLog(@"dropdown: responder provider raised %@", exception.name);
+        }
+    }
+    return nil;
+}
+
+static SGRDropdownDeferredBlock responderProvider(UIDeferredMenuElement *element, UIResponder *anchor) {
+    if (!element || !anchor) return nil;
+    // A focus-based element belongs to the currently focused responder, which
+    // need not be a parent of the tapped button. Search that chain first.
+    Class cls = NSClassFromString(@"UIFocusSystem");
+    SEL getSystem = NSSelectorFromString(@"focusSystemForEnvironment:");
+    SEL getFocusedItem = NSSelectorFromString(@"focusedItem");
+    if (cls && [cls respondsToSelector:getSystem]) {
+        @try {
+            id system = ((id (*)(id, SEL, id))objc_msgSend)(cls, getSystem, anchor);
+            if ([system respondsToSelector:getFocusedItem]) {
+                id focused = ((id (*)(id, SEL))objc_msgSend)(system, getFocusedItem);
+                if ([focused isKindOfClass:UIResponder.class]) {
+                    SGRDropdownDeferredBlock block = providerInChain(element, focused);
+                    if (block) return block;
+                }
+            }
+        } @catch (NSException *exception) {
+            SGLog(@"dropdown: focus lookup raised %@", exception.name);
+        }
+    }
+    return providerInChain(element, anchor);
+}
+
+static void captureResponderElement(UIDeferredMenuElement *element, BOOL cache) {
+    if (!element) return;
+    SGRDropdownDeferredState *state = [SGRDropdownDeferredState new];
+    state.responderBased = YES;
+    state.cachesResult = cache;
+    state.waiting = [NSMutableArray array];
+    objc_setAssociatedObject(element, &kDeferredStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static BOOL supportedElements(NSArray<UIMenuElement *> *elements, UIResponder *anchor, NSUInteger depth) {
     if (depth > 16) return NO;
     for (UIMenuElement *element in elements) {
         if ([element isKindOfClass:UIDeferredMenuElement.class]) {
-            if (!objc_getAssociatedObject(element, &kDeferredStateKey)) return NO;
+            SGRDropdownDeferredState *state = objc_getAssociatedObject(element, &kDeferredStateKey);
+            // A focus element may predate injection. Recover it through the
+            // public responder callback when possible; never guess its block.
+            if (!state && responderProvider((UIDeferredMenuElement *)element, anchor)) {
+                captureResponderElement((UIDeferredMenuElement *)element, NO);
+                state = objc_getAssociatedObject(element, &kDeferredStateKey);
+            }
+            if (!state || (state.responderBased && !responderProvider((UIDeferredMenuElement *)element, anchor))) return NO;
         } else if ([element isKindOfClass:UIMenu.class] &&
-                   !supportedElements(((UIMenu *)element).children, depth + 1)) {
+                   !supportedElements(((UIMenu *)element).children, anchor, depth + 1)) {
             return NO;
         }
     }
     return YES;
 }
 
-BOOL SGRDropdownDeferredMenuSupported(UIMenu *menu) {
-    return menu && supportedElements(menu.children, 0);
+BOOL SGRDropdownDeferredMenuSupported(UIMenu *menu, UIResponder *anchor) {
+    return menu && supportedElements(menu.children, anchor, 0);
 }
 
 static NSArray<UIMenuElement *> *safeElements(id elements) {
@@ -75,10 +135,11 @@ static void complete(SGRDropdownDeferredState *state, NSUInteger revision,
     }
 }
 
-void SGRDropdownDeferredRequest(UIDeferredMenuElement *element, SGRDropdownDeferredCompletion completion) {
+void SGRDropdownDeferredRequest(UIDeferredMenuElement *element, UIResponder *anchor,
+                                SGRDropdownDeferredCompletion completion) {
     if (!completion) return;
     if (![NSThread isMainThread]) {
-        dispatch_async(dispatch_get_main_queue(), ^{ SGRDropdownDeferredRequest(element, completion); });
+        dispatch_async(dispatch_get_main_queue(), ^{ SGRDropdownDeferredRequest(element, anchor, completion); });
         return;
     }
     SGRDropdownDeferredState *state = objc_getAssociatedObject(element, &kDeferredStateKey);
@@ -92,7 +153,14 @@ void SGRDropdownDeferredRequest(UIDeferredMenuElement *element, SGRDropdownDefer
     state.fetching = YES;
     NSUInteger revision = ++state.revision;
 
-    SGRDropdownDeferredBlock provider = state.provider;
+    // Resolve the provider again for each new request: an uncached focus element
+    // must follow the active responder rather than a prior menu's source.
+    SGRDropdownDeferredBlock provider = state.responderBased
+        ? responderProvider(element, anchor) : state.provider;
+    if (!provider) {
+        complete(state, revision, nil);
+        return;
+    }
     @try {
         provider(^(NSArray<UIMenuElement *> *elements) {
             // Spotify is allowed to finish asynchronously on another queue.
@@ -127,7 +195,33 @@ void SGRDropdownDeferredRequest(UIDeferredMenuElement *element, SGRDropdownDefer
 }
 %end
 
+// Focus-based elements and their providers were added in iOS 26. The Legacy
+// runtime does not expose these factories; block-based sources still work.
+%group SGRDropdownResponderProviders
+%hook UIDeferredMenuElement
++ (instancetype)elementUsingFocusWithIdentifier:(id)identifier shouldCacheItems:(BOOL)cache {
+    UIDeferredMenuElement *element = %orig(identifier, cache);
+    captureResponderElement(element, cache);
+    return element;
+}
+%end
+%hook UIDeferredMenuElementProvider
++ (instancetype)providerWithElementProvider:(SGRDropdownDeferredBlock)block {
+    id provider = %orig(block);
+    if (provider && block)
+        objc_setAssociatedObject(provider, &kResponderProviderBlockKey, [block copy],
+                                 OBJC_ASSOCIATION_COPY_NONATOMIC);
+    return provider;
+}
+%end
+%end
+
 %ctor {
-    if (!SGRedesignedUI() || !SGBelowiOS26()) return;
-    %init;
+    if (!SGRedesignedUI()) return;
+    if (SGBelowiOS26()) %init;
+    Class providerClass = NSClassFromString(@"UIDeferredMenuElementProvider");
+    if (providerClass &&
+        [UIDeferredMenuElement respondsToSelector:NSSelectorFromString(@"elementUsingFocusWithIdentifier:shouldCacheItems:")] &&
+        [providerClass respondsToSelector:NSSelectorFromString(@"providerWithElementProvider:")])
+        %init(SGRDropdownResponderProviders);
 }
