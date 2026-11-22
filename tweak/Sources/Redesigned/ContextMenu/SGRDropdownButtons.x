@@ -2,11 +2,75 @@
 // The overlay takes their touches before UIKit can open its own menu controller.
 // Long-press context menus and sheet navigation are intentionally not captured.
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import "Core/SGCore.h"
 #import "SGRDropdownController.h"
 #import "SGRDropdownDeferred.h"
 
 static char kNativeDropdownOverlay, kNativeDropdownSuppressed;
+
+static char kDropdownAuditLastMenuKey, kDropdownAuditRecordCountKey;
+
+// Diagnostics only: inventory each distinct UIButton.menu without changing
+// the menu's ownership or whether UIKit is allowed to present it.
+static NSString *sgrDropdownAuditOwner(UIView *view) {
+    for (UIResponder *responder = view; responder; responder = responder.nextResponder)
+        if ([responder isKindOfClass:UIViewController.class])
+            return NSStringFromClass(responder.class);
+    return @"";
+}
+
+static void sgrDropdownAuditElements(NSArray<UIMenuElement *> *elements, NSMutableDictionary *counts,
+                                     NSMutableArray<NSString *> *titles, NSUInteger depth) {
+    if (depth > 12) return;
+    for (UIMenuElement *element in elements) {
+        NSString *kind = [element isKindOfClass:UIDeferredMenuElement.class] ? @"deferred"
+                       : [element isKindOfClass:UIMenu.class] ? @"submenu"
+                       : [element isKindOfClass:UIAction.class] ? @"action" : @"other";
+        counts[kind] = @([counts[kind] unsignedIntegerValue] + 1);
+        if (titles.count < 12 && element.title.length)
+            [titles addObject:[element.title substringToIndex:MIN(element.title.length, 72)]];
+        if ([element isKindOfClass:UIMenu.class])
+            sgrDropdownAuditElements(((UIMenu *)element).children, counts, titles, depth + 1);
+    }
+}
+
+static void sgrDropdownAuditRecord(NSDictionary *event) {
+    if (![NSJSONSerialization isValidJSONObject:event]) return;
+    NSData *payload = [NSJSONSerialization dataWithJSONObject:event options:0 error:NULL];
+    if (!payload) return;
+    SGLog(@"dropdown.provider.inventory %@", [[NSString alloc] initWithData:payload encoding:NSUTF8StringEncoding]);
+}
+
+static void sgrDropdownAuditButton(UIButton *button) {
+    if (!button || !button.menu || !button.window || !SGRedesignedUI() || !SGBelowiOS26()) return;
+    UIMenu *menu = button.menu;
+    NSValue *last = objc_getAssociatedObject(button, &kDropdownAuditLastMenuKey);
+    if ([last isKindOfClass:NSValue.class] && [last nonretainedObjectValue] == menu) return;
+    // A constantly reconstructed menu must not flood the driver's 100-line log.
+    NSUInteger count = [objc_getAssociatedObject(button, &kDropdownAuditRecordCountKey) unsignedIntegerValue];
+    if (count >= 6) return;
+    objc_setAssociatedObject(button, &kDropdownAuditLastMenuKey,
+                             [NSValue valueWithNonretainedObject:menu], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(button, &kDropdownAuditRecordCountKey, @(count + 1),
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSMutableDictionary *counts = [NSMutableDictionary dictionary];
+    NSMutableArray<NSString *> *titles = [NSMutableArray array];
+    sgrDropdownAuditElements(menu.children, counts, titles, 0);
+    BOOL supported = SGRDropdownDeferredMenuSupported(menu, button);
+    sgrDropdownAuditRecord(@{
+        @"kind": @"button", @"class": NSStringFromClass(button.class),
+        @"owner": sgrDropdownAuditOwner(button),
+        @"id": button.accessibilityIdentifier ?: @"",
+        @"label": button.accessibilityLabel ?: @"",
+        @"menuTitle": menu.title ?: @"", @"titles": titles, @"elements": counts,
+        @"primary": @(button.showsMenuAsPrimaryAction),
+        @"alreadyOwned": @(objc_getAssociatedObject(button, &kNativeDropdownOverlay) != nil),
+        @"supported": @(supported),
+        @"reason": supported ? @"supported" :
+            [counts[@"deferred"] unsignedIntegerValue] ? @"unresolved-deferred" : @"no-usable-children"
+    });
+}
 
 // Only adopt menus whose deferred providers were captured at construction.
 // Unsupported providers keep native presentation instead of an empty panel.
@@ -46,6 +110,7 @@ static BOOL eligible(UIButton *button) {
 }
 
 static void updateNative(UIButton *button) {
+    sgrDropdownAuditButton(button);
     SGRDropdownNativeOverlay *overlay = objc_getAssociatedObject(button, &kNativeDropdownOverlay);
     if (!eligible(button)) {
         if (overlay) {
@@ -84,6 +149,33 @@ static void updateNative(UIButton *button) {
     overlay.accessibilityLabel = button.accessibilityLabel ?: @"Menu";
     overlay.enabled = button.enabled;
 }
+
+
+// UIContextMenuInteraction-backed buttons do not necessarily expose
+// UIButton.menu. Record those attachment sites separately; do not hijack
+// the interaction or invoke its Spotify delegate.
+%hook UIView
+- (void)addInteraction:(id<UIInteraction>)interaction {
+    %orig;
+    NSString *name = NSStringFromClass(interaction.class);
+    if (![name containsString:@"ContextMenu"] && ![name containsString:@"EditMenu"]) return;
+    id delegate = nil;
+    SEL selector = @selector(delegate);
+    if ([interaction respondsToSelector:selector]) {
+        @try {
+            delegate = ((id (*)(id, SEL))objc_msgSend)(interaction, selector);
+        } @catch (__unused NSException *exception) {}
+    }
+    sgrDropdownAuditRecord(@{
+        @"kind": @"interaction", @"interaction": name,
+        @"class": NSStringFromClass(self.class),
+        @"owner": sgrDropdownAuditOwner(self),
+        @"id": self.accessibilityIdentifier ?: @"",
+        @"label": self.accessibilityLabel ?: @"",
+        @"delegate": delegate ? NSStringFromClass([delegate class]) : @""
+    });
+}
+%end
 
 %hook UIButton
 - (void)didMoveToWindow {
