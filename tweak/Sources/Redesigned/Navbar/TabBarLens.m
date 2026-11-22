@@ -9,10 +9,10 @@ static char kLensGlyphDeghostKey;
 
 static char kLensPaneKey, kLensFilmKey;
 
-// The glyph refraction mask follows the actual capsule *contour*, not two
-// overlapping rectangular gradients. On the straight top/bottom edges the
-// backdrop shifts vertically; that displacement turns smoothly sideways at
-// the round ends. A 2D alpha mask avoids a second bright copy of each icon.
+// The glyph aperture consists of a steady side crescent and a separate,
+// weak vertical motion highlight. Unlike Stage 184, vertical refraction NEVER
+// follows the capsule perimeter and NEVER stays visible on a held, still lens.
+// The latter's opacity follows the same spring samples as the glass itself.
 static CGFloat SGRGlyphClamp(CGFloat value) { return MAX(0, MIN(1, value)); }
 
 static CGFloat SGRGlyphSideFalloff(CGFloat t) {
@@ -22,8 +22,8 @@ static CGFloat SGRGlyphSideFalloff(CGFloat t) {
     return 0.45 * (0.25 - t) / 0.06;
 }
 
-static CGImageRef SGRCreateGlyphRimAperture(CGSize size, CGFloat leftGuard, CGFloat rightGuard,
-                                            CGFloat scale) {
+static CGImageRef SGRCreateGlyphAperture(CGSize size, CGFloat leftGuard, CGFloat rightGuard,
+                                         CGFloat scale, BOOL verticalOnly) {
     size_t width = (size_t)ceil(size.width * scale), height = (size_t)ceil(size.height * scale);
     if (!width || !height || width > 2048 || height > 2048) return NULL;
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
@@ -35,33 +35,36 @@ static CGImageRef SGRCreateGlyphRimAperture(CGSize size, CGFloat leftGuard, CGFl
     uint8_t *pixels = CGBitmapContextGetData(context);
     if (!pixels) { CGContextRelease(context); return NULL; }
 
-    CGFloat halfW = size.width / 2.0, halfH = size.height / 2.0;
+    // Unlike a contour normal, these two apertures are independent. The
+    // vertical one is centered on the flat upper/lower rails, never corners.
+    CGFloat verticalBand = MIN(9.0, MAX(4.0, size.height * 0.15));
+    CGFloat halfW = size.width / 2, halfH = size.height / 2;
     CGFloat radius = MIN(halfW, halfH);
-    CGFloat band = MIN(10.5, MAX(5, radius * 0.34));
     for (size_t row = 0; row < height; row++) {
         CGFloat y = ((CGFloat)row + 0.5) / scale;
-        CGFloat dy = fabs(y - halfH);
         for (size_t col = 0; col < width; col++) {
             CGFloat x = ((CGFloat)col + 0.5) / scale;
-            CGFloat dx = fabs(x - halfW) - (halfW - radius);
-            CGFloat ox = MAX(0, dx), oy = MAX(0, dy);
-            CGFloat distance = hypot(ox, oy) + MIN(MAX(dx, dy), 0) - radius;
-            CGFloat clip = SGRGlyphClamp(0.55 - distance);
-            CGFloat depth = MAX(0, -distance);
-            CGFloat normalLength = hypot(ox, oy);
-            // On the horizontal rails the normal is vertical. Around each
-            // rounded tip it turns continuously towards the x axis.
-            CGFloat vertical = normalLength > 0.0001 ? oy / normalLength : 1;
             CGFloat u = x / size.width;
-            CGFloat leftSide = SGRGlyphSideFalloff(u) * leftGuard;
-            CGFloat rightSide = SGRGlyphSideFalloff(1 - u) * rightGuard;
-            CGFloat rim = 0.68 * vertical * pow(SGRGlyphClamp(1 - depth / band), 1.35);
-            // The side-end guard must also suppress cap refraction on the
-            // outward end of Home/Create, while leaving the interior rail.
-            CGFloat leftCapGuard = leftGuard + (1 - leftGuard) * SGRGlyphClamp((u - 0.07) / 0.18);
-            CGFloat rightCapGuard = rightGuard + (1 - rightGuard) * SGRGlyphClamp((0.93 - u) / 0.18);
-            rim *= leftCapGuard * rightCapGuard;
-            CGFloat alpha = clip * (1 - (1 - leftSide) * (1 - rightSide) * (1 - rim));
+            CGFloat alpha;
+            if (verticalOnly) {
+                CGFloat a = SGRGlyphClamp((u - 0.14) / 0.20);
+                CGFloat b = SGRGlyphClamp((0.86 - u) / 0.20);
+                CGFloat horizontalWindow = a * a * (3 - 2 * a) * b * b * (3 - 2 * b);
+                CGFloat edgeDepth = MIN(y, size.height - y);
+                CGFloat verticalWindow = SGRGlyphClamp(1 - edgeDepth / verticalBand);
+                alpha = horizontalWindow * verticalWindow * verticalWindow;
+            } else {
+                // Preserve Stage 184's exact side geometry and outer-edge
+                // protection; only its excessive permanent vertical rim goes.
+                CGFloat dx = fabs(x - halfW) - (halfW - radius);
+                CGFloat dy = fabs(y - halfH);
+                CGFloat ox = MAX(0, dx), oy = MAX(0, dy);
+                CGFloat distance = hypot(ox, oy) + MIN(MAX(dx, dy), 0) - radius;
+                CGFloat clip = SGRGlyphClamp(0.55 - distance);
+                CGFloat leftSide = SGRGlyphSideFalloff(u) * leftGuard;
+                CGFloat rightSide = SGRGlyphSideFalloff(1 - u) * rightGuard;
+                alpha = clip * (1 - (1 - leftSide) * (1 - rightSide));
+            }
             uint8_t channel = (uint8_t)lrint(255 * SGRGlyphClamp(alpha));
             size_t offset = (row * width + col) * 4;
             pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = pixels[offset + 3] = channel;
@@ -145,6 +148,17 @@ static CGFloat rubber(CGFloat x, CGFloat lo, CGFloat hi) {
 @end
 
 typedef struct { CGFloat L, R, vL, vR, lift, vLift, sq, vSq; } SGLensSample;
+
+// The vertical glint is velocity-driven, not a persistent strip. In particular
+// a finger can keep the glass raised after the spring settles without leaving
+// a bright twin glyph above or below the original. Never exceed 17% coverage.
+static CGFloat SGRGlyphVerticalMotion(SGLensSample sample) {
+    CGFloat horizontal = SGRGlyphClamp((fabs((sample.vL + sample.vR) * 0.5) - 18) / 420);
+    CGFloat rising = SGRGlyphClamp((fabs(sample.vLift) - 0.10) / 4.6);
+    CGFloat impulse = MAX(horizontal, rising * 0.75);
+    CGFloat visibility = SGRGlyphClamp(sample.lift / 0.42);
+    return 0.17 * impulse * visibility;
+}
 // One immutable pose for a frame, projected once from the lens host into
 // every optical sibling. The refraction shader, tint and inverse white mask
 // must never independently convert the host center while the host is scaled.
@@ -203,9 +217,12 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // sampled pixels and the accent glyphs share the same coordinate system.
     // The 0.92x platter lens remains a separate surface underneath the tabs.
     SGLegacyGlassView *_glyphEdgePane;
-    // A single 2D rim aperture, regenerated only when the capsule size or
-    // quantized outward-edge guard changes. Never on every spring frame.
+    // Two independent apertures: stable side crescent and a velocity-faded
+    // upper/lower strip. Images are cached; only the latter's opacity changes
+    // during a 120 Hz touch / render-server spring animation.
+    CALayer *_glyphCompositeMask;
     CALayer *_glyphEdgeMask;
+    CALayer *_glyphVerticalMask;
     CGSize _glyphMaskSize;
     NSInteger _glyphMaskLeftStep, _glyphMaskRightStep;
     // Independent refraction of the 0.92x platter; never samples glyphs.
@@ -359,17 +376,24 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
         // Keep the rim sample close to the very same glyph. Excessive mesh
         // shift read like a separate offset / horizontally smeared green copy.
         _glyphEdgePane.lensScale = 0.86;
-        // This pane samples the glyphs themselves (not the platter). Give
-        // the mesh its full top/bottom displacement as well as the sides;
-        // the two masks below keep the visible deformation in the rim only.
+        // Sample selected glyphs only through steady side crescents and a
+        // very brief, soft upper/lower pulse. No permanent perimeter rim.
         _glyphEdgePane.lateralRefraction = NO;
         _glyphEdgePane.sharp = YES;
         _glyphEdgePane.rimless = YES;
         _glyphEdgePane.alpha = 0;
+        _glyphCompositeMask = [CALayer layer];
+        _glyphCompositeMask.name = @"Vitrine.LegacyGlyphMotionRefraction";
+        _glyphCompositeMask.masksToBounds = YES;
+        _glyphCompositeMask.cornerCurve = kCACornerCurveCircular;
         _glyphEdgeMask = [CALayer layer];
-        _glyphEdgeMask.name = @"Vitrine.LegacyGlyphContourRefraction";
         _glyphEdgeMask.contentsGravity = kCAGravityResize;
-        _glyphEdgePane.layer.mask = _glyphEdgeMask;
+        [_glyphCompositeMask addSublayer:_glyphEdgeMask];
+        _glyphVerticalMask = [CALayer layer];
+        _glyphVerticalMask.contentsGravity = kCAGravityResize;
+        _glyphVerticalMask.opacity = 0;
+        [_glyphCompositeMask addSublayer:_glyphVerticalMask];
+        _glyphEdgePane.layer.mask = _glyphCompositeMask;
         _glyphMaskSize = CGSizeZero;
         _glyphMaskLeftStep = _glyphMaskRightStep = -1;
     }
@@ -481,23 +505,34 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     _platterEdgeMask.colors = colors;
     [CATransaction commit];
 
-    // Quantizing the glyph guard avoids rebuilding a bitmap for fractional
-    // spring movement on every display-link frame.
+    // Only regenerate mask textures on a size change or quantized outward
+    // guard change. Animation updates the vertical layer's opacity instead.
     NSInteger leftStep = (NSInteger)lrint(SGRGlyphClamp(left) * 32);
     NSInteger rightStep = (NSInteger)lrint(SGRGlyphClamp(right) * 32);
-    if (CGSizeEqualToSize(size, _glyphMaskSize) &&
-        leftStep == _glyphMaskLeftStep && rightStep == _glyphMaskRightStep) return;
+    BOOL resized = !CGSizeEqualToSize(size, _glyphMaskSize);
+    if (!resized && leftStep == _glyphMaskLeftStep &&
+        rightStep == _glyphMaskRightStep) return;
     CGFloat scale = MIN(2.0, MAX(1.0, UIScreen.mainScreen.scale));
-    CGImageRef image = SGRCreateGlyphRimAperture(size, leftStep / 32.0,
-                                                  rightStep / 32.0, scale);
-    if (!image) return;
+    CGImageRef side = SGRCreateGlyphAperture(size, leftStep / 32.0,
+                                            rightStep / 32.0, scale, NO);
+    if (!side) return;
+    CGImageRef vertical = resized ? SGRCreateGlyphAperture(size, 1, 1, scale, YES) : NULL;
+    if (resized && !vertical) { CGImageRelease(side); return; }
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
+    _glyphCompositeMask.frame = (CGRect){CGPointZero, size};
+    _glyphCompositeMask.cornerRadius = size.height / 2;
     _glyphEdgeMask.frame = (CGRect){CGPointZero, size};
     _glyphEdgeMask.contentsScale = scale;
-    _glyphEdgeMask.contents = (__bridge id)image;
+    _glyphEdgeMask.contents = (__bridge id)side;
+    if (vertical) {
+        _glyphVerticalMask.frame = (CGRect){CGPointZero, size};
+        _glyphVerticalMask.contentsScale = scale;
+        _glyphVerticalMask.contents = (__bridge id)vertical;
+    }
     [CATransaction commit];
-    CGImageRelease(image);
+    CGImageRelease(side);
+    if (vertical) CGImageRelease(vertical);
     _glyphMaskSize = size;
     _glyphMaskLeftStep = leftStep;
     _glyphMaskRightStep = rightStep;
@@ -547,7 +582,10 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     if (_glyphEdgePane) {
         if (!CGRectEqualToRect(_glyphEdgePane.bounds, bounds)) _glyphEdgePane.bounds = bounds;
         _glyphEdgePane.layer.cornerRadius = radius;
+        _glyphCompositeMask.frame = bounds;
+        _glyphCompositeMask.cornerRadius = radius;
         _glyphEdgeMask.frame = bounds;
+        _glyphVerticalMask.frame = bounds;
     }
     [CATransaction commit];
 }
@@ -985,7 +1023,13 @@ static BOOL bubbles(void) {
         self->_glyphEdgePane.alpha = (on && self->_tintOverlay) ? 1 : 0;
         self->_platterEdgePane.alpha = on ? 1 : 0;
     };
-    if (!on) [self clearGlyphSourceMasks];
+    if (!on) {
+        [self clearGlyphSourceMasks];
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        _glyphVerticalMask.opacity = 0;
+        [CATransaction commit];
+    }
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
 }
@@ -1118,6 +1162,12 @@ static BOOL bubbles(void) {
         _fingerHighlight.endPoint = CGPointMake(unitX + 0.23, 0.5);
         [CATransaction commit];
     }
+    // The glyph's vertical glint exists only while the lens is in motion.
+    // At rest, including a long press with the glass still raised, it is 0.
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _glyphVerticalMask.opacity = _glassOn ? SGRGlyphVerticalMotion([self state]) : 0;
+    [CATransaction commit];
     // Opacity is owned solely by setFingerHighlightPressed: display-link
     // frames must not override the touch-down / touch-up animation.
     [self updateGlyphSourceMasksAt:center sx:sx];
@@ -1264,6 +1314,7 @@ static BOOL bubbles(void) {
     [_glyphEdgePane.layer removeAnimationForKey:@"lens.x"];
     [_glyphEdgePane.layer removeAnimationForKey:@"lens.sx"];
     [_glyphEdgePane.layer removeAnimationForKey:@"lens.sy"];
+    [_glyphVerticalMask removeAnimationForKey:@"lens.vertical"];
     [_tintMask removeAnimationForKey:@"lens.x"];
     [_tintMask removeAnimationForKey:@"lens.sx"];
     [_tintMask removeAnimationForKey:@"lens.sy"];
@@ -1416,6 +1467,18 @@ static BOOL bubbles(void) {
         edgeRun(@"lens.x", @"position.x", glyphXs);
         edgeRun(@"lens.sx", @"transform.scale.x", sxs);
         edgeRun(@"lens.sy", @"transform.scale.y", sys);
+    }
+    // The vertical aperture fades with the SAME recorded spring samples as
+    // the render-server release. The stationary model ends at zero opacity.
+    if (_glyphVerticalMask && _glassOn) {
+        NSMutableArray<NSNumber *> *vertical = [NSMutableArray arrayWithCapacity:count];
+        for (NSUInteger i = 0; i < count; i++)
+            [vertical addObject:@(SGRGlyphVerticalMotion(all[i]))];
+        CAKeyframeAnimation *pulse = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+        pulse.values = vertical;
+        pulse.duration = duration;
+        pulse.calculationMode = kCAAnimationLinear;
+        [_glyphVerticalMask addAnimation:pulse forKey:@"lens.vertical"];
     }
     // Core Animation runs the released lens on the render server; match that
     // playback on the accent mask, instead of leaving the color behind at release.
