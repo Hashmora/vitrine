@@ -18,4 +18,8 @@ BOOL SGRDropdownPerformAction(UIMenuElement *element);
 // Hosts a real interactive custom view controller (sliders, dynamic lyrics sources)
 // in the same owned glass chrome, without UIPopoverPresentationController.
 BOOL SGRDropdownPresentContent(UIView *anchor, UIViewController *content, CGSize preferredSize);
+// A hosted provider-backed list follows its preferredContentSize as answers
+// arrive; only the safe screen viewport clips it, not the menu stack limit.
+BOOL SGRDropdownPresentAdaptiveContent(UIView *anchor, UIViewController *content, CGSize preferredSize);
+void SGRDropdownRefreshContentSize(UIViewController *content);
 void SGRDropdownDismissActive(void);

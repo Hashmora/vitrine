@@ -93,7 +93,7 @@ static NSString *timingText(NSArray<SGKaraokeLine *> *lines) {
     NSArray<SGRSourceRow *> *_rows;
 }
 
-static const CGFloat kSourcePanelWidth = 300, kSourcePanelMaxHeight = 440;
+static const CGFloat kSourcePanelWidth = 300;
 
 - (instancetype)init {
     return [super initWithStyle:UITableViewStylePlain];
@@ -163,7 +163,11 @@ static const CGFloat kSourcePanelWidth = 300, kSourcePanelMaxHeight = 440;
     _rows = rows;
     [self.tableView reloadData];
     [self.tableView layoutIfNeeded];
-    self.preferredContentSize = CGSizeMake(kSourcePanelWidth, MIN(self.tableView.contentSize.height, kSourcePanelMaxHeight));
+    // Every responding provider can add or remove a row. The hosted Legacy
+    // dropdown follows this intrinsic table height, rather than fixing it to
+    // the first response or truncating it at an arbitrary 440pt.
+    self.preferredContentSize = CGSizeMake(kSourcePanelWidth, MAX(1, self.tableView.contentSize.height));
+    if (SGBelowiOS26()) SGRDropdownRefreshContentSize(self);
 }
 
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
@@ -215,7 +219,7 @@ static UIAction *lyricsSourceItem(void) {
         SGRLyricsSourcePanel *panel = [SGRLyricsSourcePanel new];
         panel.track = track;
         panel.preferredContentSize = CGSizeMake(kSourcePanelWidth, 200);
-        if (SGBelowiOS26() && SGRDropdownPresentContent(sg_moreButton, panel, panel.preferredContentSize)) return;
+        if (SGBelowiOS26() && SGRDropdownPresentAdaptiveContent(sg_moreButton, panel, panel.preferredContentSize)) return;
         SGPresentPopover(panel, sg_moreButton);
     }];
     open.subtitle = SGLyricsCreditFor(track);

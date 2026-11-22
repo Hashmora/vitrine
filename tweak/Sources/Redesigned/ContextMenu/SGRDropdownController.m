@@ -590,6 +590,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 @property (nonatomic, weak) UIView *anchor;
 @property (nonatomic, strong) UIMenu *rootMenu;
 @property (nonatomic, strong) UIViewController *embedded;
+@property (nonatomic) BOOL embeddedFollowsContentSize;
 @property (nonatomic, copy) SGRDropdownFinish finish;
 @property (nonatomic, strong) NSMutableArray<SGRDropdownPanel *> *panels;
 @property (nonatomic, strong) NSMutableArray<NSString *> *menuIDs;
@@ -602,7 +603,9 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)dismiss:(UIMenuElement *)element;
 - (void)pushMenu:(UIMenu *)menu title:(NSString *)title;
 - (void)popMenu;
-- (void)showContent:(UIViewController *)controller preferredSize:(CGSize)size;
+- (void)showContent:(UIViewController *)controller preferredSize:(CGSize)size expanding:(BOOL)expanding;
+- (void)refreshContentSize:(UIViewController *)controller;
+- (CGRect)embeddedFrameForSize:(CGSize)size;
 - (void)loadMenu:(UIMenu *)menu intoPanel:(SGRDropdownPanel *)panel title:(NSString *)title maximum:(CGFloat)maximum;
 - (void)reflowPanel:(SGRDropdownPanel *)panel;
 - (void)animatePanelAppearance:(SGRDropdownPanel *)panel over:(SGRDropdownPanel *)parent;
@@ -819,26 +822,54 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     }
     return nil;
 }
-- (void)showContent:(UIViewController *)controller preferredSize:(CGSize)size {
+// A hosted lyrics source list is measured from the actual provider rows, not
+// the 520pt menu-stack limit. The screen's safe viewport is the only cap;
+// ordinary dropdown menus and embedded fixed-size controls retain their own
+// existing limits.
+- (CGRect)embeddedFrameForSize:(CGSize)size {
+    CGFloat top = MAX(62, self.window.safeAreaInsets.top + 12);
+    CGFloat bottom = CGRectGetHeight(self.root.view.bounds) - self.window.safeAreaInsets.bottom - 12;
+    CGFloat available = MAX(1, bottom - top);
+    CGFloat cap = self.embeddedFollowsContentSize ? available : MIN(kPanelMaximum, available);
+    CGFloat height = MIN(MAX(1, size.height), cap);
+    CGFloat width = MIN(MAX(200, size.width), MAX(1, CGRectGetWidth(self.root.view.bounds) - 24));
+    CGFloat x = MAX(12, MIN(CGRectGetWidth(self.root.view.bounds) - width - 12,
+                            CGRectGetMaxX(self.origin) - width));
+    CGFloat y = MIN(MAX(top, CGRectGetMinY(self.origin)), MAX(top, bottom - height));
+    return CGRectMake(x, y, width, height);
+}
+- (void)refreshContentSize:(UIViewController *)controller {
+    if (!self.embeddedFollowsContentSize || self.embedded != controller ||
+        !self.window || self.closing || !self.panels.count) return;
+    SGRDropdownPanel *panel = self.panels.firstObject;
+    CGRect next = [self embeddedFrameForSize:controller.preferredContentSize];
+    if (CGRectEqualToRect(next, panel.frame)) return;
+    [UIView animateWithDuration:0.18 delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut
+                     animations:^{
+        panel.frame = next;
+        controller.view.frame = panel.bounds;
+    } completion:nil];
+}
+- (void)showContent:(UIViewController *)controller preferredSize:(CGSize)size expanding:(BOOL)expanding {
     if (!controller || !self.window || !self.panels.count) return;
     SGRDropdownPanel *panel = self.panels.firstObject;
     panel.scroll.hidden = YES;
-    CGFloat width = MIN(MAX(200, size.width), CGRectGetWidth(self.root.view.bounds)-24);
-    CGFloat height = MIN(MAX(120, size.height), MIN(kPanelMaximum, CGRectGetHeight(self.root.view.bounds)-100));
-    CGRect position = CGRectMake(CGRectGetMaxX(self.origin)-width, self.origin.origin.y, width, height);
-    position.origin.x = MAX(12, position.origin.x);
-    CGFloat below = CGRectGetHeight(self.root.view.bounds)-self.window.safeAreaInsets.bottom-12;
-    if (CGRectGetMaxY(position)>below) position.origin.y=MAX(62,below-height);
-    panel.frame = position;
+    // Accessing the view runs viewDidLoad: the lyrics provider can rebuild the
+    // table and replace the temporary 200pt preferred size before first reveal.
+    UIView *contentView = controller.view;
+    CGSize measured = controller.preferredContentSize;
+    if (measured.width <= 0) measured.width = size.width;
+    if (measured.height <= 0) measured.height = size.height;
+    self.embeddedFollowsContentSize = expanding;
     self.embedded = controller;
+    panel.frame = [self embeddedFrameForSize:measured];
     [self.root addChildViewController:controller];
-    controller.view.frame = panel.bounds;
-    controller.view.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
-    controller.view.backgroundColor = UIColor.clearColor;
-    [panel addSubview:controller.view];
+    contentView.frame = panel.bounds;
+    contentView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    contentView.backgroundColor = UIColor.clearColor;
+    [panel addSubview:contentView];
     [controller didMoveToParentViewController:self.root];
-    // An embedded control is sized after its empty UIMenu shell is made. Stop
-    // that shell's transition and open the real, final-sized surface just once.
     [panel.layer removeAllAnimations];
     panel.alpha = 0;
     panel.transform = dropdownEnteringTransform();
@@ -938,7 +969,8 @@ void SGRDropdownDismissFrom(UIView *anchor) {
     if (SGRDropdownIsPresentingFrom(anchor)) [sg_currentDropdown dismiss:nil];
 }
 
-BOOL SGRDropdownPresentContent(UIView *anchor, UIViewController *content, CGSize preferredSize) {
+static BOOL sgrDropdownPresentHostedContent(UIView *anchor, UIViewController *content,
+                                            CGSize preferredSize, BOOL expanding) {
     if (!anchor.window || !content) return NO;
     if (sg_currentDropdown) {
         [sg_currentDropdown finishDismiss:nil];
@@ -946,8 +978,17 @@ BOOL SGRDropdownPresentContent(UIView *anchor, UIViewController *content, CGSize
     }
     UIMenu *empty = [UIMenu menuWithChildren:@[]];
     if (!SGRDropdownPresent(anchor, empty, nil)) return NO;
-    [sg_currentDropdown showContent:content preferredSize:preferredSize];
+    [sg_currentDropdown showContent:content preferredSize:preferredSize expanding:expanding];
     return YES;
+}
+BOOL SGRDropdownPresentContent(UIView *anchor, UIViewController *content, CGSize preferredSize) {
+    return sgrDropdownPresentHostedContent(anchor, content, preferredSize, NO);
+}
+BOOL SGRDropdownPresentAdaptiveContent(UIView *anchor, UIViewController *content, CGSize preferredSize) {
+    return sgrDropdownPresentHostedContent(anchor, content, preferredSize, YES);
+}
+void SGRDropdownRefreshContentSize(UIViewController *content) {
+    [sg_currentDropdown refreshContentSize:content];
 }
 void SGRDropdownDismissActive(void) {
     [sg_currentDropdown dismiss:nil];
