@@ -4,21 +4,12 @@
 #import <objc/runtime.h>
 #import "Core/SGCore.h"
 #import "SGRDropdownController.h"
+#import "SGRDropdownDeferred.h"
 
 static char kNativeDropdownOverlay, kNativeDropdownSuppressed;
 
-// The owned renderer consumes concrete UIMenu/UIAction trees. UIKit's deferred
-// providers are private to the native presentation; do not steal a button's
-// primary action when its menu depends on one of those providers.
-static BOOL hasDeferredProvider(UIMenu *menu, NSUInteger depth) {
-    if (!menu || depth > 12) return YES;
-    for (UIMenuElement *element in menu.children) {
-        if ([element isKindOfClass:UIDeferredMenuElement.class]) return YES;
-        if ([element isKindOfClass:UIMenu.class] && hasDeferredProvider((UIMenu *)element, depth + 1)) return YES;
-    }
-    return NO;
-}
-
+// Only adopt menus whose deferred providers were captured at construction.
+// Unknown/responder-based providers remain with UIKit, never empty in Vitrine.
 @interface SGRDropdownNativeOverlay : UIControl
 @property (nonatomic, weak) UIButton *sourceButton;
 @end
@@ -48,7 +39,7 @@ static BOOL hasDeferredProvider(UIMenu *menu, NSUInteger depth) {
 
 static BOOL eligible(UIButton *button) {
     if (!SGRedesignedUI() || !SGBelowiOS26() || !button.menu || !button.window.windowScene) return NO;
-    if (!button.menu.children.count || hasDeferredProvider(button.menu, 0)) return NO;
+    if (!button.menu.children.count || !SGRDropdownDeferredMenuSupported(button.menu)) return NO;
     NSString *name = NSStringFromClass(button.class);
     if ([name hasPrefix:@"SGRMenu"] || [name hasPrefix:@"SGRDropdown"]) return NO;
     return YES;

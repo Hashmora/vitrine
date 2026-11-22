@@ -47,7 +47,7 @@ BOOL SGRDropdownDeferredMenuSupported(UIMenu *menu) {
 }
 
 static NSArray<UIMenuElement *> *safeElements(id elements) {
-    if (![elements isKindOfClass:NSArray.class]) return @[];
+    if (![elements isKindOfClass:NSArray.class]) return nil;
     NSMutableArray<UIMenuElement *> *safe = [NSMutableArray array];
     for (id element in (NSArray *)elements) {
         if (![element isKindOfClass:UIMenuElement.class]) continue;
@@ -61,7 +61,9 @@ static void complete(SGRDropdownDeferredState *state, NSUInteger revision,
                      NSArray<UIMenuElement *> *result) {
     if (!state.fetching || state.revision != revision) return;
     state.fetching = NO;
-    if (state.cachesResult) {
+    // A timeout or malformed response is not a cached empty menu. Let the
+    // next presentation retry the provider rather than permanently lose it.
+    if (state.cachesResult && result) {
         state.cachedElements = result;
         state.hasCache = YES;
     }
@@ -80,7 +82,7 @@ void SGRDropdownDeferredRequest(UIDeferredMenuElement *element, SGRDropdownDefer
         return;
     }
     SGRDropdownDeferredState *state = objc_getAssociatedObject(element, &kDeferredStateKey);
-    if (!state) { completion(@[]); return; }
+    if (!state) { completion(nil); return; }
     if (state.cachesResult && state.hasCache) {
         completion(state.cachedElements ?: @[]);
         return;
@@ -101,13 +103,13 @@ void SGRDropdownDeferredRequest(UIDeferredMenuElement *element, SGRDropdownDefer
         });
     } @catch (NSException *exception) {
         SGLog(@"dropdown: deferred provider raised %@", exception.name);
-        complete(state, revision, @[]);
+        complete(state, revision, nil);
     }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kDeferredTimeout * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         if (state.fetching && state.revision == revision) {
             SGLog(@"dropdown: deferred provider timed out after %.0fs", kDeferredTimeout);
-            complete(state, revision, @[]);
+            complete(state, revision, nil);
         }
     });
 }

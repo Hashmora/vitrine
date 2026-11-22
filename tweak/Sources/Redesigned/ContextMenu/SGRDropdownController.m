@@ -4,6 +4,7 @@
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "SGRDropdownController.h"
+#import "SGRDropdownDeferred.h"
 
 static const CGFloat kWidth = 250, kRadius = 30, kInset = 10;
 static const CGFloat kRow = 42, kSubtitle = 58, kQuick = 93, kQuickSingle = 77, kHeader = 62;
@@ -84,6 +85,94 @@ static NSArray<NSArray<SGRDropdownItem *> *> *groupsOf(UIMenu *menu) {
     if (plain.count) [groups addObject:[plain copy]];
     return groups;
 }
+
+// One resolution session belongs to one visible panel. The original menu is
+// immutable; snapshots expand finished deferred providers without re-opening
+// the panel or changing its command handlers. Submenus resolve on demand when
+// pushed, not while their parent is displayed.
+@interface SGRDropdownResolution : NSObject
+@property (nonatomic, strong) UIMenu *source;
+@property (nonatomic, strong) NSMutableDictionary<NSValue *, NSArray<UIMenuElement *> *> *results;
+@property (nonatomic, strong) NSMutableSet<NSValue *> *requested;
+@property (nonatomic, copy) void (^didChange)(UIMenu *snapshot);
+@property (nonatomic) BOOL cancelled;
+- (instancetype)initWithMenu:(UIMenu *)menu;
+- (UIMenu *)snapshot;
+- (void)begin;
+- (void)cancel;
+@end
+
+@implementation SGRDropdownResolution
+- (instancetype)initWithMenu:(UIMenu *)menu {
+    if ((self = [super init])) {
+        self.source = menu;
+        self.results = [NSMutableDictionary dictionary];
+        self.requested = [NSMutableSet set];
+    }
+    return self;
+}
+- (void)cancel {
+    self.cancelled = YES;
+    self.didChange = nil;
+}
+static UIAction *statusAction(NSString *title) {
+    UIAction *action = [UIAction actionWithTitle:title image:nil
+                                    identifier:@"Vitrine.Dropdown.DeferredStatus"
+                                       handler:^(__kindof UIAction *_) {}];
+    action.attributes = UIMenuElementAttributesDisabled;
+    return action;
+}
+- (NSArray<UIMenuElement *> *)expanded:(NSArray<UIMenuElement *> *)elements depth:(NSUInteger)depth {
+    if (depth > 16) return @[statusAction(@"Items unavailable")];
+    NSMutableArray<UIMenuElement *> *output = [NSMutableArray array];
+    for (UIMenuElement *element in elements) {
+        if ([element isKindOfClass:UIDeferredMenuElement.class]) {
+            NSArray<UIMenuElement *> *ready = self.results[[NSValue valueWithNonretainedObject:element]];
+            if (ready) [output addObjectsFromArray:[self expanded:ready depth:depth + 1]];
+            else [output addObject:statusAction(@"Loading…")];
+        } else if ([element isKindOfClass:UIMenu.class] && isInline((UIMenu *)element)) {
+            UIMenu *section = (UIMenu *)element;
+            UIMenu *replacement = [section menuByReplacingChildren:[self expanded:section.children depth:depth + 1]];
+            replacement.preferredElementSize = section.preferredElementSize;
+            [output addObject:replacement];
+        } else {
+            [output addObject:element];
+        }
+    }
+    return output;
+}
+- (UIMenu *)snapshot {
+    NSArray<UIMenuElement *> *elements = [self expanded:self.source.children depth:0];
+    if (!elements.count && self.source.children.count)
+        elements = @[statusAction(@"No actions available")];
+    UIMenu *replacement = [self.source menuByReplacingChildren:elements];
+    replacement.preferredElementSize = self.source.preferredElementSize;
+    return replacement;
+}
+- (void)requestElements:(NSArray<UIMenuElement *> *)elements depth:(NSUInteger)depth {
+    if (self.cancelled || depth > 16) return;
+    for (UIMenuElement *element in elements) {
+        if ([element isKindOfClass:UIDeferredMenuElement.class]) {
+            NSValue *key = [NSValue valueWithNonretainedObject:element];
+            if ([self.requested containsObject:key]) continue;
+            [self.requested addObject:key];
+            __weak SGRDropdownResolution *weakSelf = self;
+            SGRDropdownDeferredRequest((UIDeferredMenuElement *)element, ^(NSArray<UIMenuElement *> *ready) {
+                SGRDropdownResolution *strongSelf = weakSelf;
+                if (!strongSelf || strongSelf.cancelled) return;
+                // A nested deferred provider may be returned by another provider.
+                // Resolve it in this same session, without resetting the panel.
+                strongSelf.results[key] = ready ?: @[statusAction(@"Unable to load options")];
+                if (ready) [strongSelf requestElements:ready depth:depth + 1];
+                if (strongSelf.didChange) strongSelf.didChange([strongSelf snapshot]);
+            });
+        } else if ([element isKindOfClass:UIMenu.class] && isInline((UIMenu *)element)) {
+            [self requestElements:((UIMenu *)element).children depth:depth + 1];
+        }
+    }
+}
+- (void)begin { [self requestElements:self.source.children depth:0]; }
+@end
 
 // Measure labels at the same width and font that the panel actually uses.
 // English character counts are not a reliable proxy for the number of lines.
@@ -175,6 +264,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic, strong) UIView *tileGroup;
 @property (nonatomic, strong) NSMutableArray<SGRDropdownPress *> *tileButtons;
 @property (nonatomic, strong) UIMenu *menu;
+@property (nonatomic, strong) SGRDropdownResolution *resolution;
 @property (nonatomic) BOOL isSubmenu;
 @property (nonatomic, copy) void (^choose)(UIMenuElement *element);
 @property (nonatomic, copy) void (^back)(void);
@@ -235,6 +325,9 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     BOOL enabled = !(dropdownAttributes(element) & UIMenuElementAttributesDisabled);
     press.enabled = enabled;
     press.accessibilityLabel = element.title;
+    if ([element isKindOfClass:UIAction.class] &&
+        [((UIAction *)element).identifier isEqualToString:@"Vitrine.Dropdown.DeferredStatus"])
+        press.accessibilityIdentifier = @"Vitrine.Dropdown.DeferredStatus";
     if (element.subtitle.length) press.accessibilityValue = element.subtitle;
     UIColor *foreground = (dropdownAttributes(element) & UIMenuElementAttributesDestructive)
         ? [UIColor colorWithRed:1 green:0.36 blue:0.34 alpha:enabled ? 1 : 0.38]
@@ -400,6 +493,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)pushMenu:(UIMenu *)menu title:(NSString *)title;
 - (void)popMenu;
 - (void)showContent:(UIViewController *)controller preferredSize:(CGSize)size;
+- (void)loadMenu:(UIMenu *)menu intoPanel:(SGRDropdownPanel *)panel title:(NSString *)title maximum:(CGFloat)maximum;
+- (void)reflowPanel:(SGRDropdownPanel *)panel;
 @end
 
 @implementation SGRDropdownPresentation
@@ -448,7 +543,10 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     CGFloat top = MAX(62, self.window.safeAreaInsets.top);
     CGFloat y = CGRectGetMinY(from) <= top + 24 ? top : CGRectGetMinY(from);
     CGFloat available = CGRectGetHeight(self.window.bounds)-self.window.safeAreaInsets.bottom-12;
-    CGFloat wanted = MIN(kPanelMaximum, contentHeight(menu, NO));
+    // Deferred-only menus must reserve a loading row before their callbacks
+    // arrive; otherwise UIKit buttons near the bottom anchor a 10pt panel.
+    SGRDropdownResolution *probe = [[SGRDropdownResolution alloc] initWithMenu:menu];
+    CGFloat wanted = MIN(kPanelMaximum, contentHeight([probe snapshot], NO));
     if (y+wanted > available) y = MAX(top, available-wanted);
     self.origin = CGRectMake(x, y, kWidth, wanted);
     [self pushMenu:menu title:nil];
@@ -480,6 +578,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     self.popping = YES;
     SGRDropdownPanel *top = self.panels.lastObject;
     SGRDropdownPanel *under = self.panels[self.panels.count - 2];
+    // Do not let a late provider change the outgoing submenu during its fade.
+    [top.resolution cancel];
     top.userInteractionEnabled = NO;
     [UIView animateWithDuration:kSubmenuTime delay:0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
@@ -489,6 +589,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         under.alpha = 1;
     } completion:^(__unused BOOL finished) {
         if (self.panels.lastObject == top) {
+            [top.resolution cancel];
             [top removeFromSuperview];
             [self.panels removeLastObject];
             [self.menuIDs removeLastObject];
@@ -502,6 +603,51 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     if (dropdownAttributes(element) & UIMenuElementAttributesDisabled) return;
     [self dismiss:element];
 }
+// A deferred completion changes the existing panel's content in-place. The
+// resolution belongs to that panel and is invalidated on update/dismiss/back;
+// late callbacks must never reconstruct a dismissed or replaced menu.
+- (void)loadMenu:(UIMenu *)menu intoPanel:(SGRDropdownPanel *)panel title:(NSString *)title maximum:(CGFloat)maximum {
+    [panel.resolution cancel];
+    SGRDropdownResolution *resolution = [[SGRDropdownResolution alloc] initWithMenu:menu];
+    panel.resolution = resolution;
+    [panel configure:[resolution snapshot] title:title maxHeight:maximum];
+    __weak SGRDropdownPresentation *weakSelf = self;
+    __weak SGRDropdownPanel *weakPanel = panel;
+    __weak SGRDropdownResolution *weakResolution = resolution;
+    resolution.didChange = ^(UIMenu *snapshot) {
+        SGRDropdownPresentation *strongSelf = weakSelf;
+        SGRDropdownPanel *livePanel = weakPanel;
+        if (!strongSelf || !strongSelf.window || strongSelf.closing || !livePanel ||
+            livePanel.resolution != weakResolution || ![strongSelf.panels containsObject:livePanel]) return;
+        CGPoint offset = livePanel.scroll.contentOffset;
+        [livePanel configure:snapshot title:title maxHeight:maximum];
+        [strongSelf reflowPanel:livePanel];
+        CGFloat maxOffset = MAX(0, livePanel.scroll.contentSize.height - livePanel.bounds.size.height);
+        livePanel.scroll.contentOffset = CGPointMake(offset.x, MIN(offset.y, maxOffset));
+    };
+}
+- (void)reflowPanel:(SGRDropdownPanel *)panel {
+    CGRect frame = panel.frame;
+    frame.size.height = panel.actualHeight;
+    if (panel == self.panels.firstObject) {
+        CGFloat top = MAX(62, self.window.safeAreaInsets.top);
+        CGFloat bottom = CGRectGetHeight(self.window.bounds) - self.window.safeAreaInsets.bottom - 12;
+        // Grow toward the top when async data arrives near the screen's foot;
+        // do not hide actions outside the window or replay the opening motion.
+        CGFloat y = MIN(self.origin.origin.y, MAX(top, bottom - panel.actualHeight));
+        self.origin = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
+        frame.origin.y = y;
+    } else {
+        frame.origin.y = [self submenuYForHeight:panel.actualHeight];
+    }
+    panel.frame = frame;
+    for (SGRDropdownPanel *other in self.panels) {
+        if (other == panel || other == self.panels.firstObject) continue;
+        CGRect next = other.frame;
+        next.origin.y = [self submenuYForHeight:other.actualHeight];
+        other.frame = next;
+    }
+}
 - (void)pushMenu:(UIMenu *)menu title:(NSString *)title {
     if (self.closing || self.popping || self.panels.count >= 8) return;
     SGRDropdownPanel *parent = self.panels.lastObject;
@@ -514,14 +660,16 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     // reference's 520pt menu stack; shorter menus begin farther down while
     // long menus use the available height and scroll internally.
     CGFloat maximum = parent ? [self submenuAvailableHeight] :
-        MAX(1, [self submenuStackBottom] - self.origin.origin.y);
-    [panel configure:menu title:title maxHeight:MIN(kPanelMaximum, maximum)];
+        MAX(1, CGRectGetHeight(self.root.view.bounds) - self.window.safeAreaInsets.bottom - 12
+            - MAX(62, self.window.safeAreaInsets.top));
+    [self loadMenu:menu intoPanel:panel title:title maximum:MIN(kPanelMaximum, maximum)];
     CGFloat y = parent ? [self submenuYForHeight:panel.actualHeight] : self.origin.origin.y;
     CGRect frame = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
     panel.frame = frame;
     [self.root.view addSubview:panel];
     [self.panels addObject:panel];
     [self.menuIDs addObject:menu.identifier ?: menu.title ?: @""];
+    [panel.resolution begin];
     // The first pane arrives only once. Submenus are separate surfaces above
     // the parent; refreshing UIMenu data must never restart this transition.
     panel.alpha = 0;
@@ -581,7 +729,8 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     SGRDropdownPanel *first = self.panels.firstObject;
     CGPoint offset = first.scroll.contentOffset;
     CGFloat bottom = CGRectGetHeight(self.window.bounds) - self.window.safeAreaInsets.bottom - 12;
-    [first configure:menu title:nil maxHeight:MIN(kPanelMaximum, MAX(1, bottom-self.origin.origin.y))];
+    [self loadMenu:menu intoPanel:first title:nil maximum:MIN(kPanelMaximum, MAX(1, bottom-self.origin.origin.y))];
+    [first.resolution begin];
     first.frame = CGRectMake(self.origin.origin.x, self.origin.origin.y, kWidth, first.actualHeight);
     first.scroll.contentOffset = offset;
     if (self.panels.count < 2) return;
@@ -590,7 +739,8 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
         if (!sub) continue;
         SGRDropdownPanel *panel = self.panels[i];
         CGPoint prior = panel.scroll.contentOffset;
-        [panel configure:sub title:sub.title maxHeight:MIN(kPanelMaximum, [self submenuAvailableHeight])];
+        [self loadMenu:sub intoPanel:panel title:sub.title maximum:MIN(kPanelMaximum, [self submenuAvailableHeight])];
+        [panel.resolution begin];
         CGRect frame = panel.frame;
         frame.origin.y = [self submenuYForHeight:panel.actualHeight];
         frame.size.height = panel.actualHeight;
@@ -605,6 +755,7 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     self.window.hidden = YES;
     self.window.rootViewController = nil;
     self.window = nil;
+    for (SGRDropdownPanel *panel in self.panels) [panel.resolution cancel];
     [self.panels removeAllObjects];
     self.root = nil;
     self.backdrop = nil;
@@ -613,6 +764,7 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
 - (void)dismiss:(UIMenuElement *)element {
     if (!self.window || self.closing) return;
     self.closing = YES;
+    for (SGRDropdownPanel *panel in self.panels) [panel.resolution cancel];
     UIView *surface = self.root.view;
     surface.userInteractionEnabled = NO;
     [UIView animateWithDuration:kDismissTime delay:0
@@ -625,6 +777,9 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
 static SGRDropdownPresentation *sg_currentDropdown;
 BOOL SGRDropdownPresent(UIView *anchor, UIMenu *menu, SGRDropdownFinish finished) {
     if (!anchor.window || !menu) return NO;
+    // If Spotify supplied a responder-chain or pre-hook provider with no
+    // accessible block, never steal the native presentation and show a blank.
+    if (!SGRDropdownDeferredMenuSupported(menu)) return NO;
     if (sg_currentDropdown) {
         if (sg_currentDropdown.anchor == anchor && sg_currentDropdown.window && !sg_currentDropdown.closing) return YES;
         // Replacing an existing menu is immediate: no dying overlay above the
@@ -642,7 +797,8 @@ BOOL SGRDropdownPresent(UIView *anchor, UIMenu *menu, SGRDropdownFinish finished
     return YES;
 }
 void SGRDropdownUpdate(UIView *anchor, UIMenu *menu) {
-    if (sg_currentDropdown.anchor == anchor) [sg_currentDropdown update:menu];
+    if (sg_currentDropdown.anchor == anchor && SGRDropdownDeferredMenuSupported(menu))
+        [sg_currentDropdown update:menu];
 }
 BOOL SGRDropdownIsPresentingFrom(UIView *anchor) {
     return anchor && sg_currentDropdown.anchor == anchor && sg_currentDropdown.window;
