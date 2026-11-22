@@ -97,6 +97,8 @@ static NSArray<NSArray<SGRDropdownItem *> *> *groupsOf(UIMenu *menu) {
 @property (nonatomic, strong) NSMutableSet<NSValue *> *requested;
 @property (nonatomic, copy) void (^didChange)(UIMenu *snapshot);
 @property (nonatomic) BOOL cancelled;
+@property (nonatomic) BOOL initialRequestsIssued;
+- (BOOL)hasPending;
 - (instancetype)initWithMenu:(UIMenu *)menu anchor:(UIResponder *)anchor;
 - (UIMenu *)snapshot;
 - (void)begin;
@@ -173,7 +175,15 @@ static UIAction *statusAction(NSString *title) {
         }
     }
 }
-- (void)begin { [self requestElements:self.source.children depth:0]; }
+- (BOOL)hasPending {
+    // A synchronous provider must not reveal the panel before the complete
+    // initial tree has been traversed (more deferred nodes may follow).
+    return !self.initialRequestsIssued || self.requested.count > self.results.count;
+}
+- (void)begin {
+    [self requestElements:self.source.children depth:0];
+    self.initialRequestsIssued = YES;
+}
 @end
 
 // Measure labels at the same width and font that the panel actually uses.
@@ -268,6 +278,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic, strong) UIMenu *menu;
 @property (nonatomic, strong) SGRDropdownResolution *resolution;
 @property (nonatomic) BOOL isSubmenu;
+@property (nonatomic) BOOL waitingForDeferred;
 @property (nonatomic, copy) void (^choose)(UIMenuElement *element);
 @property (nonatomic, copy) void (^back)(void);
 @property (nonatomic) CGFloat actualHeight;
@@ -496,6 +507,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)showContent:(UIViewController *)controller preferredSize:(CGSize)size;
 - (void)loadMenu:(UIMenu *)menu intoPanel:(SGRDropdownPanel *)panel title:(NSString *)title maximum:(CGFloat)maximum;
 - (void)reflowPanel:(SGRDropdownPanel *)panel;
+- (void)animatePanelAppearance:(SGRDropdownPanel *)panel over:(SGRDropdownPanel *)parent;
 @end
 
 @implementation SGRDropdownPresentation
@@ -605,6 +617,15 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         CGPoint offset = livePanel.scroll.contentOffset;
         [livePanel configure:snapshot title:title maxHeight:maximum];
         [strongSelf reflowPanel:livePanel];
+        // Deferred items should not flash a temporary Loading row when the
+        // provider resolves within the short invisible preparation window.
+        if (livePanel.waitingForDeferred && ![livePanel.resolution hasPending]) {
+            livePanel.waitingForDeferred = NO;
+            SGRDropdownPanel *under = nil;
+            NSUInteger index = [strongSelf.panels indexOfObject:livePanel];
+            if (index != NSNotFound && index > 0) under = strongSelf.panels[index-1];
+            [strongSelf animatePanelAppearance:livePanel over:under];
+        }
         CGFloat maxOffset = MAX(0, livePanel.scroll.contentSize.height - livePanel.bounds.size.height);
         livePanel.scroll.contentOffset = CGPointMake(offset.x, MIN(offset.y, maxOffset));
     };
@@ -652,11 +673,34 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     [self.root.view addSubview:panel];
     [self.panels addObject:panel];
     [self.menuIDs addObject:menu.identifier ?: menu.title ?: @""];
-    [panel.resolution begin];
-    // The first pane arrives only once. Submenus are separate surfaces above
-    // the parent; refreshing UIMenu data must never restart this transition.
     panel.alpha = 0;
     panel.transform = CGAffineTransformMakeScale(0.96, 0.96);
+    panel.waitingForDeferred = YES;
+    [panel.resolution begin];
+    if (![panel.resolution hasPending]) {
+        panel.waitingForDeferred = NO;
+        [self animatePanelAppearance:panel over:parent];
+    } else {
+        // Briefly hold the *whole* panel, not an empty or Loading shell.
+        // A slow provider still gets an accessible loading state after 0.8s.
+        __weak SGRDropdownPresentation *weakSelf = self;
+        __weak SGRDropdownPanel *weakPanel = panel;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            SGRDropdownPresentation *strongSelf = weakSelf;
+            SGRDropdownPanel *livePanel = weakPanel;
+            if (!strongSelf || !livePanel || strongSelf.closing || !strongSelf.window ||
+                !livePanel.waitingForDeferred || ![strongSelf.panels containsObject:livePanel]) return;
+            livePanel.waitingForDeferred = NO;
+            SGRDropdownPanel *under = nil;
+            NSUInteger index = [strongSelf.panels indexOfObject:livePanel];
+            if (index != NSNotFound && index > 0) under = strongSelf.panels[index - 1];
+            [strongSelf animatePanelAppearance:livePanel over:under];
+        });
+    }
+}
+- (void)animatePanelAppearance:(SGRDropdownPanel *)panel over:(SGRDropdownPanel *)parent {
+    if (self.closing || !self.window || ![self.panels containsObject:panel]) return;
+    // Only the first reveal animates; deferred refreshes are in-place.
     [UIView animateWithDuration:parent ? kSubmenuTime : kOpenTime delay:0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
                      animations:^{
