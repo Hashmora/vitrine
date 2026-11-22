@@ -18,7 +18,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 
 def call(port, name, **params):
-    q = parse.urlencode({k: str(v) for k, v in params.items()})
+    q = parse.urlencode({k: str(v) for k, v in params.items()}, quote_via=parse.quote)
     url = f'http://127.0.0.1:{port}/{parse.quote(name)}' + ('?' + q if q else '')
     req = request.Request(url, headers={'X-Phone-Driver': '1'})
     with request.urlopen(req, timeout=30) as res:

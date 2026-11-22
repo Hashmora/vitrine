@@ -5,7 +5,19 @@
 #import "Core/SGCore.h"
 #import "SGRDropdownController.h"
 
-static char kNativeDropdownOverlay;
+static char kNativeDropdownOverlay, kNativeDropdownSuppressed;
+
+// The owned renderer consumes concrete UIMenu/UIAction trees. UIKit's deferred
+// providers are private to the native presentation; do not steal a button's
+// primary action when its menu depends on one of those providers.
+static BOOL hasDeferredProvider(UIMenu *menu, NSUInteger depth) {
+    if (!menu || depth > 12) return YES;
+    for (UIMenuElement *element in menu.children) {
+        if ([element isKindOfClass:UIDeferredMenuElement.class]) return YES;
+        if ([element isKindOfClass:UIMenu.class] && hasDeferredProvider((UIMenu *)element, depth + 1)) return YES;
+    }
+    return NO;
+}
 
 @interface SGRDropdownNativeOverlay : UIControl
 @property (nonatomic, weak) UIButton *sourceButton;
@@ -35,7 +47,8 @@ static char kNativeDropdownOverlay;
 @end
 
 static BOOL eligible(UIButton *button) {
-    if (!SGRedesignedUI() || !SGBelowiOS26() || !button.menu) return NO;
+    if (!SGRedesignedUI() || !SGBelowiOS26() || !button.menu || !button.window.windowScene) return NO;
+    if (!button.menu.children.count || hasDeferredProvider(button.menu, 0)) return NO;
     NSString *name = NSStringFromClass(button.class);
     if ([name hasPrefix:@"SGRMenu"] || [name hasPrefix:@"SGRDropdown"]) return NO;
     return YES;
@@ -44,7 +57,16 @@ static BOOL eligible(UIButton *button) {
 static void updateNative(UIButton *button) {
     SGRDropdownNativeOverlay *overlay = objc_getAssociatedObject(button, &kNativeDropdownOverlay);
     if (!eligible(button)) {
-        if (overlay) { [overlay removeFromSuperview]; objc_setAssociatedObject(button, &kNativeDropdownOverlay, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+        if (overlay) {
+            [overlay removeFromSuperview];
+            objc_setAssociatedObject(button, &kNativeDropdownOverlay, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        if (objc_getAssociatedObject(button, &kNativeDropdownSuppressed)) {
+            objc_setAssociatedObject(button, &kNativeDropdownSuppressed, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            // Restore the primary-action behavior for unsupported deferred menus
+            // and for buttons whose menus were removed or replaced.
+            button.showsMenuAsPrimaryAction = YES;
+        }
         return;
     }
     // A menu that is not configured as the button's primary action is likely
@@ -61,7 +83,10 @@ static void updateNative(UIButton *button) {
     }
     // Disable the system primary-action menu, not the button's command model.
     // Its overlaid control now owns opening and dismissal.
-    if (button.showsMenuAsPrimaryAction) button.showsMenuAsPrimaryAction = NO;
+    if (button.showsMenuAsPrimaryAction) {
+        objc_setAssociatedObject(button, &kNativeDropdownSuppressed, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        button.showsMenuAsPrimaryAction = NO;
+    }
     if (overlay.superview != button) [button addSubview:overlay];
     else [button bringSubviewToFront:overlay];
     overlay.frame = button.bounds;
@@ -70,6 +95,12 @@ static void updateNative(UIButton *button) {
 }
 
 %hook UIButton
+- (void)didMoveToWindow {
+    %orig;
+    // Some Spotify buttons attach a ready-made menu after their last layout.
+    // Recheck on window attachment rather than waiting for another resize.
+    updateNative((UIButton *)self);
+}
 - (void)layoutSubviews {
     %orig;
     updateNative((UIButton *)self);
