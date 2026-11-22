@@ -473,6 +473,14 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)backTapped { if (self.back) self.back(); }
 @end
 
+// A UIView owns the size of its backing layer on iOS. CALayer's macOS-only
+// autoresizingMask API cannot be used by a tweak built against the iOS SDK.
+@interface SGRDropdownHazeView : UIView
+@end
+@implementation SGRDropdownHazeView
++ (Class)layerClass { return CAGradientLayer.class; }
+@end
+
 @interface SGRDropdownPresentation : NSObject
 @property (nonatomic, strong) UIWindow *window;
 @property (nonatomic, strong) UIViewController *root;
@@ -518,19 +526,18 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     // background. Without this surrounding material our Legacy Glass reads
     // almost black against the unmodified Spotify player, and the parent's
     // text shows too clearly through the nested panel.
-    self.backdrop = [[UIView alloc] initWithFrame:self.root.view.bounds];
+    self.backdrop = [[SGRDropdownHazeView alloc] initWithFrame:self.root.view.bounds];
     self.backdrop.userInteractionEnabled = NO;
     self.backdrop.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.backdrop.alpha = 0;
-    CAGradientLayer *haze = [CAGradientLayer layer];
-    haze.frame = self.backdrop.bounds;
-    haze.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
+    // The UIView autoresizes with its container; UIKit resizes the gradient
+    // backing layer together with it, including after a window size change.
+    CAGradientLayer *haze = (CAGradientLayer *)self.backdrop.layer;
     haze.colors = @[(id)[UIColor colorWithWhite:0.40 alpha:0.66].CGColor,
                     (id)[UIColor colorWithWhite:0.40 alpha:0.70].CGColor,
                     (id)[UIColor colorWithWhite:0.40 alpha:0.55].CGColor,
                     (id)[UIColor clearColor].CGColor];
     haze.locations = @[@0, @0.15, @0.40, @0.63];
-    [self.backdrop.layer addSublayer:haze];
     [self.root.view addSubview:self.backdrop];
     UIControl *outside = [[UIControl alloc] initWithFrame:self.root.view.bounds];
     outside.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
