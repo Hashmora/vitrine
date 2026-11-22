@@ -279,9 +279,10 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 - (void)activate { if (self.enabled && self.pick) self.pick(self.element); }
 @end
 
-@interface SGRDropdownPanel : UIView <UIGestureRecognizerDelegate>
+@interface SGRDropdownPanel : UIView <UIGestureRecognizerDelegate, UIScrollViewDelegate>
 @property (nonatomic, strong) UIScrollView *scroll;
 @property (nonatomic, strong) UIView *body;
+@property (nonatomic, strong) UIView *scrollThumb;
 @property (nonatomic, strong) UIView *separator;
 @property (nonatomic, strong) UIView *header;
 @property (nonatomic, strong) UIView *tileGroup;
@@ -312,13 +313,22 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         self.accessibilityIdentifier = @"Vitrine.Dropdown.Panel";
         self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
         self.scroll = [UIScrollView new];
-        self.scroll.showsVerticalScrollIndicator = NO;
+        self.scroll.showsVerticalScrollIndicator = YES;
+        self.scroll.indicatorStyle = UIScrollViewIndicatorStyleWhite;
         self.scroll.showsHorizontalScrollIndicator = NO;
         self.scroll.alwaysBounceVertical = NO;
         self.scroll.delaysContentTouches = NO;
         self.scroll.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
         self.scroll.backgroundColor = UIColor.clearColor;
+        self.scroll.delegate = self;
         [self addSubview:self.scroll];
+        // Native indicators fade away. Keep a narrow, noninteractive thumb
+        // visible whenever the menu is vertically clipped.
+        self.scrollThumb = [UIView new];
+        self.scrollThumb.backgroundColor = [UIColor colorWithWhite:1 alpha:0.48];
+        self.scrollThumb.layer.cornerRadius = 1.5;
+        self.scrollThumb.userInteractionEnabled = NO;
+        [self addSubview:self.scrollThumb];
         self.body = [UIView new];
         self.body.backgroundColor = UIColor.clearColor;
         [self.scroll addSubview:self.body];
@@ -344,6 +354,23 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
                                                         alpha:self.isSubmenu ? 0.82 : 0.62]);
     self.scroll.frame = self.bounds;
+    [self updateScrollThumb];
+}
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    if (scrollView == self.scroll) [self updateScrollThumb];
+}
+- (void)updateScrollThumb {
+    CGFloat visible = CGRectGetHeight(self.scroll.bounds);
+    CGFloat total = self.scroll.contentSize.height;
+    CGFloat overflow = total - visible;
+    self.scrollThumb.hidden = !self.scroll.scrollEnabled || overflow < 1 || visible < 24;
+    if (self.scrollThumb.hidden) return;
+    CGFloat trackTop = 12, trackHeight = MAX(1, visible - 24);
+    CGFloat thumbHeight = MIN(trackHeight, MAX(24, trackHeight * visible / MAX(total, 1)));
+    CGFloat position = MIN(1, MAX(0, self.scroll.contentOffset.y / MAX(overflow, 1)));
+    self.scrollThumb.frame = CGRectMake(CGRectGetWidth(self.bounds) - 6,
+                                      trackTop + position * (trackHeight - thumbHeight),
+                                      3, thumbHeight);
 }
 static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     UILabel *label = [UILabel new];
@@ -542,6 +569,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     self.scroll.contentSize = self.body.bounds.size;
     self.actualHeight = MIN(MAX(1, y), maximum);
     self.scroll.scrollEnabled = y > self.actualHeight + 0.5;
+    [self updateScrollThumb];
     self.bounds = CGRectMake(0, 0, kWidth, self.actualHeight);
     [self setNeedsLayout];
 }
