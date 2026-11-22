@@ -755,52 +755,12 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
 }
 @end
 
-// Stage 173: an owned dropdown never passes through UIKit's context-menu
-// configuration or UIViewController presentation callbacks. Record the real
-// source at its own entry point so the runtime audit cannot mistake this for
-// a missing menu. Diagnostic only; no command handlers or presentation change.
-static void sgrDropdownTraceOwned(UIView *anchor, UIMenu *menu, NSString *status) {
-    if (!SGRedesignedUI() || !SGBelowiOS26()) return;
-    NSMutableArray<NSString *> *titles = [NSMutableArray array];
-    for (UIMenuElement *element in menu.children) {
-        if (titles.count >= 12) break;
-        if (element.title.length)
-            [titles addObject:[element.title substringToIndex:MIN(element.title.length, 72)]];
-    }
-    NSString *owner = @"";
-    for (UIResponder *next = anchor; next; next = next.nextResponder) {
-        if ([next isKindOfClass:UIViewController.class]) {
-            owner = NSStringFromClass(next.class);
-            break;
-        }
-    }
-    NSDictionary *record = @{
-        @"kind": @"owned-dropdown",
-        @"status": status ?: @"",
-        @"sourceClass": NSStringFromClass(anchor.class) ?: @"",
-        @"owner": owner,
-        @"id": anchor.accessibilityIdentifier ?: @"",
-        @"label": anchor.accessibilityLabel ?: @"",
-        @"anchorPointer": [NSString stringWithFormat:@"%p", anchor],
-        @"menuTitle": menu.title ?: @"",
-        @"directElements": @(menu.children.count),
-        @"titles": titles
-    };
-    NSData *encoded = [NSJSONSerialization dataWithJSONObject:record options:0 error:NULL];
-    if (encoded)
-        SGLog(@"dropdown.provider.inventory %@",
-              [[NSString alloc] initWithData:encoded encoding:NSUTF8StringEncoding]);
-}
-
 static SGRDropdownPresentation *sg_currentDropdown;
 BOOL SGRDropdownPresent(UIView *anchor, UIMenu *menu, SGRDropdownFinish finished) {
     if (!anchor.window || !menu) return NO;
     // If Spotify supplied a responder-chain or pre-hook provider with no
     // accessible block, never steal the native presentation and show a blank.
-    if (!SGRDropdownDeferredMenuSupported(menu, anchor)) {
-        sgrDropdownTraceOwned(anchor, menu, @"unsupported");
-        return NO;
-    }
+    if (!SGRDropdownDeferredMenuSupported(menu, anchor)) return NO;
     if (sg_currentDropdown) {
         if (sg_currentDropdown.anchor == anchor && sg_currentDropdown.window && !sg_currentDropdown.closing) return YES;
         // Replacing an existing menu is immediate: no dying overlay above the
@@ -815,7 +775,6 @@ BOOL SGRDropdownPresent(UIView *anchor, UIMenu *menu, SGRDropdownFinish finished
         if (finished) finished(element);
     }]) return NO;
     sg_currentDropdown = showing;
-    sgrDropdownTraceOwned(anchor, menu, @"opened");
     return YES;
 }
 void SGRDropdownUpdate(UIView *anchor, UIMenu *menu) {
