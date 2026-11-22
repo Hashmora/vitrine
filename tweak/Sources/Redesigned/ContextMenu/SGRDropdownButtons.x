@@ -303,12 +303,16 @@ static void updateNative(UIButton *button) {
                   completion:(void (^)(void))completion {
     NSString *name = presented ? NSStringFromClass(presented.class) : @"";
     NSString *lower = name.lowercaseString;
+    // Stage 172 filtered out dedicated picker controllers (including
+    // SPTSortingFilteringPickerViewController). Record them as a DIFFERENT
+    // category from dropdowns instead of silently losing the transition.
+    BOOL picker = [lower containsString:@"picker"] || [lower containsString:@"sorting"];
     if (([lower containsString:@"menu"] ||
          [lower containsString:@"popover"] ||
-         [lower containsString:@"actioncontroller"]) &&
+         [lower containsString:@"actioncontroller"] || picker) &&
         ![lower containsString:@"text"]) {
         sgrDropdownAuditRecord(@{
-            @"kind": @"presentation",
+            @"kind": picker ? @"picker-presentation" : @"presentation",
             @"class": name,
             @"owner": NSStringFromClass(self.class),
             @"presenterPointer": sgrDropdownAuditPointer(self),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage 172: automatic Legacy dropdown entrypoint/ownership trace.
+"""Stage 173: record owned Legacy dropdown openings and classify picker routes.
 
 Uses SG_DRIVER and xcrun simctl (no manual navigation). Observes menu creation,
 configuration callbacks, and dedicated controller presentations, without
@@ -110,8 +110,9 @@ class Trace:
     def snapshot(self, folder: Path, name: str, label: str):
         folder.mkdir(parents=True, exist_ok=True)
         details = {"label": label, "errors": []}
-        for cmd, filename in (("state", "state.json"), ("tree", "tree.txt"),
-                              ("log", "log.json")):
+        # Read events BEFORE a large "tree" dump fills SG_DRIVER's log ring.
+        for cmd, filename in (("state", "state.json"), ("log", "log.json"),
+                              ("tree", "tree.txt")):
             try:
                 val = self.driver.call(cmd)
                 if cmd == "tree":
@@ -229,13 +230,20 @@ class Trace:
             top_unchanged = bool(before_state.get("top") and
                                  before_state.get("top") == before.get("top"))
             candidates = before.get("candidates", [])[:max(0, max_buttons)]
+            # URI dispatch does not dismiss an existing sorting picker.
+            # Avoid tapping controls that belong to the previous screen.
+            stale_picker = (top_unchanged and
+                            "Picker" in str(before.get("top", "")))
             self.steps.append({"scenario": f"route:{route['name']}",
                                "uri": uri, "topBefore": before_state.get("top"),
                                "topAfter": before.get("top"),
                                "arrivalConfirmed": not top_unchanged,
                                "arrivalEvidence": "controller_changed" if not top_unchanged
                                                   else "URI-dispatched-only",
-                               "candidates": candidates})
+                               "candidates": candidates,
+                               "pickerBlockingRoute": stale_picker})
+            if stale_picker:
+                continue
             for n, candidate in enumerate(candidates):
                 target = candidate.get("id", "")
                 if EXCLUDED.search(target):
@@ -246,12 +254,22 @@ class Trace:
                 after = self.snapshot(folder / f"after-{n}", "after",
                                       f"route:{route['name']}:{target}")
                 self.screenshot(folder, f"after-{n}")
+                after_top = str(after.get("top") or "")
+                is_picker = "Picker" in after_top or "SortingFiltering" in after_top
                 self.steps.append({"scenario": f"route:{route['name']}:{target}",
                                    "topBefore": before.get("top"),
                                    "topAfter": after.get("top"),
                                    "menuSignals": after.get("menuSignals"),
-                                   "menu": after.get("menu")})
+                                   "menu": after.get("menu"),
+                                   "classification": "picker-controller" if is_picker
+                                       else "owned-dropdown" if "Vitrine.Dropdown.Panel"
+                                           in (after.get("menuSignals") or [])
+                                       else "other"})
                 self.dismiss(folder, n)
+                if is_picker:
+                    self.command("tap", folder / f"close-picker-{n}.json",
+                                 id="SPTSortingFilteringPicker.cancel")
+                    time.sleep(0.3)
 
     def write(self, ipa: Path | None):
         records = unique_events(self.events)
@@ -260,6 +278,7 @@ class Trace:
         legacy.write_json(self.root / "menu_chains.json", chains)
         fields = ["kind", "class", "owner", "id", "label", "menuTitle", "titles",
                   "elements", "primary", "alreadyOwned", "supported", "reason",
+                  "status", "sourceClass", "directElements",
                   "interaction", "delegate", "interactionPointer", "anchorPointer",
                   "hasConfiguration", "hasActionProvider", "configurationClass",
                   "presenterPointer", "presentedPointer", "style", "step"]
@@ -286,6 +305,16 @@ class Trace:
             "menuButtons": sum(x.get("kind") == "button" for x in records),
             "interactionChains": len(chains),
             "observedRuntimeOrigins": len(records),
+            "ownedDropdownOpens": sum(x.get("kind") == "owned-dropdown"
+                                       and x.get("status") == "opened" for x in records),
+            "pickerPresentations": sum(x.get("kind") == "picker-presentation"
+                                       for x in records),
+            "driverConfirmedDropdowns": sum(
+                x.get("classification") == "owned-dropdown" for x in self.steps
+            ) + int(any(x.get("scenario") == "player-more" and x.get("menuOpened")
+                        for x in self.steps)),
+            "driverObservedPickerTransitions": sum(
+                x.get("classification") == "picker-controller" for x in self.steps),
             "playerMoreOpened": any(x.get("scenario") == "player-more" and
                                     x.get("menuOpened") for x in self.steps),
             "unreached": self.failures,
@@ -295,6 +324,8 @@ class Trace:
                 "An unchanged top controller after openurl means arrival was NOT confirmed.",
                 "Unvisited Spotify features and Swift-only call sites remain outside runtime coverage.",
                 "Only the simulator build can verify that runtime hooks actually fire.",
+                "SG_DRIVER-confirmed owned menus are independent from UIKit hooks.",
+                "Sorting/filtering pickers are controllers, not UIMenu dropdowns.",
             ]
         }
         # Static scanner is optional. It must read the freshly collected CSV,
@@ -335,7 +366,7 @@ def self_test():
     linked = build_chains(unique_events(ev))
     assert len(linked) == 1 and linked[0]["configurationSeen"]
     assert linked[0]["hasActionProvider"] is True
-    print("Stage 172 self-test: OK")
+    print("Stage 173 self-test: OK")
 
 
 def main():
