@@ -213,8 +213,8 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     // The owned pane is not UIKit's already-darkened context menu. Match the
     // opacity of the reference surface here, rather than letting the artwork
     // and the previous menu read sharply through the live glass material.
-    if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0.11
-                                                        alpha:self.isSubmenu ? 0.72 : 0.62]);
+    if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
+                                                        alpha:self.isSubmenu ? 0.82 : 0.62]);
     self.scroll.frame = self.bounds;
 }
 static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
@@ -383,6 +383,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 @interface SGRDropdownPresentation : NSObject
 @property (nonatomic, strong) UIWindow *window;
 @property (nonatomic, strong) UIViewController *root;
+@property (nonatomic, strong) UIView *backdrop;
 @property (nonatomic, weak) UIView *anchor;
 @property (nonatomic, strong) UIMenu *rootMenu;
 @property (nonatomic, strong) UIViewController *embedded;
@@ -418,6 +419,24 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     self.root.view = [[UIView alloc] initWithFrame:self.window.bounds];
     self.root.view.backgroundColor = UIColor.clearColor;
     self.window.rootViewController = self.root;
+    // UIKit 26 gives the floating menu a softly lit, vertically fading
+    // background. Without this surrounding material our Legacy Glass reads
+    // almost black against the unmodified Spotify player, and the parent's
+    // text shows too clearly through the nested panel.
+    self.backdrop = [[UIView alloc] initWithFrame:self.root.view.bounds];
+    self.backdrop.userInteractionEnabled = NO;
+    self.backdrop.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.backdrop.alpha = 0;
+    CAGradientLayer *haze = [CAGradientLayer layer];
+    haze.frame = self.backdrop.bounds;
+    haze.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
+    haze.colors = @[(id)[UIColor colorWithWhite:0.40 alpha:0.66].CGColor,
+                    (id)[UIColor colorWithWhite:0.40 alpha:0.70].CGColor,
+                    (id)[UIColor colorWithWhite:0.40 alpha:0.55].CGColor,
+                    (id)[UIColor clearColor].CGColor];
+    haze.locations = @[@0, @0.15, @0.40, @0.63];
+    [self.backdrop.layer addSublayer:haze];
+    [self.root.view addSubview:self.backdrop];
     UIControl *outside = [[UIControl alloc] initWithFrame:self.root.view.bounds];
     outside.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
     [outside addTarget:self action:@selector(outsideTapped) forControlEvents:UIControlEventTouchUpInside];
@@ -513,6 +532,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         panel.alpha = 1;
         panel.transform = CGAffineTransformIdentity;
         if (parent) parent.alpha = 0.5;
+        else self.backdrop.alpha = 1;
     } completion:nil];
 }
 static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
@@ -587,6 +607,7 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     self.window = nil;
     [self.panels removeAllObjects];
     self.root = nil;
+    self.backdrop = nil;
     if (finish) finish(element);
 }
 - (void)dismiss:(UIMenuElement *)element {
