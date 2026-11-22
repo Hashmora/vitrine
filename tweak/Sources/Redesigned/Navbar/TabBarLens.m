@@ -9,6 +9,69 @@ static char kLensGlyphDeghostKey;
 
 static char kLensPaneKey, kLensFilmKey;
 
+// The glyph refraction mask follows the actual capsule *contour*, not two
+// overlapping rectangular gradients. On the straight top/bottom edges the
+// backdrop shifts vertically; that displacement turns smoothly sideways at
+// the round ends. A 2D alpha mask avoids a second bright copy of each icon.
+static CGFloat SGRGlyphClamp(CGFloat value) { return MAX(0, MIN(1, value)); }
+
+static CGFloat SGRGlyphSideFalloff(CGFloat t) {
+    if (t >= 0.25) return 0;
+    if (t <= 0.09) return 0.82;
+    if (t <= 0.19) return 0.82 - (t - 0.09) * 3.7;
+    return 0.45 * (0.25 - t) / 0.06;
+}
+
+static CGImageRef SGRCreateGlyphRimAperture(CGSize size, CGFloat leftGuard, CGFloat rightGuard,
+                                            CGFloat scale) {
+    size_t width = (size_t)ceil(size.width * scale), height = (size_t)ceil(size.height * scale);
+    if (!width || !height || width > 2048 || height > 2048) return NULL;
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    if (!space) return NULL;
+    CGContextRef context = CGBitmapContextCreate(NULL, width, height, 8, width * 4,
+        space, (CGBitmapInfo)(kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big));
+    CGColorSpaceRelease(space);
+    if (!context) return NULL;
+    uint8_t *pixels = CGBitmapContextGetData(context);
+    if (!pixels) { CGContextRelease(context); return NULL; }
+
+    CGFloat halfW = size.width / 2.0, halfH = size.height / 2.0;
+    CGFloat radius = MIN(halfW, halfH);
+    CGFloat band = MIN(10.5, MAX(5, radius * 0.34));
+    for (size_t row = 0; row < height; row++) {
+        CGFloat y = ((CGFloat)row + 0.5) / scale;
+        CGFloat dy = fabs(y - halfH);
+        for (size_t col = 0; col < width; col++) {
+            CGFloat x = ((CGFloat)col + 0.5) / scale;
+            CGFloat dx = fabs(x - halfW) - (halfW - radius);
+            CGFloat ox = MAX(0, dx), oy = MAX(0, dy);
+            CGFloat distance = hypot(ox, oy) + MIN(MAX(dx, dy), 0) - radius;
+            CGFloat clip = SGRGlyphClamp(0.55 - distance);
+            CGFloat depth = MAX(0, -distance);
+            CGFloat normalLength = hypot(ox, oy);
+            // On the horizontal rails the normal is vertical. Around each
+            // rounded tip it turns continuously towards the x axis.
+            CGFloat vertical = normalLength > 0.0001 ? oy / normalLength : 1;
+            CGFloat u = x / size.width;
+            CGFloat leftSide = SGRGlyphSideFalloff(u) * leftGuard;
+            CGFloat rightSide = SGRGlyphSideFalloff(1 - u) * rightGuard;
+            CGFloat rim = 0.68 * vertical * pow(SGRGlyphClamp(1 - depth / band), 1.35);
+            // The side-end guard must also suppress cap refraction on the
+            // outward end of Home/Create, while leaving the interior rail.
+            CGFloat leftCapGuard = leftGuard + (1 - leftGuard) * SGRGlyphClamp((u - 0.07) / 0.18);
+            CGFloat rightCapGuard = rightGuard + (1 - rightGuard) * SGRGlyphClamp((0.93 - u) / 0.18);
+            rim *= leftCapGuard * rightCapGuard;
+            CGFloat alpha = clip * (1 - (1 - leftSide) * (1 - rightSide) * (1 - rim));
+            uint8_t channel = (uint8_t)lrint(255 * SGRGlyphClamp(alpha));
+            size_t offset = (row * width + col) * 4;
+            pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = pixels[offset + 3] = channel;
+        }
+    }
+    CGImageRef image = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    return image;
+}
+
 // The raised lens differs from the capsule: almost no blur or colour lift in
 // the middle, slightly reduced backdrop scale, and most of the refraction in
 // the specular rim. The icons stay legible in the centre like on iOS 26.
@@ -140,11 +203,11 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // sampled pixels and the accent glyphs share the same coordinate system.
     // The 0.92x platter lens remains a separate surface underneath the tabs.
     SGLegacyGlassView *_glyphEdgePane;
-    // Two independent refraction apertures: the dynamic side crescents and
-    // the subtle top/bottom strip. Their alphas combine in one capsule mask.
-    CALayer *_glyphCompositeMask;
-    CAGradientLayer *_glyphEdgeMask;
-    CAGradientLayer *_glyphCapMask;
+    // A single 2D rim aperture, regenerated only when the capsule size or
+    // quantized outward-edge guard changes. Never on every spring frame.
+    CALayer *_glyphEdgeMask;
+    CGSize _glyphMaskSize;
+    NSInteger _glyphMaskLeftStep, _glyphMaskRightStep;
     // Independent refraction of the 0.92x platter; never samples glyphs.
     SGLegacyGlassView *_platterEdgePane;
     CAGradientLayer *_platterEdgeMask;
@@ -303,33 +366,12 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
         _glyphEdgePane.sharp = YES;
         _glyphEdgePane.rimless = YES;
         _glyphEdgePane.alpha = 0;
-        _glyphEdgeMask = [CAGradientLayer layer];
-        _glyphEdgeMask.masksToBounds = YES;
-        _glyphEdgeMask.cornerCurve = kCACornerCurveCircular;
-        _glyphEdgeMask.startPoint = CGPointMake(0, 0.5);
-        _glyphEdgeMask.endPoint = CGPointMake(1, 0.5);
-        // Replace the source pixels at the boundary with the actual backdrop
-        // sample, fading to a clear aperture before reaching the glyph's
-        // central strokes. A faint outer sample made two green outlines.
-        _glyphEdgeMask.locations = @[@0, @0.09, @0.19, @0.25, @0.75, @0.81, @0.91, @1];
-        _glyphCapMask = [CAGradientLayer layer];
-        _glyphCapMask.startPoint = CGPointMake(0.5, 0);
-        _glyphCapMask.endPoint = CGPointMake(0.5, 1);
-        _glyphCapMask.locations = @[@0, @0.16, @0.35, @0.65, @0.84, @1];
-        _glyphCapMask.colors = @[
-            (id)[UIColor colorWithWhite:1 alpha:0.57].CGColor,
-            (id)[UIColor colorWithWhite:1 alpha:0.22].CGColor,
-            (id)UIColor.clearColor.CGColor,
-            (id)UIColor.clearColor.CGColor,
-            (id)[UIColor colorWithWhite:1 alpha:0.22].CGColor,
-            (id)[UIColor colorWithWhite:1 alpha:0.57].CGColor
-        ];
-        _glyphCompositeMask = [CALayer layer];
-        _glyphCompositeMask.masksToBounds = YES;
-        _glyphCompositeMask.cornerCurve = kCACornerCurveCircular;
-        [_glyphCompositeMask addSublayer:_glyphEdgeMask];
-        [_glyphCompositeMask addSublayer:_glyphCapMask];
-        _glyphEdgePane.layer.mask = _glyphCompositeMask;
+        _glyphEdgeMask = [CALayer layer];
+        _glyphEdgeMask.name = @"Vitrine.LegacyGlyphContourRefraction";
+        _glyphEdgeMask.contentsGravity = kCAGravityResize;
+        _glyphEdgePane.layer.mask = _glyphEdgeMask;
+        _glyphMaskSize = CGSizeZero;
+        _glyphMaskLeftStep = _glyphMaskRightStep = -1;
     }
     if (!_platterEdgePane) {
         // This pane is BELOW both glyph groups, but ABOVE the primary
@@ -418,32 +460,47 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
 }
 
 - (void)updateGlyphEdgeMaskLeft:(CGFloat)left right:(CGFloat)right {
-    if (!_glyphEdgeMask) return;
+    if (!_glyphEdgeMask || !_glyphEdgePane) return;
+    CGSize size = _glyphEdgePane.bounds.size;
+    if (size.width < 1 || size.height < 1) return;
+    // Keep the platter's existing guard continuous even if the more expensive
+    // glyph aperture can reuse its last quantized alpha texture.
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    CGRect glyphBounds = _glyphEdgePane.bounds;
-    _glyphCompositeMask.frame = glyphBounds;
-    _glyphCompositeMask.cornerRadius = CGRectGetHeight(glyphBounds) / 2;
-    _glyphEdgeMask.frame = glyphBounds;
-    _glyphEdgeMask.cornerRadius = CGRectGetHeight(glyphBounds) / 2;
-    // Keep the vertical refraction away from the round outward ends, where
-    // the moving bubble can extend past the tab bar's actual capsule.
-    _glyphCapMask.frame = CGRectInset(glyphBounds, MIN(13, glyphBounds.size.width * 0.12), 0);
     _platterEdgeMask.frame = _platterEdgePane.bounds;
-    _platterEdgeMask.cornerRadius = CGRectGetHeight(_platterEdgePane.bounds) / 2;
     NSArray *colors = @[
         (id)[UIColor colorWithWhite:1 alpha:left].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:left].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:left * 0.55].CGColor,
-        (id)[UIColor clearColor].CGColor,
-        (id)[UIColor clearColor].CGColor,
+        (id)UIColor.clearColor.CGColor,
+        (id)UIColor.clearColor.CGColor,
         (id)[UIColor colorWithWhite:1 alpha:right * 0.55].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:right].CGColor,
         (id)[UIColor colorWithWhite:1 alpha:right].CGColor
     ];
-    _glyphEdgeMask.colors = colors;
     _platterEdgeMask.colors = colors;
     [CATransaction commit];
+
+    // Quantizing the glyph guard avoids rebuilding a bitmap for fractional
+    // spring movement on every display-link frame.
+    NSInteger leftStep = (NSInteger)lrint(SGRGlyphClamp(left) * 32);
+    NSInteger rightStep = (NSInteger)lrint(SGRGlyphClamp(right) * 32);
+    if (CGSizeEqualToSize(size, _glyphMaskSize) &&
+        leftStep == _glyphMaskLeftStep && rightStep == _glyphMaskRightStep) return;
+    CGFloat scale = MIN(2.0, MAX(1.0, UIScreen.mainScreen.scale));
+    CGImageRef image = SGRCreateGlyphRimAperture(size, leftStep / 32.0,
+                                                  rightStep / 32.0, scale);
+    if (!image) return;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _glyphEdgeMask.frame = (CGRect){CGPointZero, size};
+    _glyphEdgeMask.contentsScale = scale;
+    _glyphEdgeMask.contents = (__bridge id)image;
+    [CATransaction commit];
+    CGImageRelease(image);
+    _glyphMaskSize = size;
+    _glyphMaskLeftStep = leftStep;
+    _glyphMaskRightStep = rightStep;
 }
 
 - (void)didMoveToSuperview {
@@ -490,11 +547,7 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     if (_glyphEdgePane) {
         if (!CGRectEqualToRect(_glyphEdgePane.bounds, bounds)) _glyphEdgePane.bounds = bounds;
         _glyphEdgePane.layer.cornerRadius = radius;
-        _glyphCompositeMask.frame = bounds;
-        _glyphCompositeMask.cornerRadius = radius;
         _glyphEdgeMask.frame = bounds;
-        _glyphEdgeMask.cornerRadius = radius;
-        _glyphCapMask.frame = CGRectInset(bounds, MIN(13, bounds.size.width * 0.12), 0);
     }
     [CATransaction commit];
 }
