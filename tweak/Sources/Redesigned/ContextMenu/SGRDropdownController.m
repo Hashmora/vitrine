@@ -552,7 +552,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         [head addSubview:label];
         [self.body addSubview:head];
         UIView *line = [[UIView alloc] initWithFrame:CGRectMake(24, kHeader, kWidth-48, 1.0/UIScreen.mainScreen.scale)];
-        line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.13];
+        line.backgroundColor = [UIColor colorWithWhite:1 alpha:0.19];
         [self.body addSubview:line];
         y = kHeader+10;
     }
@@ -565,7 +565,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             CGFloat lineY = y + (gap == kSubmenuSectionGap ? 10 :
                                  groups[i-1].firstObject.tile ? 0 : 5);
             UIView *separator = [[UIView alloc] initWithFrame:CGRectMake(24, lineY, kWidth-48, 1.0/UIScreen.mainScreen.scale)];
-            separator.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+            separator.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
             [self.body addSubview:separator];
             y += gap;
         }
