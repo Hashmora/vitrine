@@ -10,6 +10,7 @@ static const CGFloat kWidth = 250, kRadius = 30, kInset = 10;
 static const CGFloat kRow = 42, kSubtitle = 58, kQuick = 93, kQuickSingle = 77, kHeader = 62;
 static const CGFloat kSectionGap = 11, kSubmenuSectionGap = 21, kBottomPadding = 10, kSubmenuDrop = 12;
 static const CGFloat kPanelMaximum = 520;
+static const CGFloat kNonTripleTopPadding = 12;
 // Lightweight presentation transitions only. The touch-driven iOS 26 morph
 // remains a separate task; never replay an open transition on a data refresh.
 static const NSTimeInterval kOpenTime = 0.18, kSubmenuTime = 0.16, kDismissTime = 0.12;
@@ -222,9 +223,18 @@ static CGFloat gapBeforeGroup(NSArray<NSArray<SGRDropdownItem *> *> *groups, NSU
     return kSectionGap;
 }
 
+static CGFloat topPadding(NSArray<NSArray<SGRDropdownItem *> *> *groups, BOOL withHeader) {
+    if (withHeader) return 0; // The back/header row provides this spacing.
+    NSArray<SGRDropdownItem *> *first = groups.firstObject;
+    // The tight top-aligned geometry belongs only to the three-tile layout.
+    // Standalone lists and one/two-action groups need breathing room.
+    return (first.firstObject.tile && first.count == 3) ? 0 : kNonTripleTopPadding;
+}
+
 static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     CGFloat height = withHeader ? kHeader + 10 : 0;
     NSArray<NSArray<SGRDropdownItem *> *> *groups = groupsOf(menu);
+    height += topPadding(groups, withHeader);
     for (NSUInteger i = 0; i < groups.count; ++i) {
         height += gapBeforeGroup(groups, i, withHeader);
         NSArray<SGRDropdownItem *> *group = groups[i];
@@ -461,6 +471,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         y = kHeader+10;
     }
     NSArray<NSArray<SGRDropdownItem *> *> *groups = groupsOf(menu);
+    y += topPadding(groups, title.length > 0);
     for (NSUInteger i=0; i<groups.count; ++i) {
         NSArray<SGRDropdownItem *> *group = groups[i];
         CGFloat gap = gapBeforeGroup(groups, i, title.length > 0);
