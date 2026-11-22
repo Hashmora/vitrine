@@ -6,7 +6,7 @@
 #import "SGRDropdownController.h"
 
 static const CGFloat kWidth = 250, kRadius = 30, kInset = 10;
-static const CGFloat kRow = 42, kSubtitle = 58, kQuick = 93, kHeader = 62;
+static const CGFloat kRow = 42, kSubtitle = 58, kQuick = 93, kQuickSingle = 77, kHeader = 62;
 static const CGFloat kSectionGap = 11, kSubmenuSectionGap = 21, kBottomPadding = 10, kSubmenuDrop = 12;
 static const CGFloat kPanelMaximum = 520;
 // Lightweight presentation transitions only. The touch-driven iOS 26 morph
@@ -103,6 +103,13 @@ static CGFloat rowHeight(UIMenuElement *element) {
     return kRow;
 }
 
+// UIKit 26 keeps a single quick action in a 77pt cell, but a row of
+// multiple actions has 93pt. The single Share measurement is 77pt on
+// the same route where the old fixed 93pt box made our panel 16pt taller.
+static CGFloat quickHeight(NSUInteger count) {
+    return count == 1 ? kQuickSingle : kQuick;
+}
+
 // UIKit 26 leaves 11pt after the quick tile group, 21pt before a
 // standalone submenu, and 10pt at the foot. Those gaps are part of the
 // menu layout, not padding supplied by the backdrop.
@@ -120,7 +127,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     for (NSUInteger i = 0; i < groups.count; ++i) {
         height += gapBeforeGroup(groups, i, withHeader);
         NSArray<SGRDropdownItem *> *group = groups[i];
-        if (group.firstObject.tile) height += kQuick;
+        if (group.firstObject.tile) height += quickHeight(group.count);
         else for (SGRDropdownItem *item in group) height += rowHeight(item.element);
     }
     return height + kBottomPadding;
@@ -269,20 +276,24 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     [self.body addSubview:press];
 }
 - (void)addQuick:(NSArray<SGRDropdownItem *> *)items at:(CGFloat)y {
+    if (!items.count) return;
+    CGFloat height = quickHeight(items.count);
+    BOOL single = items.count == 1;
     CGFloat tileWidth = (kWidth - 2*kInset)/items.count;
-    UIView *tileGroup = [[UIView alloc] initWithFrame:CGRectMake(kInset, y, kWidth - 2*kInset, kQuick)];
+    UIView *tileGroup = [[UIView alloc] initWithFrame:CGRectMake(kInset, y, kWidth - 2*kInset, height)];
     tileGroup.accessibilityIdentifier = @"Vitrine.Dropdown.QuickActions";
     [self.body addSubview:tileGroup];
     self.tileGroup = tileGroup;
     for (NSUInteger i=0; i<items.count; i++) {
         UIMenuElement *element = items[i].element;
-        SGRDropdownPress *press = [[SGRDropdownPress alloc] initWithFrame:CGRectMake(i*tileWidth, 3, tileWidth, kQuick-6)];
+        SGRDropdownPress *press = [[SGRDropdownPress alloc] initWithFrame:CGRectMake(i*tileWidth, single ? 0 : 3,
+                                                                                  tileWidth, single ? height : height-6)];
         press.element = element;
         press.pick = self.choose;
         press.accessibilityLabel = element.title;
         press.enabled = !(dropdownAttributes(element) & UIMenuElementAttributesDisabled);
         press.isTile = YES;
-        UIImageView *image = [[UIImageView alloc] initWithFrame:CGRectMake((tileWidth-26)/2, 14, 26, 26)];
+        UIImageView *image = [[UIImageView alloc] initWithFrame:CGRectMake((tileWidth-26)/2, single ? 16 : 14, 26, 26)];
         image.image = [element.image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
         image.tintColor = [UIColor colorWithWhite:1 alpha:press.enabled ? 1 : 0.4];
         image.contentMode = UIViewContentModeScaleAspectFit;
@@ -290,7 +301,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         UILabel *title = textLabel(element.title, [UIFont systemFontOfSize:12 weight:UIFontWeightRegular], image.tintColor);
         title.textAlignment = NSTextAlignmentCenter;
         title.numberOfLines = 2;
-        title.frame = CGRectMake(1, 50, tileWidth-2, 31);
+        title.frame = CGRectMake(1, single ? 44 : 50, tileWidth-2, single ? 19 : 31);
         [press addSubview:title];
         [tileGroup addSubview:press];
         [self.tileButtons addObject:press];
@@ -355,7 +366,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             [self.body addSubview:separator];
             y += gap;
         }
-        if (group.firstObject.tile) { [self addQuick:group at:y]; y += kQuick; }
+        if (group.firstObject.tile) { [self addQuick:group at:y]; y += quickHeight(group.count); }
         else for (SGRDropdownItem *item in group) { [self addRow:item at:y]; y += rowHeight(item.element); }
     }
     y += kBottomPadding;
