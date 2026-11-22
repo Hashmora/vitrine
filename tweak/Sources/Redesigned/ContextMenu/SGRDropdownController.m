@@ -14,7 +14,15 @@ static const CGFloat kPanelMaximum = 520;
 static const CGFloat kNonTripleTopPadding = 12;
 // Lightweight presentation transitions only. The touch-driven iOS 26 morph
 // remains a separate task; never replay an open transition on a data refresh.
-static const NSTimeInterval kOpenTime = 0.18, kSubmenuTime = 0.16, kDismissTime = 0.12;
+static const NSTimeInterval kOpenTime = 0.27, kSubmenuTime = 0.23, kDismissTime = 0.20;
+static CGAffineTransform dropdownEnteringTransform(void) {
+    return CGAffineTransformConcat(CGAffineTransformMakeScale(0.92, 0.92),
+                                   CGAffineTransformMakeTranslation(0, 9));
+}
+static CGAffineTransform dropdownExitingTransform(void) {
+    return CGAffineTransformConcat(CGAffineTransformMakeScale(0.95, 0.95),
+                                   CGAffineTransformMakeTranslation(0, 5));
+}
 static char kOwnedGlassKey;
 
 BOOL SGRDropdownPerformAction(UIMenuElement *element) {
@@ -670,8 +678,9 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
                      animations:^{
         top.alpha = 0;
-        top.transform = CGAffineTransformMakeScale(0.98, 0.98);
+        top.transform = dropdownExitingTransform();
         under.alpha = 1;
+        under.transform = CGAffineTransformIdentity;
     } completion:^(__unused BOOL finished) {
         if (self.panels.lastObject == top) {
             [top.resolution cancel];
@@ -764,7 +773,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     [self.panels addObject:panel];
     [self.menuIDs addObject:menu.identifier ?: menu.title ?: @""];
     panel.alpha = 0;
-    panel.transform = CGAffineTransformMakeScale(0.96, 0.96);
+    panel.transform = dropdownEnteringTransform();
     panel.waitingForDeferred = YES;
     [panel.resolution begin];
     if (![panel.resolution hasPending]) {
@@ -792,11 +801,12 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     if (self.closing || !self.window || ![self.panels containsObject:panel]) return;
     // Only the first reveal animates; deferred refreshes are in-place.
     [UIView animateWithDuration:parent ? kSubmenuTime : kOpenTime delay:0
+          usingSpringWithDamping:0.88 initialSpringVelocity:0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
                      animations:^{
         panel.alpha = 1;
         panel.transform = CGAffineTransformIdentity;
-        if (parent) parent.alpha = 0.5;
+        if (parent) parent.alpha = 0.55;
     } completion:nil];
 }
 static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
@@ -831,8 +841,9 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     // that shell's transition and open the real, final-sized surface just once.
     [panel.layer removeAllAnimations];
     panel.alpha = 0;
-    panel.transform = CGAffineTransformMakeScale(0.96, 0.96);
+    panel.transform = dropdownEnteringTransform();
     [UIView animateWithDuration:kOpenTime delay:0
+          usingSpringWithDamping:0.88 initialSpringVelocity:0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
                      animations:^{
         panel.alpha = 1;
@@ -884,8 +895,13 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     surface.userInteractionEnabled = NO;
     [UIView animateWithDuration:kDismissTime delay:0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
-                     animations:^{ surface.alpha = 0; }
-                     completion:^(__unused BOOL finished) { [self finishDismiss:element]; }];
+                     animations:^{
+        surface.alpha = 0;
+        for (SGRDropdownPanel *panel in self.panels) {
+            panel.alpha = 0;
+            panel.transform = dropdownExitingTransform();
+        }
+    } completion:^(__unused BOOL finished) { [self finishDismiss:element]; }];
 }
 @end
 
