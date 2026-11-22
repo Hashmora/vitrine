@@ -1,6 +1,7 @@
 // Button dropdowns owned by Vitrine. UIKit UIMenu is only the source of commands.
 // Geometry, sections, hit testing and submenus do not use _UIContextMenu*.
 #import <objc/runtime.h>
+#import <math.h>
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "SGRDropdownController.h"
@@ -278,13 +279,19 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 - (void)activate { if (self.enabled && self.pick) self.pick(self.element); }
 @end
 
-@interface SGRDropdownPanel : UIView
+@interface SGRDropdownPanel : UIView <UIGestureRecognizerDelegate>
 @property (nonatomic, strong) UIScrollView *scroll;
 @property (nonatomic, strong) UIView *body;
 @property (nonatomic, strong) UIView *separator;
 @property (nonatomic, strong) UIView *header;
 @property (nonatomic, strong) UIView *tileGroup;
 @property (nonatomic, strong) NSMutableArray<SGRDropdownPress *> *tileButtons;
+@property (nonatomic, strong) NSMutableArray<SGRDropdownPress *> *allButtons;
+@property (nonatomic, strong) UIPanGestureRecognizer *selectionPan;
+@property (nonatomic, strong) UISelectionFeedbackGenerator *selectionFeedback;
+@property (nonatomic, weak) SGRDropdownPress *draggedPress;
+@property (nonatomic) CGPoint dragStartOffset;
+@property (nonatomic) BOOL dragIsScrolling;
 @property (nonatomic, strong) UIMenu *menu;
 @property (nonatomic, strong) SGRDropdownResolution *resolution;
 @property (nonatomic) BOOL isSubmenu;
@@ -316,6 +323,14 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         self.body.backgroundColor = UIColor.clearColor;
         [self.scroll addSubview:self.body];
         self.tileButtons = [NSMutableArray array];
+        self.allButtons = [NSMutableArray array];
+        // Gesture lives on the entire scroll viewport, not just the quick
+        // actions strip. Its pan may coexist with a real scrolling gesture.
+        self.selectionPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragAcrossMenu:)];
+        self.selectionPan.cancelsTouchesInView = YES;
+        self.selectionPan.delegate = self;
+        [self.scroll addGestureRecognizer:self.selectionPan];
+        self.selectionFeedback = [UISelectionFeedbackGenerator new];
         self.layer.shadowOpacity = 0;
     }
     return self;
@@ -390,6 +405,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         [press addSubview:tick];
     }
     [self.body addSubview:press];
+    [self.allButtons addObject:press];
 }
 - (void)addQuick:(NSArray<SGRDropdownItem *> *)items at:(CGFloat)y {
     if (!items.count) return;
@@ -421,29 +437,64 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         [press addSubview:title];
         [tileGroup addSubview:press];
         [self.tileButtons addObject:press];
+        [self.allButtons addObject:press];
     }
-    // A continuous drag highlights the actual individual tile under the finger.
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragQuick:)];
-    pan.cancelsTouchesInView = YES;
-    [tileGroup addGestureRecognizer:pan];
 }
-- (void)dragQuick:(UIPanGestureRecognizer *)pan {
-    CGPoint point = [pan locationInView:self.tileGroup];
-    SGRDropdownPress *active = nil;
-    for (SGRDropdownPress *tile in self.tileButtons) {
-        BOOL inside = CGRectContainsPoint(tile.frame, point);
-        tile.highlighted = inside;
-        if (inside) active = tile;
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer
+ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+    return (recognizer == self.selectionPan && other == self.scroll.panGestureRecognizer) ||
+           (other == self.selectionPan && recognizer == self.scroll.panGestureRecognizer);
+}
+- (SGRDropdownPress *)pressAtScrollPoint:(CGPoint)point {
+    // Coordinates are in the UIScrollView viewport (including contentOffset).
+    // Group separators and header chrome do not activate a command.
+    for (SGRDropdownPress *press in self.allButtons) {
+        if (!press.enabled || press.hidden) continue;
+        CGRect area = [press convertRect:press.bounds toView:self.scroll];
+        if (CGRectContainsPoint(area, point)) return press;
     }
-    if (pan.state == UIGestureRecognizerStateEnded && active) [active activate];
-    if (pan.state == UIGestureRecognizerStateCancelled || pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateFailed) {
-        for (SGRDropdownPress *tile in self.tileButtons) tile.highlighted = NO;
+    return nil;
+}
+- (void)highlightPress:(SGRDropdownPress *)press notify:(BOOL)notify {
+    if (self.draggedPress == press) return;
+    self.draggedPress = press;
+    for (SGRDropdownPress *button in self.allButtons) button.highlighted = (button == press);
+    if (press && notify) {
+        [self.selectionFeedback selectionChanged];
+        [self.selectionFeedback prepare];
+    }
+}
+- (void)dragAcrossMenu:(UIPanGestureRecognizer *)pan {
+    UIGestureRecognizerState state = pan.state;
+    if (state == UIGestureRecognizerStateBegan) {
+        self.dragStartOffset = self.scroll.contentOffset;
+        self.dragIsScrolling = NO;
+        [self.selectionFeedback prepare];
+    }
+    if (state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged) {
+        // On tall menus a moving scroll view wins; releasing a scroll must
+        // never select a destructive command behind the finger.
+        if (self.scroll.scrollEnabled &&
+            fabs(self.scroll.contentOffset.y - self.dragStartOffset.y) > 7) self.dragIsScrolling = YES;
+        SGRDropdownPress *candidate = self.dragIsScrolling ? nil :
+            [self pressAtScrollPoint:[pan locationInView:self.scroll]];
+        [self highlightPress:candidate notify:!self.dragIsScrolling];
+    }
+    if (state == UIGestureRecognizerStateEnded || state == UIGestureRecognizerStateCancelled ||
+        state == UIGestureRecognizerStateFailed) {
+        SGRDropdownPress *selection = self.dragIsScrolling || state != UIGestureRecognizerStateEnded ? nil :
+            [self pressAtScrollPoint:[pan locationInView:self.scroll]];
+        [self highlightPress:nil notify:NO];
+        if (selection) [selection activate];
+        self.dragIsScrolling = NO;
     }
 }
 - (void)configure:(UIMenu *)menu title:(NSString *)title maxHeight:(CGFloat)maximum {
     self.menu = menu;
     for (UIView *child in [self.body.subviews copy]) [child removeFromSuperview];
     [self.tileButtons removeAllObjects];
+    [self.allButtons removeAllObjects];
+    self.draggedPress = nil;
     self.tileGroup = nil;
     CGFloat y = 0;
     if (title.length) {
