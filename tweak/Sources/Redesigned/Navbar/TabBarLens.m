@@ -9,10 +9,8 @@ static char kLensGlyphDeghostKey;
 
 static char kLensPaneKey, kLensFilmKey;
 
-// The glyph aperture consists of a steady side crescent and a separate,
-// weak vertical motion highlight. Unlike Stage 184, vertical refraction NEVER
-// follows the capsule perimeter and NEVER stays visible on a held, still lens.
-// The latter's opacity follows the same spring samples as the glass itself.
+// Only the horizontal side crescents refract selected glyphs. The top and
+// bottom motion/reflection apertures from Stages 184/186 are intentionally gone.
 static CGFloat SGRGlyphClamp(CGFloat value) { return MAX(0, MIN(1, value)); }
 
 static CGFloat SGRGlyphSideFalloff(CGFloat t) {
@@ -22,8 +20,8 @@ static CGFloat SGRGlyphSideFalloff(CGFloat t) {
     return 0.45 * (0.25 - t) / 0.06;
 }
 
-static CGImageRef SGRCreateGlyphAperture(CGSize size, CGFloat leftGuard, CGFloat rightGuard,
-                                         CGFloat scale, BOOL verticalOnly) {
+static CGImageRef SGRCreateGlyphSideAperture(CGSize size, CGFloat leftGuard, CGFloat rightGuard,
+                                             CGFloat scale) {
     size_t width = (size_t)ceil(size.width * scale), height = (size_t)ceil(size.height * scale);
     if (!width || !height || width > 2048 || height > 2048) return NULL;
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
@@ -35,9 +33,6 @@ static CGImageRef SGRCreateGlyphAperture(CGSize size, CGFloat leftGuard, CGFloat
     uint8_t *pixels = CGBitmapContextGetData(context);
     if (!pixels) { CGContextRelease(context); return NULL; }
 
-    // Unlike a contour normal, these two apertures are independent. The
-    // vertical one is centered on the flat upper/lower rails, never corners.
-    CGFloat verticalBand = MIN(9.0, MAX(4.0, size.height * 0.15));
     CGFloat halfW = size.width / 2, halfH = size.height / 2;
     CGFloat radius = MIN(halfW, halfH);
     for (size_t row = 0; row < height; row++) {
@@ -45,26 +40,16 @@ static CGImageRef SGRCreateGlyphAperture(CGSize size, CGFloat leftGuard, CGFloat
         for (size_t col = 0; col < width; col++) {
             CGFloat x = ((CGFloat)col + 0.5) / scale;
             CGFloat u = x / size.width;
-            CGFloat alpha;
-            if (verticalOnly) {
-                CGFloat a = SGRGlyphClamp((u - 0.14) / 0.20);
-                CGFloat b = SGRGlyphClamp((0.86 - u) / 0.20);
-                CGFloat horizontalWindow = a * a * (3 - 2 * a) * b * b * (3 - 2 * b);
-                CGFloat edgeDepth = MIN(y, size.height - y);
-                CGFloat verticalWindow = SGRGlyphClamp(1 - edgeDepth / verticalBand);
-                alpha = horizontalWindow * verticalWindow * verticalWindow;
-            } else {
-                // Preserve Stage 184's exact side geometry and outer-edge
-                // protection; only its excessive permanent vertical rim goes.
-                CGFloat dx = fabs(x - halfW) - (halfW - radius);
-                CGFloat dy = fabs(y - halfH);
-                CGFloat ox = MAX(0, dx), oy = MAX(0, dy);
-                CGFloat distance = hypot(ox, oy) + MIN(MAX(dx, dy), 0) - radius;
-                CGFloat clip = SGRGlyphClamp(0.55 - distance);
-                CGFloat leftSide = SGRGlyphSideFalloff(u) * leftGuard;
-                CGFloat rightSide = SGRGlyphSideFalloff(1 - u) * rightGuard;
-                alpha = clip * (1 - (1 - leftSide) * (1 - rightSide));
-            }
+            // Identical side aperture from Stage 186, with the Home/Create
+            // outward-edge guards. Do not introduce a top/bottom component.
+            CGFloat dx = fabs(x - halfW) - (halfW - radius);
+            CGFloat dy = fabs(y - halfH);
+            CGFloat ox = MAX(0, dx), oy = MAX(0, dy);
+            CGFloat distance = hypot(ox, oy) + MIN(MAX(dx, dy), 0) - radius;
+            CGFloat clip = SGRGlyphClamp(0.55 - distance);
+            CGFloat leftSide = SGRGlyphSideFalloff(u) * leftGuard;
+            CGFloat rightSide = SGRGlyphSideFalloff(1 - u) * rightGuard;
+            CGFloat alpha = clip * (1 - (1 - leftSide) * (1 - rightSide));
             uint8_t channel = (uint8_t)lrint(255 * SGRGlyphClamp(alpha));
             size_t offset = (row * width + col) * 4;
             pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = pixels[offset + 3] = channel;
@@ -149,16 +134,6 @@ static CGFloat rubber(CGFloat x, CGFloat lo, CGFloat hi) {
 
 typedef struct { CGFloat L, R, vL, vR, lift, vLift, sq, vSq; } SGLensSample;
 
-// The vertical glint is velocity-driven, not a persistent strip. In particular
-// a finger can keep the glass raised after the spring settles without leaving
-// a bright twin glyph above or below the original. Never exceed 17% coverage.
-static CGFloat SGRGlyphVerticalMotion(SGLensSample sample) {
-    CGFloat horizontal = SGRGlyphClamp((fabs((sample.vL + sample.vR) * 0.5) - 18) / 420);
-    CGFloat rising = SGRGlyphClamp((fabs(sample.vLift) - 0.10) / 4.6);
-    CGFloat impulse = MAX(horizontal, rising * 0.75);
-    CGFloat visibility = SGRGlyphClamp(sample.lift / 0.42);
-    return 0.17 * impulse * visibility;
-}
 // One immutable pose for a frame, projected once from the lens host into
 // every optical sibling. The refraction shader, tint and inverse white mask
 // must never independently convert the host center while the host is scaled.
@@ -217,12 +192,9 @@ static const CGFloat kPlayStep = 1.0 / 120;
     // sampled pixels and the accent glyphs share the same coordinate system.
     // The 0.92x platter lens remains a separate surface underneath the tabs.
     SGLegacyGlassView *_glyphEdgePane;
-    // Two independent apertures: stable side crescent and a velocity-faded
-    // upper/lower strip. Images are cached; only the latter's opacity changes
-    // during a 120 Hz touch / render-server spring animation.
+    // Cached side aperture only; no vertical-refraction layer or playback.
     CALayer *_glyphCompositeMask;
     CALayer *_glyphEdgeMask;
-    CALayer *_glyphVerticalMask;
     CGSize _glyphMaskSize;
     NSInteger _glyphMaskLeftStep, _glyphMaskRightStep;
     // Independent refraction of the 0.92x platter; never samples glyphs.
@@ -376,23 +348,18 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
         // Keep the rim sample close to the very same glyph. Excessive mesh
         // shift read like a separate offset / horizontally smeared green copy.
         _glyphEdgePane.lensScale = 0.86;
-        // Sample selected glyphs only through steady side crescents and a
-        // very brief, soft upper/lower pulse. No permanent perimeter rim.
+        // Sample selected glyphs only through the original side crescents.
         _glyphEdgePane.lateralRefraction = NO;
         _glyphEdgePane.sharp = YES;
         _glyphEdgePane.rimless = YES;
         _glyphEdgePane.alpha = 0;
         _glyphCompositeMask = [CALayer layer];
-        _glyphCompositeMask.name = @"Vitrine.LegacyGlyphMotionRefraction";
+        _glyphCompositeMask.name = @"Vitrine.LegacyGlyphSideRefraction";
         _glyphCompositeMask.masksToBounds = YES;
         _glyphCompositeMask.cornerCurve = kCACornerCurveCircular;
         _glyphEdgeMask = [CALayer layer];
         _glyphEdgeMask.contentsGravity = kCAGravityResize;
         [_glyphCompositeMask addSublayer:_glyphEdgeMask];
-        _glyphVerticalMask = [CALayer layer];
-        _glyphVerticalMask.contentsGravity = kCAGravityResize;
-        _glyphVerticalMask.opacity = 0;
-        [_glyphCompositeMask addSublayer:_glyphVerticalMask];
         _glyphEdgePane.layer.mask = _glyphCompositeMask;
         _glyphMaskSize = CGSizeZero;
         _glyphMaskLeftStep = _glyphMaskRightStep = -1;
@@ -505,19 +472,16 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     _platterEdgeMask.colors = colors;
     [CATransaction commit];
 
-    // Only regenerate mask textures on a size change or quantized outward
-    // guard change. Animation updates the vertical layer's opacity instead.
+    // Regenerate only when size or the quantized side guards change.
     NSInteger leftStep = (NSInteger)lrint(SGRGlyphClamp(left) * 32);
     NSInteger rightStep = (NSInteger)lrint(SGRGlyphClamp(right) * 32);
     BOOL resized = !CGSizeEqualToSize(size, _glyphMaskSize);
     if (!resized && leftStep == _glyphMaskLeftStep &&
         rightStep == _glyphMaskRightStep) return;
     CGFloat scale = MIN(2.0, MAX(1.0, UIScreen.mainScreen.scale));
-    CGImageRef side = SGRCreateGlyphAperture(size, leftStep / 32.0,
-                                            rightStep / 32.0, scale, NO);
+    CGImageRef side = SGRCreateGlyphSideAperture(size, leftStep / 32.0,
+                                                rightStep / 32.0, scale);
     if (!side) return;
-    CGImageRef vertical = resized ? SGRCreateGlyphAperture(size, 1, 1, scale, YES) : NULL;
-    if (resized && !vertical) { CGImageRelease(side); return; }
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _glyphCompositeMask.frame = (CGRect){CGPointZero, size};
@@ -525,14 +489,8 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
     _glyphEdgeMask.frame = (CGRect){CGPointZero, size};
     _glyphEdgeMask.contentsScale = scale;
     _glyphEdgeMask.contents = (__bridge id)side;
-    if (vertical) {
-        _glyphVerticalMask.frame = (CGRect){CGPointZero, size};
-        _glyphVerticalMask.contentsScale = scale;
-        _glyphVerticalMask.contents = (__bridge id)vertical;
-    }
     [CATransaction commit];
     CGImageRelease(side);
-    if (vertical) CGImageRelease(vertical);
     _glyphMaskSize = size;
     _glyphMaskLeftStep = leftStep;
     _glyphMaskRightStep = rightStep;
@@ -585,7 +543,6 @@ static UIView *SGRLensPlatterInHost(UIView *host, UIView *fallback) {
         _glyphCompositeMask.frame = bounds;
         _glyphCompositeMask.cornerRadius = radius;
         _glyphEdgeMask.frame = bounds;
-        _glyphVerticalMask.frame = bounds;
     }
     [CATransaction commit];
 }
@@ -1023,13 +980,7 @@ static BOOL bubbles(void) {
         self->_glyphEdgePane.alpha = (on && self->_tintOverlay) ? 1 : 0;
         self->_platterEdgePane.alpha = on ? 1 : 0;
     };
-    if (!on) {
-        [self clearGlyphSourceMasks];
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        _glyphVerticalMask.opacity = 0;
-        [CATransaction commit];
-    }
+    if (!on) [self clearGlyphSourceMasks];
     if (animated) SGRAnimate(on ? SGRMotionRespond : SGRMotionFade, change, nil);
     else [UIView performWithoutAnimation:change];
 }
@@ -1162,12 +1113,6 @@ static BOOL bubbles(void) {
         _fingerHighlight.endPoint = CGPointMake(unitX + 0.23, 0.5);
         [CATransaction commit];
     }
-    // The glyph's vertical glint exists only while the lens is in motion.
-    // At rest, including a long press with the glass still raised, it is 0.
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    _glyphVerticalMask.opacity = _glassOn ? SGRGlyphVerticalMotion([self state]) : 0;
-    [CATransaction commit];
     // Opacity is owned solely by setFingerHighlightPressed: display-link
     // frames must not override the touch-down / touch-up animation.
     [self updateGlyphSourceMasksAt:center sx:sx];
@@ -1314,7 +1259,6 @@ static BOOL bubbles(void) {
     [_glyphEdgePane.layer removeAnimationForKey:@"lens.x"];
     [_glyphEdgePane.layer removeAnimationForKey:@"lens.sx"];
     [_glyphEdgePane.layer removeAnimationForKey:@"lens.sy"];
-    [_glyphVerticalMask removeAnimationForKey:@"lens.vertical"];
     [_tintMask removeAnimationForKey:@"lens.x"];
     [_tintMask removeAnimationForKey:@"lens.sx"];
     [_tintMask removeAnimationForKey:@"lens.sy"];
@@ -1467,18 +1411,6 @@ static BOOL bubbles(void) {
         edgeRun(@"lens.x", @"position.x", glyphXs);
         edgeRun(@"lens.sx", @"transform.scale.x", sxs);
         edgeRun(@"lens.sy", @"transform.scale.y", sys);
-    }
-    // The vertical aperture fades with the SAME recorded spring samples as
-    // the render-server release. The stationary model ends at zero opacity.
-    if (_glyphVerticalMask && _glassOn) {
-        NSMutableArray<NSNumber *> *vertical = [NSMutableArray arrayWithCapacity:count];
-        for (NSUInteger i = 0; i < count; i++)
-            [vertical addObject:@(SGRGlyphVerticalMotion(all[i]))];
-        CAKeyframeAnimation *pulse = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
-        pulse.values = vertical;
-        pulse.duration = duration;
-        pulse.calculationMode = kCAAnimationLinear;
-        [_glyphVerticalMask addAnimation:pulse forKey:@"lens.vertical"];
     }
     // Core Animation runs the released lens on the render server; match that
     // playback on the accent mask, instead of leaving the color behind at release.
