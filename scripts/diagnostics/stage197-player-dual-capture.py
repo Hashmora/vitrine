@@ -16,23 +16,46 @@ G = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = G
 spec.loader.exec_module(G)
 N, S = G.N, G.S
-CASES = ('root-open', 'root-close')
+CASES = ('root-open', 'root-close', 'more-open', 'more-close',
+         'root-drag-x', 'root-drag-y', 'more-drag-x', 'more-drag-y', 'root-flash', 'speed-open', 'speed-close')
+SPEED = 'Speed, Pitch & Reverb'
 
 
-def verified(driver, label, menu, timeout=8):
+def front_frame(observed, label):
+    views = observed['legacy' if label == 'ios18' else 'native']
+    frames = [v['frame'] for v in views if isinstance(v.get('frame'), list) and len(v['frame']) == 4]
+    if not frames:
+        raise S.EvidenceError('no visible menu frame')
+    # More is lower and normally larger; ignore the exposed strip of the root.
+    return max(frames, key=lambda f: (f[1], f[2]*f[3]))
+
+
+def hosted_views(driver):
+    return G.shown(driver, **{'class':'SGSpeedPitchView'})
+
+
+
+def verified(driver, label, menu, timeout=8, more=False, hosted=False, root_frame=None):
     deadline = time.monotonic() + timeout
     while True:
         state = driver.call('state')
         legacy = G.shown(driver, **{'class':'SGRDropdownPanel'})
         native = G.shown(driver, **{'class':'_UIContextMenuView'})
         back = G.shown(driver, id='Vitrine.Dropdown.Back')
-        expected = (bool(legacy) == (menu and label == 'ios18') and
+        speed = hosted_views(driver) if hosted else []
+        expected = (bool(legacy) == ((menu or hosted) and label == 'ios18') and
                     bool(native) == (menu and label == 'ios26'))
-        observed = {'state':state, 'legacy':legacy, 'native':native, 'back':back}
-        if state.get('player') and bool(state.get('menu')) == menu and expected and not back:
+        observed = {'state':state, 'legacy':legacy, 'native':native, 'back':back, 'speed':speed}
+        more_ok = bool(back) == more if label == 'ios18' else True
+        if label == 'ios26' and more and native and root_frame:
+            # Native exposes no Vitrine back identifier. A distinct visible
+            # panel geometry after selecting More is a necessary proxy.
+            more_ok = front_frame(observed,label) != root_frame
+        state_menu = (menu or hosted) if label == 'ios18' else menu
+        if state.get('player') and bool(state.get('menu')) == state_menu and expected and more_ok and (not hosted or speed):
             return observed
         if time.monotonic() >= deadline:
-            raise S.EvidenceError(f'{label}: expected root menu={menu}; observed={observed}')
+            raise S.EvidenceError(f'{label}: expected menu={menu}, more={more}, hosted={hosted}; observed={observed}')
         time.sleep(.15)
 
 
@@ -48,6 +71,9 @@ def prepare(driver, label, case):
             state = driver.call('state')
             if state.get('menu'):
                 S.safe_external_tap(driver)
+            elif hosted_views(driver):
+                driver.call('tap',at='7,360')
+                time.sleep(.6)
             if not driver.call('state').get('player'):
                 driver.call('player.open')
                 time.sleep(.6)
@@ -62,15 +88,69 @@ def prepare(driver, label, case):
             closed = verified(driver, label, False, timeout=3)
             if not track(closed['state']).get('paused'):
                 raise S.EvidenceError('playback did not pause')
-            if case == 'root-close':
-                driver.call('player.more')
-                verified(driver, label, True, timeout=5)
-                time.sleep(.8)
-            return verified(driver, label, case == 'root-close')
+            if case == 'root-open':
+                return closed
+            driver.call('player.more')
+            root = verified(driver, label, True, timeout=5)
+            time.sleep(1.2)
+            root = verified(driver,label,True)
+            if case in ('more-close','more-drag-x','more-drag-y'):
+                frame = front_frame(root,label)
+                driver.call('menu.pick',title='More')
+                verified(driver,label,True,more=True,root_frame=frame)
+                time.sleep(1.0)
+                return verified(driver,label,True,more=True,root_frame=frame)
+            if case == 'speed-close':
+                driver.call('menu.pick',title=SPEED)
+                verified(driver,label,False,hosted=True)
+                time.sleep(1.0)
+                return verified(driver,label,False,hosted=True)
+            return root
         except S.EvidenceError as exc:
             last = str(exc)
             time.sleep(.5)
     raise S.EvidenceError(f'{label}: preparation failed: {last}')
+
+
+def recorded_event(driver, label, case, before):
+    if case == 'speed-open':
+        return driver.call('menu.pick',title=SPEED)
+    if case == 'speed-close':
+        return driver.call('tap',at='7,360')
+    if case.endswith(('-drag-x','-drag-y')) or case == 'root-flash':
+        x,y,w,h = front_frame(before,label)
+        # Start on the rim, not a row centre. Hold the stretched state and
+        # lift there, so the spring return is observable in the capture.
+        if case.endswith('-drag-x'):
+            start = (x+5, y+h/2)
+            via = (max(8,start[0]-95),start[1])
+        else:
+            start = (x+w/2, y+h-5) if case.startswith('root') else (x+5,y+h/2)
+            via = (start[0],start[1]+95)
+        point = lambda p: f'{round(p[0])},{round(p[1])}'
+        if case == 'root-flash':
+            return driver.call('longpress',at=point(start),duration=.16)
+        return driver.call('swipe',**{'from':point(start),'to':point(via),
+            'duration':.55,'hold':.45,'drag':1})
+    return S.event(driver,case)
+
+
+def verify_after(driver,label,case,before):
+    if case in ('root-close','more-close','speed-close'):
+        result = verified(driver,label,False)
+        if case == 'speed-close' and hosted_views(driver):
+            raise S.EvidenceError('Speed panel still visible after close')
+        return result
+    if case == 'speed-open':
+        return verified(driver,label,False,hosted=True)
+    more = case == 'more-open' or case.startswith('more-drag-')
+    result = verified(driver,label,True,more=more,
+        root_frame=front_frame(before,label) if case == 'more-open' else None)
+    if case.endswith(('-drag-x','-drag-y')) or case == 'root-flash':
+        prior, current = front_frame(before,label),front_frame(result,label)
+        if any(abs(a-b)>2 for a,b in zip(prior,current)):
+            raise S.EvidenceError(f'surface did not return to prior geometry: {prior} -> {current}')
+    return result
 
 
 def take(driver, device, label, case, root, trial, exporter, args):
@@ -82,11 +162,10 @@ def take(driver, device, label, case, root, trial, exporter, args):
         report['before_verified'] = prepare(driver, label, case)
         S.collect_snapshot(driver, dest/'before')
         report['recording'] = N.capture(device['udid'], dest/'capture.mp4',
-                                        lambda: S.event(driver, case), args.preroll, args.tail)
+                                        lambda: recorded_event(driver,label,case,report['before_verified']), args.preroll, args.tail)
         if report['recording'].get('action_error'):
             raise S.EvidenceError(report['recording']['action_error'])
         S.run(['xcrun','simctl','io',device['udid'],'screenshot',dest/'settled-compositor.png'],timeout=20)
-        report['after_verified'] = verified(driver,label,case == 'root-open')
         S.collect_snapshot(driver, dest/'after')
         # Read the existing SG_DRIVER ring after capture, not during it.
         # Stage 199 logs one aggregate per root morph; native already logs
@@ -94,19 +173,20 @@ def take(driver, device, label, case, root, trial, exporter, args):
         try:
             since = report['before_verified']['state'].get('logSeq', 0)
             lines = driver.call('log', since=since).get('lines', [])
-            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:', 'stage201 player root:', 'stage202 player root:', 'stage203 player root:'))
+            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:', 'stage201 player root:', 'stage202 player root:', 'stage203 player root:', 'stage204 player '))
                          or 'system menu:' in line.get('text', '')]
             S.save_json(dest/'morph-lifecycle.json', {'since':since,'lines':lifecycle})
             report['morph_lifecycle_lines'] = len(lifecycle)
         except Exception as exc:
             report['morph_lifecycle_error'] = repr(exc)
-        before, after = (track(report[k]['state']) for k in ('before_verified','after_verified'))
-        report['track_stable'] = bool(before.get('uri')) and before.get('uri') == after.get('uri') and bool(after.get('paused'))
-        report['track_uri'] = before.get('uri')
         try:
             report['video'] = G.metadata_only(dest/'capture.mp4', dest/'frames', exporter)
         except Exception as exc:
             report['metadata_error'] = repr(exc)
+        report['after_verified'] = verify_after(driver,label,case,report['before_verified'])
+        before, after = (track(report[k]['state']) for k in ('before_verified','after_verified'))
+        report['track_stable'] = bool(before.get('uri')) and before.get('uri') == after.get('uri') and bool(after.get('paused'))
+        report['track_uri'] = before.get('uri')
         report['status'] = 'RECORDED_NOT_YET_MATCHED'
     except Exception as exc:
         report['error'] = repr(exc)
@@ -153,7 +233,14 @@ def self_test():
     try: verified(FakeDriver('ios18',True),'ios26',True,timeout=0)
     except S.EvidenceError: pass
     else: raise AssertionError('accepted wrong renderer')
-    print('PASS paired report, strict renderer check and metadata gating')
+    class GestureDriver:
+        def call(self,command,**kw): return (command,kw)
+    before = {'legacy':[{'frame':[140,62,250,315]}], 'native':[]}
+    command, gesture = recorded_event(GestureDriver(),'ios18','root-drag-x',before)
+    assert command == 'swipe' and gesture['from'] != gesture['to'] and gesture['hold'] > 0
+    assert recorded_event(GestureDriver(),'ios18','speed-open',before) == ('menu.pick',{'title':SPEED})
+    assert recorded_event(GestureDriver(),'ios18','root-flash',before)[0] == 'longpress'
+    print('PASS paired report, strict renderer check, gesture routing and metadata gating')
 
 
 def main():
@@ -175,7 +262,7 @@ def main():
     devices = S.sim_devices()
     targets = [('ios26',S.resolve_sim(devices,26,args.udid26),S.Driver(args.port26)),
                ('ios18',S.resolve_sim(devices,18,args.udid18),S.Driver(args.port18))]
-    root = args.out/f'stage197-player-dual-{dt.datetime.now():%Y%m%d-%H%M%S}'
+    root = args.out/f'stage204-player-lifecycle-{dt.datetime.now():%Y%m%d-%H%M%S}'
     root.mkdir(parents=True,exist_ok=False)
     exporter = S.build_native_extractor(args.out)
     S.save_json(root/'configuration.json',{'targets':[{'label':l,'device':d,'port':v.port} for l,d,v in targets],
@@ -191,7 +278,7 @@ def main():
             S.save_json(root/'report.json',{'reports':reports,'pairs':pairs,'finished':S.clock()})
     complete = all(p['comparable_geometry'] for p in pairs)
     S.save_json(root/'report.json',{'reports':reports,'pairs':pairs,'complete':complete,'finished':S.clock(),
-        'note':'Same URI is an artwork candidate, not proof of equal artwork or layout; compare video visually. No automated visual-match claim.'})
+        'note':'Drag/flash video is evidence, not proof of visual similarity. Same URI is an artwork candidate, not proof of equal artwork or layout; compare video visually. No automated visual-match claim.'})
     G.compact_archives(root)
     return 0 if complete else 2
 

@@ -77,6 +77,11 @@ static void stylePanel(UIView *content) {
 
 void SGPlayerStylePanel(UIView *content) {
     if (!SGRedesignedUI() || !SGBelowiOS26() || !content.window) return;
+    // An owned dropdown already supplies live glass, including during a hosted
+    // morph. Do not discover/hide its backdrop as if it were UIKit's popover.
+    if (SGUseLegacyGlass()) for (UIView *v = content.superview; v; v = v.superview) {
+        if ([v.accessibilityIdentifier isEqualToString:@"Vitrine.Dropdown.Panel"]) return;
+    }
     stylePanel(content);
     // Again as the popover settles: UIKit may build or re-lay its chrome after the panel's own layout.
     if (objc_getAssociatedObject(content, &kPanelSettleKey)) return;

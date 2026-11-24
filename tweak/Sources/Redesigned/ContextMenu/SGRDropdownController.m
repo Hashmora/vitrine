@@ -351,6 +351,10 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic, weak) SGRDropdownPress *draggedPress;
 @property (nonatomic) CGPoint dragStartOffset;
 @property (nonatomic) BOOL dragIsScrolling;
+@property (nonatomic) BOOL elasticDrag;
+@property (nonatomic) BOOL elasticEnabled;
+@property (nonatomic, strong) UILongPressGestureRecognizer *surfaceTouch;
+@property (nonatomic, strong) CAGradientLayer *touchLight;
 @property (nonatomic, strong) UIMenu *menu;
 @property (nonatomic, strong) SGRDropdownResolution *resolution;
 @property (nonatomic) BOOL isSubmenu;
@@ -378,6 +382,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 - (void)applyPlayerContentLens:(CGFloat)amount release:(CGFloat)release;
 - (void)preparePlayerContentMeshes;
 - (void)restorePlayerContentMesh;
+- (void)resetElastic;
 @end
 
 @implementation SGRDropdownPanel
@@ -416,7 +421,25 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         self.selectionPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragAcrossMenu:)];
         self.selectionPan.cancelsTouchesInView = YES;
         self.selectionPan.delegate = self;
-        [self.scroll addGestureRecognizer:self.selectionPan];
+        self.elasticEnabled = SGBelowiOS26() && SGUseLegacyGlass() && !UIAccessibilityIsReduceMotionEnabled();
+        if (self.elasticEnabled) {
+            [self addGestureRecognizer:self.selectionPan];
+            self.surfaceTouch = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(flashSurface:)];
+            self.surfaceTouch.minimumPressDuration = 0;
+            self.surfaceTouch.allowableMovement = CGFLOAT_MAX;
+            self.surfaceTouch.cancelsTouchesInView = NO;
+            self.surfaceTouch.delaysTouchesBegan = NO;
+            self.surfaceTouch.delaysTouchesEnded = NO;
+            self.surfaceTouch.delegate = self;
+            [self addGestureRecognizer:self.surfaceTouch];
+            self.touchLight = [CAGradientLayer layer];
+            self.touchLight.type = kCAGradientLayerRadial;
+            self.touchLight.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.20].CGColor,
+                                        (id)[UIColor colorWithWhite:1 alpha:0].CGColor];
+            self.touchLight.opacity = 0;
+            self.touchLight.zPosition = 1000;
+            [self.layer addSublayer:self.touchLight];
+        } else [self.scroll addGestureRecognizer:self.selectionPan];
         self.selectionFeedback = [UISelectionFeedbackGenerator new];
         self.layer.shadowOpacity = 0;
     }
@@ -424,6 +447,11 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
+    if (self.touchLight) {
+        [CATransaction begin]; [CATransaction setDisableActions:YES];
+        self.touchLight.frame = self.bounds;
+        [CATransaction commit];
+    }
     CGFloat radius = self.morphing ? morphLensRadius(self.bounds.size, self.morphLensAmount) : kRadius;
     if (self.layer.cornerRadius != radius) self.layer.cornerRadius = radius;
     if (self.morphing && self.morphGlass) {
@@ -692,8 +720,47 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         [self.allButtons addObject:press];
     }
 }
+- (void)flashSurface:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan || self.morphing) return;
+    CGPoint point = [gesture locationInView:self];
+    CGPoint unit = CGPointMake(morphClamp(point.x/MAX(1,self.bounds.size.width)),
+                               morphClamp(point.y/MAX(1,self.bounds.size.height)));
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    self.touchLight.startPoint = unit;
+    self.touchLight.endPoint = CGPointMake(unit.x < 0.5 ? 1 : 0, unit.y < 0.5 ? 1 : 0);
+    self.touchLight.opacity = 0;
+    [CATransaction commit];
+    CABasicAnimation *flash = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    flash.fromValue = @1; flash.toValue = @0; flash.duration = 0.26;
+    flash.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    [self.touchLight addAnimation:flash forKey:@"Vitrine.TouchLight"];
+#if SG_DRIVER
+    SGLog(@"stage204 player touch: flash x=%.3f y=%.3f submenu=%d",unit.x,unit.y,self.isSubmenu);
+#endif
+}
+- (void)resetElastic {
+    if (!self.elasticEnabled || !self.elasticDrag) return;
+    self.elasticDrag = NO;
+    self.dragIsScrolling = YES; // suppress selection on the interrupted touch
+    [self highlightPress:nil notify:NO];
+    if (!CGAffineTransformIsIdentity(self.transform)) {
+        [self.layer removeAllAnimations];
+        self.transform = CGAffineTransformIdentity;
+    }
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceiveTouch:(UITouch *)touch {
+    if (recognizer != self.selectionPan || !self.elasticEnabled) return YES;
+    // Sliders, switches and hosted scrolling controls must retain their own gestures.
+    for (UIView *view = touch.view; view && view != self; view = view.superview) {
+        if ([view isKindOfClass:UIControl.class] && ![view isKindOfClass:SGRDropdownPress.class] &&
+            ![view.accessibilityIdentifier isEqualToString:@"Vitrine.Dropdown.Back"]) return NO;
+        if ([view isKindOfClass:UIScrollView.class] && view != self.scroll) return NO;
+    }
+    return !self.morphing;
+}
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer
  shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+    if (recognizer == self.surfaceTouch || other == self.surfaceTouch) return YES;
     return (recognizer == self.selectionPan && other == self.scroll.panGestureRecognizer) ||
            (other == self.selectionPan && recognizer == self.scroll.panGestureRecognizer);
 }
@@ -719,22 +786,58 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)dragAcrossMenu:(UIPanGestureRecognizer *)pan {
     UIGestureRecognizerState state = pan.state;
     if (state == UIGestureRecognizerStateBegan) {
-        self.dragStartOffset = self.scroll.contentOffset;
+        CGPoint offset = self.scroll.contentOffset;
+        if (self.elasticEnabled && !self.scroll.hidden) offset.y = MAX(0,MIN(offset.y,MAX(0,self.scroll.contentSize.height-self.scroll.bounds.size.height)));
+        self.dragStartOffset = offset;
         self.dragIsScrolling = NO;
+        self.elasticDrag = NO;
         [self.selectionFeedback prepare];
     }
     if (state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged) {
         // On tall menus a moving scroll view wins; releasing a scroll must
         // never select a destructive command behind the finger.
-        if (self.scroll.scrollEnabled &&
+        CGPoint movement = [pan translationInView:self.superview];
+        CGFloat maxOffset = MAX(0,self.scroll.contentSize.height-self.scroll.bounds.size.height);
+        BOOL atEdge = (movement.y > 0 && self.dragStartOffset.y <= 1) ||
+                      (movement.y < 0 && self.dragStartOffset.y >= maxOffset-1);
+        BOOL elasticIntent = self.elasticEnabled && (self.elasticDrag || atEdge || fabs(movement.x)>fabs(movement.y)*1.15);
+        if (self.scroll.scrollEnabled && !self.scroll.hidden && !elasticIntent &&
             fabs(self.scroll.contentOffset.y - self.dragStartOffset.y) > 7) self.dragIsScrolling = YES;
-        SGRDropdownPress *candidate = self.dragIsScrolling ? nil :
+        if (self.elasticEnabled && !self.dragIsScrolling) {
+            CGPoint delta = [pan translationInView:self.superview];
+            // Preserve vertical scrolling on long menus; horizontal pulls and
+            // drags on a non-scrolling surface become elastic after 22pt.
+            BOOL horizontal = fabs(delta.x) > fabs(delta.y)*1.15;
+            if (self.elasticDrag || (hypot(delta.x,delta.y) > 22 &&
+                (horizontal || atEdge || !self.scroll.scrollEnabled || self.scroll.hidden))) {
+                self.elasticDrag = YES;
+                if (!self.scroll.hidden && self.scroll.scrollEnabled) self.scroll.contentOffset = self.dragStartOffset;
+                [self highlightPress:nil notify:NO];
+                CGFloat dx = delta.x/(1+fabs(delta.x)/64.0);
+                CGFloat dy = delta.y/(1+fabs(delta.y)/64.0);
+                self.transform = CGAffineTransformMake(1+fabs(dx)/340.0,0,0,1+fabs(dy)/340.0,dx*0.42,dy*0.42);
+                return;
+            }
+        }
+        SGRDropdownPress *candidate = (self.dragIsScrolling || self.scroll.hidden) ? nil :
             [self pressAtScrollPoint:[pan locationInView:self.scroll]];
         [self highlightPress:candidate notify:!self.dragIsScrolling];
     }
     if (state == UIGestureRecognizerStateEnded || state == UIGestureRecognizerStateCancelled ||
         state == UIGestureRecognizerStateFailed) {
-        SGRDropdownPress *selection = self.dragIsScrolling || state != UIGestureRecognizerStateEnded ? nil :
+        if (self.elasticDrag) {
+#if SG_DRIVER
+            SGLog(@"stage204 player touch: elastic release sx=%.3f sy=%.3f submenu=%d",self.transform.a,self.transform.d,self.isSubmenu);
+#endif
+            self.elasticDrag = NO;
+            self.dragIsScrolling = NO;
+            [self highlightPress:nil notify:NO];
+            [UIView animateWithDuration:0.42 delay:0 usingSpringWithDamping:0.60 initialSpringVelocity:0
+                                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                             animations:^{ self.transform = CGAffineTransformIdentity; } completion:nil];
+            return;
+        }
+        SGRDropdownPress *selection = self.dragIsScrolling || self.scroll.hidden || state != UIGestureRecognizerStateEnded ? nil :
             [self pressAtScrollPoint:[pan locationInView:self.scroll]];
         [self highlightPress:nil notify:NO];
         if (selection) [selection activate];
@@ -801,6 +904,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)backTapped { if (self.back) self.back(); }
 @end
 
+@class SGRDropdownPresentation;
+static __weak SGRDropdownPresentation *sg_hostedTransition;
 @interface SGRDropdownPresentation : NSObject
 @property (nonatomic, strong) UIWindow *window;
 @property (nonatomic, strong) UIViewController *root;
@@ -815,6 +920,9 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 @property (nonatomic) NSTimeInterval morphElapsed;
 @property (nonatomic) NSTimeInterval morphDuration;
 @property (nonatomic) BOOL morphFromParent;
+@property (nonatomic) BOOL morphReversing;
+@property (nonatomic, strong) UIMenuElement *reverseSelection;
+@property (nonatomic) BOOL hostedTransitioning;
 #if SG_DRIVER
 @property (nonatomic) CFTimeInterval rootMorphSetupAt;
 @property (nonatomic) CFTimeInterval rootMorphFirstTick;
@@ -848,6 +956,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)animatePanelAppearance:(SGRDropdownPanel *)panel over:(SGRDropdownPanel *)parent;
 - (void)finishPlayerMorph;
 - (void)tickPlayerMorph:(CADisplayLink *)link;
+- (BOOL)transitionToContent:(UIViewController *)controller preferredSize:(CGSize)size expanding:(BOOL)expanding;
 @end
 
 @implementation SGRDropdownPresentation
@@ -910,9 +1019,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (CGFloat)minimumSubmenuTop:(UIMenu *)menu {
     CGFloat bottom = [self submenuStackBottom];
     BOOL playerMore = self.playerMorph && [menu.identifier isEqualToString:@"com.vitrine.systemmenu.more"];
-    // Stage 190: tall player More can retain the root's top edge. Shorter
-    // menus still align to the bottom; other dropdowns retain their offset.
-    return MIN(bottom - 1, MAX(62, CGRectGetMinY(self.origin) + (playerMore ? 0 : kSubmenuDrop)));
+    // Keep a visible strip of the root above the front glass, even for a tall More.
+    return MIN(bottom - 1, MAX(62, CGRectGetMinY(self.origin) + (playerMore ? 24 : kSubmenuDrop)));
 }
 - (CGFloat)submenuYForHeight:(CGFloat)height menu:(UIMenu *)menu {
     return MAX([self minimumSubmenuTop:menu], [self submenuStackBottom] - height);
@@ -932,11 +1040,19 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     // Do not let a late provider change the outgoing submenu during its fade.
     [top.resolution cancel];
     top.userInteractionEnabled = NO;
+    [top resetElastic];
+    [under resetElastic];
     [UIView animateWithDuration:kSubmenuTime delay:0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
                      animations:^{
         top.alpha = 0;
-        top.transform = dropdownExitingTransform();
+        if (self.playerMorph) {
+            CGFloat h = MIN(64,top.bounds.size.height);
+            CGFloat y = CGRectGetMinY(top.frame);
+            top.bounds = CGRectMake(0,0,top.bounds.size.width*0.86,h);
+            top.center = CGPointMake(CGRectGetMidX(under.frame),y+h/2);
+            [top layoutIfNeeded];
+        } else top.transform = dropdownExitingTransform();
         under.alpha = 1;
         under.transform = CGAffineTransformIdentity;
     } completion:^(__unused BOOL finished) {
@@ -946,13 +1062,25 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             [self.panels removeLastObject];
             [self.menuIDs removeLastObject];
         }
+        if (self.playerMorph && !self.closing) under.userInteractionEnabled = YES;
         self.popping = NO;
     }];
 }
 - (void)choose:(UIMenuElement *)element {
-    if (self.closing || self.popping) return;
+    if (self.closing || self.popping || self.hostedTransitioning) return;
     if ([element isKindOfClass:UIMenu.class]) { [self pushMenu:(UIMenu *)element title:element.title]; return; }
     if (dropdownAttributes(element) & UIMenuElementAttributesDisabled) return;
+    if (self.playerMorph && self.panels.count == 1 && [element isKindOfClass:UIAction.class] &&
+        ([element.title isEqualToString:@"Speed, Pitch & Reverb"] || [element.title isEqualToString:@"Lyrics Source"])) {
+        // These owned actions synchronously request hosted content. Reuse the
+        // presentation before its finish callback destroys the original glass.
+        sg_hostedTransition = self;
+        SGRDropdownPerformAction(element);
+        sg_hostedTransition = nil;
+        if (self.embedded) return;
+        [self dismiss:nil]; // action already fired; never fire it twice
+        return;
+    }
     [self dismiss:element];
 }
 // A deferred completion changes the existing panel's content in-place. The
@@ -971,12 +1099,14 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         SGRDropdownPanel *livePanel = weakPanel;
         if (!strongSelf || !strongSelf.window || strongSelf.closing || !livePanel ||
             livePanel.resolution != weakResolution || ![strongSelf.panels containsObject:livePanel]) return;
+        if (strongSelf.playerMorph && strongSelf.embedded) return;
         if (strongSelf.morphLink) {
             // Keep geometry stable while the live surface is moving. Rebuild
             // from the latest provider snapshot after the transition.
             livePanel.morphRefreshQueued = YES;
             return;
         }
+        [livePanel resetElastic];
         CGPoint offset = livePanel.scroll.contentOffset;
         [livePanel configure:snapshot title:title maxHeight:maximum];
         [strongSelf reflowPanel:livePanel];
@@ -1036,6 +1166,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     }
     for (SGRDropdownPanel *other in self.panels) {
         if (other == panel || other == self.panels.firstObject) continue;
+        [other resetElastic];
         CGRect next = other.frame;
         next.origin.y = [self submenuYForHeight:other.actualHeight menu:other.menu];
         other.frame = next;
@@ -1061,6 +1192,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     CGFloat y = parent ? [self submenuYForHeight:panel.actualHeight menu:panel.menu] : self.origin.origin.y;
     CGRect frame = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
     panel.frame = frame;
+    if (self.playerMorph && parent) parent.userInteractionEnabled = NO;
     [self.root.view addSubview:panel];
     [self.panels addObject:panel];
     [self.menuIDs addObject:menu.identifier ?: menu.title ?: @""];
@@ -1091,15 +1223,19 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     }
 }
 - (void)animatePanelAppearance:(SGRDropdownPanel *)panel over:(SGRDropdownPanel *)parent {
-    if (self.closing || !self.window || ![self.panels containsObject:panel]) return;
+    if ((self.closing && !self.morphReversing) || !self.window || ![self.panels containsObject:panel]) return;
     // Only the first reveal animates; deferred refreshes are in-place.
-    if (self.playerMorph && !self.embedded && (!parent ||
+    if (self.playerMorph && (!self.embedded || self.morphReversing) && (!parent ||
         [panel.menu.identifier isEqualToString:@"com.vitrine.systemmenu.more"])) {
         if (self.morphPanel == panel && self.morphLink) return;
         [self finishPlayerMorph];
         CGRect target = panel.frame;
         CGRect source = target;
-        if (parent) source = parent.frame;
+        if (parent) {
+            // The front panel grows from its own header area; the root remains live behind it.
+            source = CGRectMake(CGRectGetMidX(target)-target.size.width*0.43,
+                CGRectGetMinY(target),target.size.width*0.86,MIN(64,target.size.height));
+        }
         else if (self.anchor.window) {
             CGRect windowRect = [self.anchor convertRect:self.anchor.bounds toView:self.anchor.window];
             CGRect overlayRect = [self.window convertRect:windowRect fromWindow:self.anchor.window];
@@ -1110,7 +1246,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             self.morphPanel = panel;
             self.morphFrom = source;
             self.morphTo = target;
-            self.morphDuration = parent ? kPlayerMorphMore : kPlayerMorphOpen;
+            self.morphDuration = parent ? kPlayerMorphMore : (self.morphReversing ? 0.34 : kPlayerMorphOpen);
             self.morphFromParent = parent != nil;
             panel.playerRootGlass = parent == nil;
 #if SG_DRIVER
@@ -1121,6 +1257,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 self.rootMorphCappedTicks = 0;
                 self.rootMorphMaxDelta = 0;
                 self.rootMorphPreviewTicks = 0;
+                panel.morphContentMeshFrames = 0;
             }
 #endif
             panel.transform = CGAffineTransformIdentity;
@@ -1134,45 +1271,39 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 panel.morphGlass = (SGLegacyGlassView *)glass;
                 [panel.morphGlass layoutIfNeeded];
                 panel.morphGlass.geometryTransitionActive = YES;
-                if (!parent) {
+                {
                     NSMutableArray<NSValue *> *sizes = [NSMutableArray array];
                     NSMutableArray<NSNumber *> *radii = [NSMutableArray array];
                     NSMutableArray<NSNumber *> *amounts = [NSMutableArray array];
                     for (NSUInteger i = 0; i <= kPlayerMorphMeshSteps; i++) {
                         CGFloat t = (CGFloat)i/kPlayerMorphMeshSteps;
-                        CGFloat release = morphRelease(t);
-                        CGSize size = morphFlightFrame(source, target, t, release).size;
+                        CGFloat release = parent ? morphGeometry(t) : morphRelease(t);
+                        CGFloat lens = (parent ? 0.65 : 1.0)*(1-release);
+                        CGSize size = parent ? morphRect(source,target,release).size : morphFlightFrame(source,target,t,release).size;
                         [sizes addObject:[NSValue valueWithCGSize:size]];
-                        [radii addObject:@(morphLensRadius(size, 1-release))];
-                        [amounts addObject:@(0.82*(1-release))];
+                        [radii addObject:@(morphLensRadius(size,lens))];
+                        [amounts addObject:@(0.82*lens)];
                     }
                     [panel.morphGlass prepareGeometryTransitionSizes:sizes radii:radii compactAmounts:amounts];
-                    [panel.morphGlass applyGeometryTransitionMeshAtIndex:0];
+                    [panel.morphGlass applyGeometryTransitionMeshAtIndex:self.morphReversing ? kPlayerMorphMeshSteps : 0];
                 }
             }
             panel.morphing = YES;
             panel.morphFinalSize = target.size;
-            panel.morphLensAmount = parent ? 0.0 : 1.0;
+            panel.morphLensAmount = self.morphReversing ? 0 : (parent ? 0.65 : 1.0);
             panel.morphTintStep = parent ? 0 : -1;
-            panel.morphRootMaterialAmount = 0;
+            panel.morphRootMaterialAmount = self.morphReversing ? 1 : 0;
             panel.userInteractionEnabled = NO;
             if (parent) {
-                // Snapshot only the text/controls, not the parent's glass.
-                // The child is the sole live refractive surface during expansion.
-                [parent layoutIfNeeded];
-                UIView *old = [parent.scroll snapshotViewAfterScreenUpdates:NO];
-                old.userInteractionEnabled = NO;
-                old.frame = CGRectMake(0,0,source.size.width,source.size.height);
-                panel.morphOutgoingContent = old;
-                if (old) [panel addSubview:old];
-                parent.alpha = 0;
+                parent.alpha = 0.92;
+                parent.userInteractionEnabled = NO;
             }
-            panel.scroll.alpha = 0;
+            panel.scroll.alpha = self.morphReversing ? 1 : 0;
             if (!parent) {
                 [CATransaction begin];
                 [CATransaction setDisableActions:YES];
                 [panel preparePlayerContentMeshes];
-                [panel applyPlayerContentLens:0 release:0];
+                [panel applyPlayerContentLens:0 release:self.morphReversing ? 1 : 0];
                 [CATransaction commit];
             }
             if (!parent && !SGRReduceTransparency()) {
@@ -1181,9 +1312,10 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 @try {
                     id filter = SGFilterOfType(@"gaussianBlur");
                     if (filter) {
-                        [filter setValue:@8 forKey:@"inputRadius"];
+                        NSNumber *initialBlur = self.morphReversing ? @0 : @8;
+                        [filter setValue:initialBlur forKey:@"inputRadius"];
                         panel.scroll.layer.filters = @[filter];
-                        panel.morphContentBlurStep = 8;
+                        panel.morphContentBlurStep = self.morphReversing ? 0 : 8;
                     }
                 } @catch (NSException *exception) {
                     panel.scroll.layer.filters = nil;
@@ -1193,7 +1325,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             // Never fade the backdrop's entire compositing group from zero.
             // Only the contents fade in; the surface is visible at the anchor.
             panel.alpha = 1;
-            panel.frame = source;
+            panel.frame = self.morphReversing ? target : source;
             [panel setNeedsLayout];
             [panel layoutIfNeeded];
             self.morphLastFrame = 0;
@@ -1203,6 +1335,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             return;
         }
     }
+    if (self.morphReversing) return;
     [UIView animateWithDuration:parent ? kSubmenuTime : kOpenTime delay:0
           usingSpringWithDamping:0.88 initialSpringVelocity:0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
@@ -1214,7 +1347,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 }
 - (void)tickPlayerMorph:(CADisplayLink *)link {
     SGRDropdownPanel *panel = self.morphPanel;
-    if (!panel || !self.window || self.closing) { [self finishPlayerMorph]; return; }
+    if (!panel || !self.window || (self.closing && !self.morphReversing)) { [self finishPlayerMorph]; return; }
     // Start at the first callback. Stage 198's unbounded elapsed clock
     // could consume the entire launch on a late callback. Bound each step
     // so the geometry cannot jump straight from the anchor to the menu.
@@ -1224,7 +1357,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     NSTimeInterval maxStep = self.morphFromParent ? 1.0/30.0 : kPlayerRootMaxStep;
     self.morphElapsed += MIN(maxStep, delta);
     self.morphLastFrame = now;
-    CGFloat t = morphClamp(self.morphElapsed/self.morphDuration);
+    CGFloat progress = morphClamp(self.morphElapsed/self.morphDuration);
+    CGFloat t = self.morphReversing ? 1-progress : progress;
 #if SG_DRIVER
     if (!self.morphFromParent) {
         if (self.rootMorphTicks == 0) self.rootMorphFirstTick = CACurrentMediaTime();
@@ -1237,16 +1371,17 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     CGFloat g = morphGeometry(t);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    // More retains its existing surface expansion.
+    // More uses a separate foreground expansion.
     // Root grows into a rounded preview before lifting and squaring off.
     CGFloat unfold = self.morphFromParent
         ? g : morphRelease(t);
 
     panel.morphLensAmount = self.morphFromParent
-        ? 0.0 : 1.0 - unfold;
+        ? 0.65*(1-g) : 1.0 - unfold;
 
     if (self.morphFromParent) {
         panel.frame = morphRect(self.morphFrom, self.morphTo, g);
+        [panel.morphGlass applyGeometryTransitionMeshAtIndex:(NSUInteger)lround(t*kPlayerMorphMeshSteps)];
     } else {
         CGRect frame = morphFlightFrame(self.morphFrom, self.morphTo, t, unfold);
         // Keep the large rounded preview upright, as in the native capture.
@@ -1255,7 +1390,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         [panel.morphGlass applyGeometryTransitionMeshAtIndex:(NSUInteger)lround(t*kPlayerMorphMeshSteps)];
     }
     if (self.morphFromParent) {
-        panel.scroll.alpha = morphSmooth((t-0.30)/0.52);
+        panel.scroll.alpha = morphSmooth((t-0.08)/0.68);
     } else {
         BOOL filtered = panel.scroll.layer.filters.count > 0;
         CGFloat launch = morphGeometry(t/kPlayerLaunchEnd);
@@ -1279,12 +1414,22 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             }
         }
     }
+    if (self.morphReversing) {
+        panel.alpha = morphSmooth(t/0.12);
+        if (self.embedded) self.embedded.view.alpha = morphSmooth((t-0.12)/0.65);
+    }
     panel.morphOutgoingContent.alpha = 1-morphSmooth(t/0.30);
     panel.scrollThumb.alpha = 0;
     [panel setNeedsLayout];
     [panel layoutIfNeeded];
     [CATransaction commit];
-    if (t >= 1) [self finishPlayerMorph];
+    if (progress >= 1) {
+        if (self.morphReversing) {
+            UIMenuElement *selection = self.reverseSelection;
+            self.reverseSelection = nil;
+            [self finishDismiss:selection];
+        } else [self finishPlayerMorph];
+    }
 }
 - (void)finishPlayerMorph {
     [self.morphLink invalidate];
@@ -1295,14 +1440,16 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 #if SG_DRIVER
     if (!self.morphFromParent && self.rootMorphSetupAt > 0) {
         CFTimeInterval ended = CACurrentMediaTime();
-        SGLog(@"stage203 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f overlap_ticks=%lu content_mesh_frames=%lu",
-              self.morphElapsed >= self.morphDuration,
+        SGLog(@"stage204 player root: reverse=%d completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f overlap_ticks=%lu content_mesh_frames=%lu",
+              self.morphReversing, self.morphElapsed >= self.morphDuration,
               self.rootMorphFirstTick > 0 ? (self.rootMorphFirstTick-self.rootMorphSetupAt)*1000 : -1.0,
               self.rootMorphFirstTick > 0 ? (ended-self.rootMorphFirstTick)*1000 : -1.0,
               self.morphElapsed*1000, (unsigned long)self.rootMorphTicks,
               (unsigned long)self.rootMorphCappedTicks, self.rootMorphMaxDelta*1000,
               (unsigned long)self.rootMorphPreviewTicks, (unsigned long)panel.morphContentMeshFrames);
         self.rootMorphSetupAt = 0;
+    } else if (self.morphFromParent) {
+        SGLog(@"stage204 player more: completed=%d parent_visible=%d",self.morphElapsed >= self.morphDuration,self.panels.firstObject.alpha > 0.01);
     }
 #endif
     [CATransaction begin];
@@ -1366,9 +1513,10 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     return CGRectMake(x, y, width, height);
 }
 - (void)refreshContentSize:(UIViewController *)controller {
-    if (!self.embeddedFollowsContentSize || self.embedded != controller ||
+    if (self.hostedTransitioning || !self.embeddedFollowsContentSize || self.embedded != controller ||
         !self.window || self.closing || !self.panels.count) return;
     SGRDropdownPanel *panel = self.panels.firstObject;
+    [panel resetElastic];
     CGRect next = [self embeddedFrameForSize:controller.preferredContentSize];
     if (CGRectEqualToRect(next, panel.frame)) return;
     [UIView animateWithDuration:0.18 delay:0
@@ -1377,6 +1525,57 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
         panel.frame = next;
         controller.view.frame = panel.bounds;
     } completion:nil];
+}
+- (BOOL)transitionToContent:(UIViewController *)controller preferredSize:(CGSize)size expanding:(BOOL)expanding {
+    if (!self.playerMorph || self.closing || self.embedded || !self.window || !controller || self.panels.count != 1) return NO;
+    [self finishPlayerMorph];
+    SGRDropdownPanel *panel = self.panels.firstObject;
+    [panel resetElastic];
+    [panel.resolution cancel];
+    panel.userInteractionEnabled = NO;
+    self.hostedTransitioning = YES;
+    UIView *old = [panel.scroll snapshotViewAfterScreenUpdates:NO];
+    old.frame = panel.bounds;
+    old.userInteractionEnabled = NO;
+    if (old) [panel addSubview:old];
+    UIView *content = controller.view;
+    CGSize measured = controller.preferredContentSize;
+    if (measured.width <= 0) measured.width = size.width;
+    if (measured.height <= 0) measured.height = size.height;
+    CGRect target = [self embeddedFrameForSize:measured];
+    self.embedded = controller;
+    self.embeddedFollowsContentSize = expanding;
+    panel.scroll.hidden = YES;
+    panel.scrollThumb.hidden = YES;
+    [self.root addChildViewController:controller];
+    content.frame = panel.bounds;
+    content.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    content.backgroundColor = UIColor.clearColor;
+    content.alpha = 0;
+    content.transform = CGAffineTransformMakeScale(0.95,0.95);
+    [panel addSubview:content];
+    [controller didMoveToParentViewController:self.root];
+    [UIView animateWithDuration:0.36 delay:0 usingSpringWithDamping:0.85 initialSpringVelocity:0
+                        options:UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{
+        panel.bounds = (CGRect){CGPointZero,target.size};
+        panel.center = CGPointMake(CGRectGetMidX(target),CGRectGetMidY(target));
+        old.alpha = 0;
+        content.alpha = 1;
+        content.transform = CGAffineTransformIdentity;
+        [panel layoutIfNeeded];
+    } completion:^(__unused BOOL finished) {
+        [old removeFromSuperview];
+        self.hostedTransitioning = NO;
+#if SG_DRIVER
+        SGLog(@"stage204 player hosted: completed=%d class=%@",finished,NSStringFromClass(controller.class));
+#endif
+        if (!self.closing && self.window) {
+            panel.userInteractionEnabled = YES;
+            [self refreshContentSize:controller];
+        }
+    }];
+    return YES;
 }
 - (void)showContent:(UIViewController *)controller preferredSize:(CGSize)size expanding:(BOOL)expanding {
     if (!controller || !self.window || !self.panels.count) return;
@@ -1410,8 +1609,9 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     } completion:nil];
 }
 - (void)update:(UIMenu *)menu {
-    if (!menu || !self.window || self.closing || self.popping) return;
+    if (!menu || !self.window || self.closing || self.popping || (self.playerMorph && self.embedded)) return;
     if (self.morphLink) { self.morphPendingRoot = menu; return; }
+    for (SGRDropdownPanel *panel in self.panels) [panel resetElastic];
     self.rootMenu = menu;
     SGRDropdownPanel *first = self.panels.firstObject;
     CGPoint offset = first.scroll.contentOffset;
@@ -1438,7 +1638,9 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
 }
 - (void)finishDismiss:(UIMenuElement *)element {
     self.closing = YES;
+    self.reverseSelection = nil;
     [self finishPlayerMorph];
+    self.morphReversing = NO;
     if (!self.window) return;
     SGRDropdownFinish finish = self.finish;
     self.finish = nil;
@@ -1453,10 +1655,36 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
 - (void)dismiss:(UIMenuElement *)element {
     if (!self.window || self.closing) return;
     self.closing = YES;
+    // A tap during the root reveal reverses from its current optical state.
+    if (self.playerMorph && self.morphLink && !self.morphFromParent && self.morphPanel == self.panels.firstObject) {
+        CGFloat prior = morphClamp(self.morphElapsed/self.morphDuration);
+        self.morphReversing = YES;
+        self.reverseSelection = element;
+        self.morphDuration = 0.34;
+        self.morphElapsed = (1-prior)*self.morphDuration;
+        self.root.view.userInteractionEnabled = NO;
+        for (SGRDropdownPanel *panel in self.panels) [panel.resolution cancel];
+        return;
+    }
     [self finishPlayerMorph];
     for (SGRDropdownPanel *panel in self.panels) [panel.resolution cancel];
     UIView *surface = self.root.view;
     surface.userInteractionEnabled = NO;
+    if (self.playerMorph && self.anchor.window && self.panels.count) {
+        SGRDropdownPanel *rootPanel = self.panels.firstObject;
+        for (SGRDropdownPanel *panel in self.panels) [panel resetElastic];
+        rootPanel.alpha = 1;
+        for (SGRDropdownPanel *panel in self.panels) {
+            if (panel == rootPanel) continue;
+            [UIView animateWithDuration:0.16 animations:^{ panel.alpha = 0; panel.transform = dropdownExitingTransform(); }];
+        }
+        self.morphReversing = YES;
+        self.reverseSelection = element;
+        [self animatePanelAppearance:rootPanel over:nil];
+        if (self.morphLink) return;
+        self.morphReversing = NO;
+        self.reverseSelection = nil;
+    }
     [UIView animateWithDuration:kDismissTime delay:0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
                      animations:^{
@@ -1505,6 +1733,8 @@ void SGRDropdownDismissFrom(UIView *anchor) {
 static BOOL sgrDropdownPresentHostedContent(UIView *anchor, UIViewController *content,
                                             CGSize preferredSize, BOOL expanding) {
     if (!anchor.window || !content) return NO;
+    if (sg_hostedTransition && sg_hostedTransition == sg_currentDropdown &&
+        [sg_currentDropdown transitionToContent:content preferredSize:preferredSize expanding:expanding]) return YES;
     if (sg_currentDropdown) {
         [sg_currentDropdown finishDismiss:nil];
         sg_currentDropdown = nil;
