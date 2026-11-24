@@ -30,6 +30,7 @@
 #import "Shared/AlbumQueue/AlbumQueue.h"
 #import "Shared/LyricsTranslation/BatchTranslation.h"
 #import "ContextMenu.h"
+#import "ContextMenuNative26.h"
 #import "SGRDropdownController.h"
 
 // After a pick of Spotify's, how long its sheet has to start going, or to push a page of its own (which shows
@@ -1779,6 +1780,7 @@ static SGRMenuSession *sessionFor(UIViewController *controller, BOOL fresh) {
 }
 
 BOOL SGPlayerMenuReplaced(UIViewController *menu) {
+    if (!SGBelowiOS26()) return SGPlayerMenuReplacedIOS26(menu);
     SGRMenuSession *session = sessionFor(menu, NO);
     return session && !session.revealed;
 }
@@ -1786,7 +1788,11 @@ BOOL SGPlayerMenuReplaced(UIViewController *menu) {
 #pragma mark - the ⋯
 
 void SGRSystemMenuWatch(UIView *button, SGRMenuItems items, SGRMenuKind kind) {
-    if (!SGBelowiOS26() || ![button isKindOfClass:UIControl.class]) return;
+    if (!SGBelowiOS26()) {
+        SGRSystemMenuWatchIOS26(button, items, kind);
+        return;
+    }
+    if (![button isKindOfClass:UIControl.class]) return;
     SGRMenuFront *front = objc_getAssociatedObject(button, &kFrontKey);
     if (!front) {
         front = [SGRMenuFront buttonWithType:UIButtonTypeCustom];
@@ -1838,6 +1844,7 @@ void SGRSystemMenuWatch(UIView *button, SGRMenuItems items, SGRMenuKind kind) {
 }
 
 UIControl *SGRSystemMenuFront(UIView *button) {
+    if (!SGBelowiOS26()) return SGRSystemMenuFrontIOS26(button);
     return objc_getAssociatedObject(button, &kFrontKey);
 }
 
