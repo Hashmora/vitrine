@@ -335,7 +335,7 @@ static SGMeshTemplate *SGBuildTemplate(CGFloat radius, BOOL classic) {
 }
 
 // The mesh for `size`, from the cached template of its corner radius.
-static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CGFloat lensScale, BOOL classic, BOOL lateral, CGFloat verticalReach) {
+static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CGFloat lensScale, BOOL classic, BOOL lateral, CGFloat verticalReach, CGFloat compactAmount) {
     radius = MIN(radius, MIN(size.width, size.height) / 2);
     if (radius <= 0 || size.width < 1 || size.height < 1) return nil;
 
@@ -355,6 +355,11 @@ static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CG
     // The rim's shift in points: the measured strength over the band, the whole lens scaled down on a small pane.
     CGFloat shift = (classic ? kClassicShift : kLensStrength * SGEdgeBand(radius) * MIN(1, MIN(W, H) / 2 / kLensSizeRef)) * lensScale;
     CGFloat dU = shift / W, dV = shift / H;
+    // A morph uses one classic topology throughout but blends the adaptive
+    // compact displacement into the sheet displacement. The settled path
+    // passes zero and retains its original calculation.
+    CGFloat compactShift = kLensStrength * SGEdgeBand(radius) * MIN(1, MIN(W,H)/2/kLensSizeRef) * lensScale;
+    CGFloat ref = MAX(4 * radius, 100);
 
     NSUInteger vertexCount = tmpl.vertices.length / sizeof(SGTemplateVertex);
     const SGTemplateVertex *templates = tmpl.vertices.bytes;
@@ -379,8 +384,16 @@ static id SGMakeGlassMesh(CGSize size, CGFloat radius, CGFloat magnification, CG
             envelope = MIN(1, body + tails + verticalReach * 0.42);
         }
         CGFloat vertical = lateral ? verticalReach * pow(fabs(2 * u - 1), 2.0) : 1;
-        CGPoint from = CGPointMake(MAX(0.0, MIN(1.0, su + v.dispX * dU * envelope)),
-                                   MAX(0.0, MIN(1.0, sw + v.dispY * dV * vertical)));
+        CGFloat du = v.dispX * dU, dv = v.dispY * dV;
+        if (compactAmount > 0) {
+            CGFloat ax, ay, sdf;
+            SGDisplacement(v.baseX + v.scaleX * ref, v.baseY + v.scaleY * ref,
+                           ref, ref, radius, SGEdgeBand(radius), NO, &ax, &ay, &sdf);
+            du = du * (1-compactAmount) + ax * compactShift/W * compactAmount;
+            dv = dv * (1-compactAmount) + ay * compactShift/H * compactAmount;
+        }
+        CGPoint from = CGPointMake(MAX(0.0, MIN(1.0, su + du * envelope)),
+                                   MAX(0.0, MIN(1.0, sw + dv * vertical)));
         vertices[i] = (SGMeshVertex){from, {u, w, v.depth}};
     }
     id transform = SGMakeMeshTransform(vertices, vertexCount, (SGMeshFace *)tmpl.faces.bytes, tmpl.faces.length / sizeof(SGMeshFace));
@@ -487,6 +500,8 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     CGSize _meshSize;
     CGFloat _meshRadius;
     CFTimeInterval _lastResize;
+    NSArray *_geometryTransitionMeshes;
+    NSUInteger _geometryTransitionMeshIndex;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -618,10 +633,41 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     _geometryTransitionActive = active;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(settle) object:nil];
     if (!active) {
+        _geometryTransitionMeshes = nil;
+        _geometryTransitionMeshIndex = NSNotFound;
         _lastResize = 0;
         _meshSize = CGSizeZero;
         [self setNeedsLayout];
     }
+}
+
+- (void)prepareGeometryTransitionSizes:(NSArray<NSValue *> *)sizes
+                                 radii:(NSArray<NSNumber *> *)radii
+                        compactAmounts:(NSArray<NSNumber *> *)compactAmounts {
+    _geometryTransitionMeshes = nil;
+    _geometryTransitionMeshIndex = NSNotFound;
+    if (!sizes.count || sizes.count != radii.count || sizes.count != compactAmounts.count) return;
+    NSMutableArray *meshes = [NSMutableArray arrayWithCapacity:sizes.count];
+    for (NSUInteger i = 0; i < sizes.count; i++) {
+        CGFloat compact = MAX(0, MIN(1, compactAmounts[i].doubleValue));
+        id mesh = SGMakeGlassMesh(sizes[i].CGSizeValue, radii[i].doubleValue,
+                                  _magnification * (1 + 0.06 * compact), _lensScale,
+                                  YES, _lateralRefraction, _lateralVerticalReach, compact);
+        [meshes addObject:mesh ?: NSNull.null];
+    }
+    _geometryTransitionMeshes = [meshes copy];
+}
+
+- (void)applyGeometryTransitionMeshAtIndex:(NSUInteger)index {
+    if (!_geometryTransitionActive || index >= _geometryTransitionMeshes.count ||
+        index == _geometryTransitionMeshIndex) return;
+    id mesh = _geometryTransitionMeshes[index];
+    if (mesh == NSNull.null) return;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    [_backdropLayer setValue:mesh forKey:@"meshTransform"];
+    [CATransaction commit];
+    _geometryTransitionMeshIndex = index;
 }
 
 - (void)layoutSubviews {
@@ -675,7 +721,7 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     self.layer.cornerRadius = radius;
     _backdropLayer.frame = self.bounds;
     id mesh = SGMakeGlassMesh(size, radius, _magnification, _lensScale, classic,
-                              _lateralRefraction, _lateralVerticalReach);
+                              _lateralRefraction, _lateralVerticalReach, 0);
     // No mesh (a radius of 0): the last one goes rather than staying for a shape it was not made for.
     [_backdropLayer setValue:mesh forKey:@"meshTransform"];
     [CATransaction commit];

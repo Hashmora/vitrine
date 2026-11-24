@@ -38,42 +38,39 @@ static CGFloat morphGeometry(CGFloat t) {
     const CGFloat w = 5.8;
     return (1-(1+w*t)*exp(-w*t))/(1-(1+w)*exp(-w));
 }
-// Stage 195: travel first, unfold second.
-static CGRect morphFlightFrame(CGRect a, CGRect b,
-                               CGFloat t, CGFloat unfold) {
+// Stage 196: overlap flight and unfolding, without a stop at the handoff.
+static const NSUInteger kPlayerMorphMeshSteps = 12;
+static CGFloat morphUnfold(CGFloat t) {
+    return morphSmooth((t - 0.22) / 0.78);
+}
+static CGFloat morphLensRadius(CGSize size, CGFloat lens) {
+    CGFloat halfSide = MIN(size.width, size.height) / 2.0;
+    return MIN(halfSide, morphMix(kRadius, halfSide, morphClamp(lens)));
+}
+static CGFloat morphFlightStretch(CGFloat t, CGFloat unfold) {
+    return sin(M_PI * morphClamp(t / 0.62)) * (1 - unfold);
+}
+static CGRect morphFlightFrame(CGRect a, CGRect b, CGFloat t, CGFloat unfold) {
     t = morphClamp(t);
-
-    CGFloat ax = CGRectGetMidX(a);
-    CGFloat ay = CGRectGetMidY(a);
-    CGFloat bx = CGRectGetMidX(b);
-    CGFloat by = CGRectGetMidY(b);
-
-    CGFloat dx = bx - ax;
-    CGFloat dy = by - ay;
-    CGFloat distance = MAX(1.0, hypot(dx, dy));
-
-    // The center travels independently from the surface size.
-    CGFloat travel = 1.0 - pow(1.0 - t, 3.0);
-    CGFloat cx = morphMix(ax, bx, travel);
-    CGFloat cy = morphMix(ay, by, travel);
-
-    // Transient directional deformation of the compact lens.
-    CGFloat stretch = sin(M_PI * morphClamp(t / 0.48));
-    stretch *= 1.0 - unfold;
-
-    CGFloat axisX = fabs(dx) / distance;
-    CGFloat axisY = fabs(dy) / distance;
+    CGFloat travel = 1 - pow(1 - t, 2.0);
+    CGFloat cx = morphMix(CGRectGetMidX(a), CGRectGetMidX(b), travel);
+    CGFloat cy = morphMix(CGRectGetMidY(a), CGRectGetMidY(b), travel);
+    CGFloat stretch = morphFlightStretch(t, unfold);
     CGFloat diameter = MIN(a.size.width, a.size.height);
-
-    CGFloat width = morphMix(a.size.width, b.size.width, unfold);
-    CGFloat height = morphMix(a.size.height, b.size.height, unfold);
-
-    width += diameter * stretch * (0.22 * axisX - 0.06 * axisY);
-    height += diameter * stretch * (0.22 * axisY - 0.06 * axisX);
-
-    return CGRectMake(cx - width / 2.0,
-                      cy - height / 2.0,
-                      width, height);
+    CGFloat width = morphMix(a.size.width, b.size.width, unfold) - diameter * 0.13 * stretch;
+    CGFloat height = morphMix(a.size.height, b.size.height, unfold) + diameter * 0.32 * stretch;
+    return CGRectMake(cx-width/2, cy-height/2, width, height);
+}
+static CGAffineTransform morphFlightTransform(CGRect a, CGRect b, CGFloat t, CGFloat unfold) {
+    CGFloat dx = CGRectGetMidX(b)-CGRectGetMidX(a);
+    CGFloat dy = CGRectGetMidY(b)-CGRectGetMidY(a);
+    // Orient the long axis along the flight while compact; remove the rotation
+    // before content appears. The underlying pane is never replaced.
+    CGFloat angle = atan2(-dx, dy);
+    if (angle > M_PI_2) angle -= M_PI;
+    if (angle < -M_PI_2) angle += M_PI;
+    CGFloat weight = morphSmooth(t/0.10) * (1-morphSmooth(unfold/0.40));
+    return CGAffineTransformMakeRotation(angle * weight);
 }
 
 static CGRect morphRect(CGRect a, CGRect b, CGFloat t) {
@@ -420,32 +417,24 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
-    CGFloat halfSide = MIN(self.bounds.size.width,
-                           self.bounds.size.height) / 2.0;
-    CGFloat radius = kRadius;
-    if (self.morphing) {
-        radius = MIN(halfSide,
-                     morphMix(kRadius, halfSide,
-                              morphClamp(self.morphLensAmount)));
-    }
+    CGFloat radius = self.morphing ? morphLensRadius(self.bounds.size, self.morphLensAmount) : kRadius;
     if (self.layer.cornerRadius != radius) self.layer.cornerRadius = radius;
     if (self.morphing && self.morphGlass) {
-        // The warm destination material is retained during motion. Only its
-        // geometry and the directional rim follow the changing outline.
+        // Root flight changes the optical material while the same live
+        // backdrop and directional rim follow the changing outline.
         SGLegacyGlassView *glass = self.morphGlass;
         if (!CGRectEqualToRect(glass.frame, self.bounds)) glass.frame = self.bounds;
         SGShapeGlass(glass, radius, NO);
-        SGRThickenSheetGlass(glass, radius);
-
         NSInteger tintStep = (NSInteger)lround(
             8.0 * morphClamp(self.morphLensAmount));
+        SGRThickenSheetGlassMorph(glass, radius, (CGFloat)tintStep / 8.0);
         if (self.morphTintStep != tintStep) {
             self.morphTintStep = tintStep;
             CGFloat lens = (CGFloat)tintStep / 8.0;
             CGFloat settledDim = self.isSubmenu ? 0.82 : 0.62;
             SGRDimSheetGlassTint(glass,
                 [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
-                                  alpha:settledDim - 0.28 * lens]);
+                                  alpha:settledDim - 0.42 * lens]);
         }
 
         [glass layoutIfNeeded];
@@ -1010,6 +999,21 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 panel.morphGlass = (SGLegacyGlassView *)glass;
                 [panel.morphGlass layoutIfNeeded];
                 panel.morphGlass.geometryTransitionActive = YES;
+                if (!parent) {
+                    NSMutableArray<NSValue *> *sizes = [NSMutableArray array];
+                    NSMutableArray<NSNumber *> *radii = [NSMutableArray array];
+                    NSMutableArray<NSNumber *> *amounts = [NSMutableArray array];
+                    for (NSUInteger i = 0; i <= kPlayerMorphMeshSteps; i++) {
+                        CGFloat t = (CGFloat)i/kPlayerMorphMeshSteps;
+                        CGFloat unfold = morphUnfold(t);
+                        CGSize size = morphFlightFrame(source, target, t, unfold).size;
+                        [sizes addObject:[NSValue valueWithCGSize:size]];
+                        [radii addObject:@(morphLensRadius(size, 1-unfold))];
+                        [amounts addObject:@(1-unfold)];
+                    }
+                    [panel.morphGlass prepareGeometryTransitionSizes:sizes radii:radii compactAmounts:amounts];
+                    [panel.morphGlass applyGeometryTransitionMeshAtIndex:0];
+                }
             }
             panel.morphing = YES;
             panel.morphFinalSize = target.size;
@@ -1058,8 +1062,12 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     // elapsed progress across dropped frames so the first visible state
     // cannot skip straight from the small button to the finished menu.
     CFTimeInterval now = link.timestamp;
-    if (self.morphLastFrame > 0)
-        self.morphElapsed += MIN(1.0/30.0, MAX(0, now-self.morphLastFrame));
+    if (self.morphLastFrame > 0) {
+        // Root flight catches up a little faster after a missed refresh;
+        // preserve the established More clock and never skip the full morph.
+        NSTimeInterval cap = self.morphFromParent ? 1.0/30.0 : 1.0/20.0;
+        self.morphElapsed += MIN(cap, MAX(0, now-self.morphLastFrame));
+    }
     self.morphLastFrame = now;
     CGFloat t = morphClamp(self.morphElapsed/self.morphDuration);
     CGFloat g = morphGeometry(t);
@@ -1068,16 +1076,23 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     // More retains its existing surface expansion.
     // Root opening has independent flight and unfolding phases.
     CGFloat unfold = self.morphFromParent
-        ? g : morphGeometry((t - 0.32) / 0.68);
+        ? g : morphUnfold(t);
 
     panel.morphLensAmount = self.morphFromParent
         ? 0.0 : 1.0 - unfold;
 
-    panel.frame = self.morphFromParent
-        ? morphRect(self.morphFrom, self.morphTo, g)
-        : morphFlightFrame(self.morphFrom, self.morphTo, t, unfold);
+    if (self.morphFromParent) {
+        panel.frame = morphRect(self.morphFrom, self.morphTo, g);
+    } else {
+        CGRect frame = morphFlightFrame(self.morphFrom, self.morphTo, t, unfold);
+        // UIView.frame is undefined while rotated; drive bounds and center.
+        panel.bounds = (CGRect){CGPointZero, frame.size};
+        panel.center = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
+        panel.transform = morphFlightTransform(self.morphFrom, self.morphTo, t, unfold);
+        [panel.morphGlass applyGeometryTransitionMeshAtIndex:(NSUInteger)lround(t*kPlayerMorphMeshSteps)];
+    }
     panel.scroll.alpha = self.morphFromParent ? morphSmooth((t-0.30)/0.52)
-                                                 : morphSmooth((unfold-0.50)/0.47);
+                                                 : morphSmooth((unfold-0.45)/0.50);
     panel.morphOutgoingContent.alpha = 1-morphSmooth(t/0.30);
     panel.scrollThumb.alpha = 0;
     [panel setNeedsLayout];
@@ -1093,6 +1108,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     if (!panel) return;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
+    panel.transform = CGAffineTransformIdentity;
     panel.frame = self.morphTo;
     panel.morphing = NO;
     panel.morphLensAmount = 0;

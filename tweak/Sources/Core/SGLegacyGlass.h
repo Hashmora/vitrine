@@ -56,6 +56,12 @@ BOOL SGLegacyGlassAvailable(void);
 // Opt-in for a single prepared menu transition. Retain its warm mesh while
 // following the moving bounds/rim; rebuild exactly once when it settles.
 @property (nonatomic) BOOL geometryTransitionActive;
+// Root-player morph only: prepare optical keyframes before the display link.
+// Each index addresses a single live backdrop, never a second glass pane.
+- (void)prepareGeometryTransitionSizes:(NSArray<NSValue *> *)sizes
+                                 radii:(NSArray<NSNumber *> *)radii
+                        compactAmounts:(NSArray<NSNumber *> *)compactAmounts;
+- (void)applyGeometryTransitionMeshAtIndex:(NSUInteger)index;
 
 // Lateral refractive crescents for the Legacy tab lens only. The upper and
 // lower edge and the central channel stay unwarped; other panes are unchanged.

@@ -485,10 +485,15 @@ static UIView *bodyLayer(UIView *host, const void *key) {
 }
 
 void SGRThickenSheetGlass(UIView *glass, CGFloat cornerRadius) {
-    if ([glass isKindOfClass:SGLegacyGlassView.class]) ((SGLegacyGlassView *)glass).blurRadius = kSheetBlur;
+    SGRThickenSheetGlassMorph(glass, cornerRadius, 0);
+}
+
+void SGRThickenSheetGlassMorph(UIView *glass, CGFloat cornerRadius, CGFloat compact) {
+    compact = MAX(0, MIN(1, compact));
+    if ([glass isKindOfClass:SGLegacyGlassView.class]) ((SGLegacyGlassView *)glass).blurRadius = kSheetBlur - 7.5 * compact;
     UIView *host = glassContent(glass);
     UIView *body = bodyLayer(host, &kSheetBodyKey);
-    UIColor *tint = SGRReduceTransparency() ? SGRSolidGlassFill() : [UIColor colorWithWhite:1 alpha:0.24];
+    UIColor *tint = SGRReduceTransparency() ? SGRSolidGlassFill() : [UIColor colorWithWhite:1 alpha:0.24 - 0.12 * compact];
     if (![body.backgroundColor isEqual:tint]) body.backgroundColor = tint;
     // The rim: a hairline of light round the pane, drawn over the body.
     UIView *rim = bodyLayer(host, &kSheetRimKey);
