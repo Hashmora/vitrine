@@ -94,7 +94,7 @@ def take(driver, device, label, case, root, trial, exporter, args):
         try:
             since = report['before_verified']['state'].get('logSeq', 0)
             lines = driver.call('log', since=since).get('lines', [])
-            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:'))
+            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:', 'stage201 player root:'))
                          or 'system menu:' in line.get('text', '')]
             S.save_json(dest/'morph-lifecycle.json', {'since':since,'lines':lifecycle})
             report['morph_lifecycle_lines'] = len(lifecycle)

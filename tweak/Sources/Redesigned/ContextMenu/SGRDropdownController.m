@@ -43,7 +43,7 @@ static CGFloat morphGeometry(CGFloat t) {
 }
 // Stage 200: launch and release overlap. The long native preview hold is
 // a simulator artefact, not part of the target morph. Keep the shape moving.
-static const NSUInteger kPlayerMorphMeshSteps = 12;
+static const NSUInteger kPlayerMorphMeshSteps = 18;
 static const CGFloat kPlayerLaunchEnd = 0.42;
 static const CGFloat kPlayerReleaseStart = 0.31;
 static CGFloat morphRelease(CGFloat t) {
@@ -425,30 +425,32 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         SGLegacyGlassView *glass = self.morphGlass;
         if (!CGRectEqualToRect(glass.frame, self.bounds)) glass.frame = self.bounds;
         SGShapeGlass(glass, radius, NO);
-        NSInteger tintStep = (NSInteger)lround(
-            8.0 * morphClamp(self.morphLensAmount));
-        CGFloat materialCompact = (CGFloat)tintStep / 8.0;
-        // Native preview is already dark and optically soft, unlike a clear
-        // tab control. Do not use the full compact material range here.
-        if (self.playerRootGlass) materialCompact = 0;
-        SGRThickenSheetGlassMorph(glass, radius, materialCompact);
-        if (self.morphTintStep != tintStep) {
-            self.morphTintStep = tintStep;
-            CGFloat lens = (CGFloat)tintStep / 8.0;
-            CGFloat settledDim = self.isSubmenu ? 0.82 : 0.62;
-            UIColor *dim = self.playerRootGlass
-                ? [UIColor colorWithWhite:0.12 alpha:0.60 - 0.04 * lens]
-                : [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
-                                    alpha:settledDim - 0.42 * lens];
-            SGRDimSheetGlassTint(glass, dim);
+        if (self.playerRootGlass) {
+            SGRStylePlayerRootLegacyGlass(glass, radius);
+        } else {
+            NSInteger tintStep = (NSInteger)lround(8.0 * morphClamp(self.morphLensAmount));
+            SGRThickenSheetGlassMorph(glass, radius, (CGFloat)tintStep / 8.0);
+            if (self.morphTintStep != tintStep) {
+                self.morphTintStep = tintStep;
+                CGFloat lens = (CGFloat)tintStep / 8.0;
+                CGFloat settledDim = self.isSubmenu ? 0.82 : 0.62;
+                SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
+                    alpha:settledDim - 0.42 * lens]);
+            }
         }
-
         [glass layoutIfNeeded];
+    } else if (self.playerRootGlass && SGUseLegacyGlass()) {
+        // Do not call the ordinary sheet helper first: it would reset the
+        // blur to 10pt on every settled layout and rebuild the filters twice.
+        UIView *glass = SGGlassFor(self, &kOwnedGlassKey);
+        glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        if (!CGRectEqualToRect(glass.frame, self.bounds)) glass.frame = self.bounds;
+        SGShapeGlass(glass, radius, NO);
+        SGRStylePlayerRootLegacyGlass(glass, radius);
     } else {
         UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, radius);
-        if (glass) SGRDimSheetGlassTint(glass, self.playerRootGlass
-            ? [UIColor colorWithWhite:0.12 alpha:0.60]
-            : [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
+        if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
                                 alpha:self.isSubmenu ? 0.82 : 0.62]);
     }
     if (self.morphing) {
@@ -483,7 +485,10 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
                 CGFloat x = MAX(-1, MIN(1, (p.x-self.scroll.bounds.origin.x-hw)/hw));
                 CGFloat y = MAX(-1, MIN(1, (p.y-self.scroll.bounds.origin.y-hh)/hh));
                 CGFloat r2 = x*x+y*y;
-                CGFloat kx = 0.10*amount, ky = 0.18*amount;
+                // Bias the field toward the upper/lower edges. Keep the
+                // central labels relatively stable while the quick actions
+                // and More row stretch past the curved clipping boundary.
+                CGFloat kx = 0.10*amount, ky = 0.30*amount;
                 next = CGAffineTransformMake(1+kx*(3*x*x+y*y),
                     2*ky*x*y*hh/hw, 2*kx*x*y*hw/hh,
                     1+ky*(x*x+3*y*y), kx*x*r2*hw, ky*y*r2*hh);
@@ -1067,7 +1072,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                         CGSize size = morphFlightFrame(source, target, t, release).size;
                         [sizes addObject:[NSValue valueWithCGSize:size]];
                         [radii addObject:@(morphLensRadius(size, 1-release))];
-                        [amounts addObject:@(0.55*(1-release))];
+                        [amounts addObject:@(0.82*(1-release))];
                     }
                     [panel.morphGlass prepareGeometryTransitionSizes:sizes radii:radii compactAmounts:amounts];
                     [panel.morphGlass applyGeometryTransitionMeshAtIndex:0];
@@ -1178,8 +1183,12 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                                       : morphSmooth((t-0.16)/0.58);
         // Softer centre and stronger rim displacement while the lens opens.
         // Remove all transforms on completion, including interrupted reveals.
-        [panel applyPlayerContentLens:launch*(1-unfold)];
-        NSInteger blurStep = (NSInteger)lround(morphMix(8, 5, launch)*(1-unfold));
+        // The centre focuses ahead of the perimeter. Preserve the
+        // edge stretch further into release instead of fading all optical
+        // effects by the same linear factor.
+        CGFloat edgeRelease = morphSmooth((unfold-0.18)/0.82);
+        [panel applyPlayerContentLens:launch*(1-edgeRelease)];
+        NSInteger blurStep = (NSInteger)lround(morphMix(8, 5, launch)*pow(1-unfold, 1.65));
         if (filtered && panel.morphContentBlurStep != blurStep) {
             panel.morphContentBlurStep = blurStep;
             @try {
@@ -1205,7 +1214,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 #if SG_DRIVER
     if (!self.morphFromParent && self.rootMorphSetupAt > 0) {
         CFTimeInterval ended = CACurrentMediaTime();
-        SGLog(@"stage200 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f overlap_ticks=%lu",
+        SGLog(@"stage201 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f overlap_ticks=%lu",
               self.morphElapsed >= self.morphDuration,
               self.rootMorphFirstTick > 0 ? (self.rootMorphFirstTick-self.rootMorphSetupAt)*1000 : -1.0,
               self.rootMorphFirstTick > 0 ? (ended-self.rootMorphFirstTick)*1000 : -1.0,

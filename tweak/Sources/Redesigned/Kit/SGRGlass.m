@@ -522,6 +522,36 @@ void SGRDimSheetGlassTint(UIView *glass, UIColor *color) {
     if (rim.superview == host) [host bringSubviewToFront:rim];
 }
 
+// The blue Divide artwork in the paired Stage 200 capture exposes the
+// sheet's white body and boosted colour matrix. Preserve the artwork's
+// original chroma, keep the background readable, and darken with a neutral
+// film. The same material is used at the anchor, during morph and at rest.
+void SGRStylePlayerRootLegacyGlass(UIView *glass, CGFloat cornerRadius) {
+    if (![glass isKindOfClass:SGLegacyGlassView.class]) return;
+    SGLegacyGlassView *legacy = (SGLegacyGlassView *)glass;
+    legacy.clear = YES; // omit the standard high-saturation colour matrix
+    legacy.blurRadius = 6.0;
+    UIView *host = glassContent(glass);
+    UIView *body = bodyLayer(host, &kSheetBodyKey);
+    UIColor *tint = SGRReduceTransparency() ? SGRSolidGlassFill() : [UIColor colorWithWhite:1 alpha:0.035];
+    if (![body.backgroundColor isEqual:tint]) body.backgroundColor = tint;
+    if (host.subviews.firstObject != body) [host sendSubviewToBack:body];
+    UIView *rim = bodyLayer(host, &kSheetRimKey);
+    CGFloat borderWidth = 1.0 / UIScreen.mainScreen.scale;
+    UIColor *border = [UIColor colorWithWhite:1 alpha:0.12];
+    if (rim.layer.borderWidth != borderWidth) rim.layer.borderWidth = borderWidth;
+    if (!rim.layer.borderColor || !CGColorEqualToColor(rim.layer.borderColor, border.CGColor))
+        rim.layer.borderColor = border.CGColor;
+    if (![rim.layer.cornerCurve isEqualToString:kCACornerCurveContinuous]) rim.layer.cornerCurve = kCACornerCurveContinuous;
+    if (rim.layer.cornerRadius != cornerRadius) rim.layer.cornerRadius = cornerRadius;
+    UIColor *dimTint = [UIColor colorWithWhite:0.02 alpha:0.46];
+    UIView *dim = objc_getAssociatedObject(host, &kSheetDimKey);
+    UIColor *effectiveDim = SGRReduceTransparency() ? UIColor.blackColor : dimTint;
+    if (!dim || ![dim.backgroundColor isEqual:effectiveDim] || host.subviews.lastObject != rim)
+        SGRDimSheetGlassTint(glass, dimTint);
+    else if (!CGRectEqualToRect(dim.frame, host.bounds)) dim.frame = host.bounds;
+}
+
 void SGRDimSheetGlass(UIView *glass, CGFloat alpha) {
     SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0 alpha:alpha]);
 }

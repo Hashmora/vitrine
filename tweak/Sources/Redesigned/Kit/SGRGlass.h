@@ -115,6 +115,8 @@ CGFloat SGRSheetCornerRadius(void);
 void SGRThickenSheetGlass(UIView *glass, CGFloat cornerRadius);
 // Root-player transition material; compact=1 is the travelling lens, 0 the ordinary sheet.
 void SGRThickenSheetGlassMorph(UIView *glass, CGFloat cornerRadius, CGFloat compact);
+// Opt-in material for the legacy player root; does not modify ordinary sheets.
+void SGRStylePlayerRootLegacyGlass(UIView *glass, CGFloat cornerRadius);
 // A black layer over the body SGRThickenSheetGlass gives a pane, for menus whose white text the light body
 // leaves too little contrast to read. Call it after SGRThickenSheetGlass.
 void SGRDimSheetGlass(UIView *glass, CGFloat alpha);
