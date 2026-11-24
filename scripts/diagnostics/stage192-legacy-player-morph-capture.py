@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage 192: Stage191 Legacy iOS18 player morphology evidence only.
+"""Stage 194: compact Legacy iOS18 player morphology evidence only.
 No UI changes, no iOS26 requests, no frame PNGs, no third-party installs.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ def shown(driver, **selector):
     return [v for v in driver.call('find', **selector).get('views', []) if v.get('shown') is True]
 
 
-def verified(driver, menu, more=False, timeout=4):
+def verified(driver, menu, more=False, timeout=8):
     deadline = time.monotonic() + timeout
     observed = {}
     while True:
@@ -48,11 +48,44 @@ def verified(driver, menu, more=False, timeout=4):
 def metadata_only(video, folder, exporter):
     S.run([str(exporter), str(video), str(folder), '0', '--pts-only'], timeout=180)
     data = json.loads((folder/'native-extraction.json').read_text())
-    if data.get('png_written') is not False or not data.get('decoded_frames') or data['decoded_frames'] != len(data['frames']):
+    # AVFoundation writes an integer count, not a JSON boolean.
+    if data.get('png_written') != 0 or not data.get('decoded_frames') or data['decoded_frames'] != len(data['frames']):
         raise S.EvidenceError('invalid PTS-only result')
     if list(folder.glob('frame_*.png')):
         raise S.EvidenceError('unexpected PNG export in PTS-only mode')
     return {k:v for k,v in data.items() if k != 'frames'}
+
+
+def prepare_legacy(driver, case):
+    # Wait for a restored track and open the player only if it isn't open.
+    # Retry preparation (not the recorded action); never toggle a known-open menu.
+    deadline = time.monotonic() + 35
+    last = None
+    while time.monotonic() < deadline:
+        try:
+            state = driver.call('state')
+            if state.get('menu'):
+                S.safe_external_tap(driver)
+                state = driver.call('state')
+            if not state.get('player'):
+                driver.call('player.open')
+                time.sleep(.6)
+            closed = verified(driver, False, timeout=2)
+            if case == 'root-open':
+                return closed['state']
+            driver.call('player.more')
+            opened = verified(driver, True, timeout=4)
+            # The panel can be reported visible while it is still morphing.
+            time.sleep(.65)
+            if case == 'more-close':
+                driver.call('menu.pick', title='More')
+                opened = verified(driver, True, True, timeout=4)
+                time.sleep(.65)
+            return opened['state']
+        except S.EvidenceError as exc:
+            last = str(exc)
+            time.sleep(.5)
+    raise S.EvidenceError(f'player/menu preparation timed out: {last}')
 
 
 def take(driver, device, case, root, trial, exporter, layers, preroll, tail):
@@ -60,7 +93,7 @@ def take(driver, device, case, root, trial, exporter, layers, preroll, tail):
     dest.mkdir(parents=True, exist_ok=True)
     report = {'case':case, 'trial':trial, 'status':'INCOMPLETE', 'began':S.clock()}
     try:
-        report['prepared'] = S.prepare(driver, case)
+        report['prepared'] = prepare_legacy(driver, case)
         report['before_verified'] = verified(driver, case != 'root-open', case == 'more-close')
         S.collect_snapshot(driver, dest/'before')
         report['recording'] = N.capture(device['udid'], dest/'capture.mp4',
@@ -160,14 +193,14 @@ def main():
         p.error('trials 1..5, preroll .4..5, tail 1..5')
     device = S.resolve_sim(S.sim_devices(),18,args.udid18)
     driver = S.Driver(args.port18)
-    root = args.out/f'stage192-legacy-player-{dt.datetime.now():%Y%m%d-%H%M%S}'
+    root = args.out/f'stage194-legacy-player-{dt.datetime.now():%Y%m%d-%H%M%S}'
     root.mkdir(parents=True, exist_ok=False)
     exporter = S.build_native_extractor(args.out)
     S.save_json(root/'configuration.json', {'device':device,'port':driver.port,'cases':args.cases,
         'trials':args.trials,'preroll':args.preroll,'tail':args.tail,'layers_pass':args.layers_pass,
         'git_head':S.run(['git','rev-parse','HEAD'])['stdout'].strip(),
         'controller_status':S.run(['git','status','--short','--','tweak/Sources/Redesigned/ContextMenu/SGRDropdownController.m'])['stdout'],
-        'note':'HEAD is checkout identity, not proof of binary installed; rebuild Stage191 first.'})
+        'note':'HEAD is checkout identity, not proof of binary installed; rebuild Stage193 first.'})
     reports = []
     try:
         S.save_json(root/'preflight.json',driver.call('state'))
