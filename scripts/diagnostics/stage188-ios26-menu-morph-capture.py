@@ -3,7 +3,7 @@
 
 No monkey patches, no private SDK downloads, no menu renderer changes.
 Driver: SG_DRIVER 8088 for iOS 26, 8087 for iOS 18 (optional comparison).
-Video: xcrun simctl io ... recordVideo, every *recorded* frame exported with ffmpeg.
+Video: xcrun simctl io ... recordVideo, every recorded frame decoded with macOS AVFoundation.
 Independent layers pass: driven on a separate take to avoid impacting video timing.
 
 Usage:
@@ -11,7 +11,8 @@ Usage:
   python3 scripts/diagnostics/stage188-ios26-menu-morph-capture.py --compare --port26 8088 --port18 8087
   python3 scripts/diagnostics/stage188-ios26-menu-morph-capture.py --self-test
 
-Requires macOS Xcode Simulator, ffmpeg, ffprobe, and a Spotify SG_DRIVER build.
+Requires macOS Xcode Simulator, xcrun clang, and a Spotify SG_DRIVER build.
+No ffmpeg, ffprobe, Homebrew or pip install is required for capture and extraction.
 Optional numpy + opencv-python enable rough *image-derived proxies*, not shader recovery.
 Does NOT control the native Photos app; that requires a separate XCUITest driver.
 """
@@ -267,30 +268,56 @@ def capture_video(udid, output, action, head=.38, tail=1.0):
                 raise EvidenceError(f'recordVideo output absent/truncated: {output}; log: {stderr.read_text(errors="replace")[-1000:]}')
 
 
-def extract_frames(video, dest, max_frames):
+def build_native_extractor(out_root):
+    """Compile the bundled AVFoundation helper once. Requires existing Xcode, no packages."""
+    source = Path(__file__).with_name('stage188-avfoundation-extract.m')
+    if not source.is_file():
+        raise EvidenceError(f'missing bundled decoder: {source} (apply Stage 188r)')
+    target = out_root / 'stage188-tools' / 'stage188-avfoundation-extract'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and target.stat().st_mtime_ns >= source.stat().st_mtime_ns:
+        return target
+    cmd = ['xcrun', 'clang', '-fobjc-arc', '-O2', '-Wno-deprecated-declarations',
+           '-framework', 'Foundation', '-framework', 'AVFoundation',
+           '-framework', 'CoreImage', '-framework', 'CoreMedia',
+           '-framework', 'CoreVideo', '-framework', 'CoreGraphics',
+           str(source), '-o', str(target)]
+    try:
+        result = run(cmd, timeout=120)
+    except Exception as exc:
+        raise EvidenceError(f'native macOS frame decoder compilation failed (no third-party tools needed): {exc}') from exc
+    if not target.exists():
+        raise EvidenceError('clang exited successfully but native frame decoder does not exist')
+    print(f'Native AVFoundation frame decoder ready: {target}', flush=True)
+    return target
+
+
+def extract_frames(video, dest, max_frames, exporter):
+    """Export all recorded frames + actual PTS, without ffmpeg/ffprobe."""
     dest.mkdir(parents=True, exist_ok=True)
-    probe = run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
-                 'stream=width,height,r_frame_rate,avg_frame_rate,nb_frames:format=duration',
-                 '-of', 'json', str(video)])
-    detail = json.loads(probe['stdout'])
-    report = {'ffprobe': detail, 'video_bytes': video.stat().st_size}
-    frame_data = run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_frames',
-                      '-show_entries', 'frame=best_effort_timestamp_time,pkt_duration_time',
-                      '-of', 'json', str(video)], timeout=120)
-    frame_list = json.loads(frame_data['stdout']).get('frames', [])
-    save_json(dest/'timestamps.json', {'note': 'PTS is relative to recording; not aligned to SG_DRIVER host monotonic clock',
-                                      'frames': frame_list})
-    # -vsync 0 preserves variable-rate frames. Never use an fps filter: it duplicates/drops frames.
-    limit = ['-frames:v', str(max_frames)] if max_frames else []
-    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-i', str(video),
-           '-map', '0:v:0', '-vsync', '0', *limit, '-start_number', '0', str(dest/'frame_%06d.png')]
-    run(cmd, timeout=240)
-    n = len(list(dest.glob('frame_*.png')))
-    report.update(decoded_frames=n, timestamps_in_video=len(frame_list),
-                  note='Frames are every frame that simctl RECORDS, not guaranteed every 120-Hz compositor refresh')
-    if not n:
-        raise EvidenceError(f'no extracted frames: {video}')
-    save_json(dest/'video-metadata.json', report)
+    run([str(exporter), str(video), str(dest), str(max_frames)], timeout=600)
+    native_file = dest/'native-extraction.json'
+    if not native_file.exists():
+        raise EvidenceError(f'AVFoundation returned without metadata: {native_file}')
+    native = json.loads(native_file.read_text(encoding='utf-8'))
+    pts = native.get('frames', [])
+    count = native.get('decoded_frames', 0)
+    if not count or count != len(pts):
+        raise EvidenceError('frame count != timestamp count from AVFoundation')
+    # Cheap integrity check; do not rescan thousands of PNGs through Python.
+    if not (dest/'frame_000000.png').is_file() or not (dest/f'frame_{count-1:06d}.png').is_file():
+        raise EvidenceError('decoded PNGs missing after native frame extraction')
+    save_json(dest/'timestamps.json', {
+        'note':'PTS come from AVFoundation video samples (relative to recording, not SG_DRIVER clock)',
+        'frames':pts})
+    report = {'backend':native.get('backend'), 'video_bytes':video.stat().st_size,
+              'decoded_frames':count, 'timestamps_in_video':len(pts),
+              'video_width':native.get('width'), 'video_height':native.get('height'),
+              'duration_seconds':native.get('duration_seconds'),
+              'nominal_frame_rate':native.get('nominal_frame_rate'),
+              'truncated_by_max_frames':native.get('truncated_by_max_frames'),
+              'note':'All simctl recorded frames (unless max-frames set); video may miss some display refreshes'}
+    save_json(dest/'video-metadata.json',report)
     return report
 
 
@@ -423,7 +450,7 @@ def layer_probe(driver, case, folder):
     return outcome
 
 
-def take(driver, device, case, directory, trial, include_layer_probe=False, max_frames=0):
+def take(driver, device, case, directory, trial, exporter, include_layer_probe=False, max_frames=0):
     where = directory/case/f'trial-{trial:02d}'
     where.mkdir(parents=True, exist_ok=True)
     report = {'case': case, 'trial': trial, 'device': device, 'port': driver.port,
@@ -440,7 +467,7 @@ def take(driver, device, case, directory, trial, include_layer_probe=False, max_
         report['final_state'] = state
         if bool(state.get('menu')) != expect_menu(case):
             raise EvidenceError(f'menu visibility unexpected: {state.get("menu")}, expected {expect_menu(case)}')
-        report['frames'] = extract_frames(video, where/'frames', max_frames)
+        report['frames'] = extract_frames(video, where/'frames', max_frames, exporter)
         report['analysis'] = analyze(where/'frames', where/'analysis')
         report['status'] = 'RECORDED_NOT_YET_MATCHED'
         if include_layer_probe and trial == 1:
@@ -470,6 +497,7 @@ def self_test():
     assert expect_menu('home-open') is True
     assert expect_menu('more-close') is False
     assert len(CASES)==6
+    assert Path(__file__).with_name('stage188-avfoundation-extract.m').is_file()
     print('PASS: argument, simulator runtime and case validation')
 
 
@@ -492,16 +520,16 @@ def main(argv=None):
         self_test();return 0
     if args.trials<1 or args.trials>20:
         parser.error('--trials must be 1..20')
-    for needed in ('xcrun','ffmpeg','ffprobe'):
-        if not shutil.which(needed):
-            parser.error(f'missing {needed}; install Xcode Command Line Tools and ffmpeg as appropriate')
+    if not shutil.which('xcrun'):
+        parser.error('missing xcrun (existing Xcode installation required)')
+    exporter=build_native_extractor(args.out)
     devices=sim_devices()
     targets=[('ios26',resolve_sim(devices,26,args.udid26),Driver(args.port26))]
     if args.compare:
         targets.append(('ios18',resolve_sim(devices,18,args.udid18),Driver(args.port18)))
     out=args.out/f'stage188-menu-morph-{dt.datetime.now():%Y%m%d-%H%M%S}'
     out.mkdir(parents=True,exist_ok=True)
-    configuration={'cases':args.cases,'trials':args.trials,'secondary_layer_pass':args.layers_pass,
+    configuration={'frame_export_backend':'AVFoundation (native macOS)', 'cases':args.cases,'trials':args.trials,'secondary_layer_pass':args.layers_pass,
                    'targets':[{'label':label,'device':device,'port':d.port} for label,device,d in targets],
                    'host':sys.platform,'started':clock(),
                    'caveat':'video yields all *recorded* frames, not guaranteed 120Hz; no full shader derivation or iOS18 morph implementation'}
@@ -513,7 +541,7 @@ def main(argv=None):
             save_json(out/label/'preflight.json',driver.call('state'))
             for case in args.cases:
                 for trial in range(1,args.trials+1):
-                    reports.append({'label':label,**take(driver,device,case,out/label,trial,args.layers_pass,args.max_frames)})
+                    reports.append({'label':label,**take(driver,device,case,out/label,trial,exporter,args.layers_pass,args.max_frames)})
         except Exception as exc:
             reports.append({'label':label,'status':'INCOMPLETE','error':repr(exc)})
     save_json(out/'report.json',{'reports':reports,'finished':clock(),

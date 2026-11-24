@@ -37,13 +37,13 @@ Run from the repository root. Start with Spotify signed in, a track loaded for p
 
 - `capture.mp4`: continuous simulator screen video, including pre/post-roll.
 - `frames/frame_000000.png` ...: **every decoded video frame**, with no deliberate FPS reduction. Simulator screen recording can still miss high-refresh frames; verify `avg_frame_rate` and timestamp sequence.
-- `frames/timestamps.json`: actual presentation timestamps from `ffprobe` (relative to recording, not aligned perfectly with SG_DRIVER).
+- `frames/timestamps.json`: actual presentation timestamps from AVFoundation / CoreMedia (relative to recording, not aligned perfectly with SG_DRIVER).
 - `before`/`after`: SG_DRIVER `state`, view tree, menu findings, UIKit layer hierarchy when accessible, and screenshot.
 - `event`: host-side monotonic times when action was sent and returned.
 - `analysis/frame-metrics.csv` (if `numpy` + `opencv-python` installed): per-frame **proxies** for changing region, center/bounds, contour compactness, relative luminance, bright rim, and moving background pixels.
 - `secondary-take/layer-samples.json` (with `--layers-pass`): repeated UIKit view hierarchy snapshots through a **separate run**, never used for timing optical capture.
 
-For optional numeric metrics, install `numpy` and `opencv-python` in the Python interpreter you run with. **Neither package is needed to record and extract frames.** `ffmpeg`/`ffprobe` are required to extract and timestamp all frames.
+For optional numeric metrics, install `numpy` and `opencv-python` in the Python interpreter you run with. **Neither package is needed to record and extract frames.** No external `ffmpeg`/`ffprobe` is needed: Stage 188r compiles the bundled Objective-C helper with existing `xcrun clang` and decodes with AVFoundation, then records CoreMedia PTS. The helper is cached in `out/stage188-tools/`.
 
 ## What to measure in the resulting captures
 
@@ -67,3 +67,7 @@ A future separate driver can record Apple Photos menu transitions (including dis
 ## Avoid misleading 1:1 claims
 
 The public iOS 26 SDK and runtime headers expose API/class structure, **not a portable renderer for iOS 18**. Independent Metal backports are useful references, but need visual and performance checks; don't import a guessed implementation wholesale. A capture showing every *recorded* video frame is not guaranteed to show every compositor frame on a ProMotion device.
+
+## Stage 188r — no ffmpeg required
+
+Use the same capture command as Stage 188. A native AVFoundation decoder is compiled from `scripts/diagnostics/stage188-avfoundation-extract.m` to `out/stage188-tools/` (already installed Xcode tools required); **no packages or system applications are installed**. The `native-extraction.json` contains all per-frame CoreMedia PTS. Re-running the script reuses the helper unless its source changed. Optional OpenCV/numpy image metrics still require those modules; video, PNGs, timestamps, UIKit snapshots, and layer captures do not. macOS native decoder has not yet been compiled/tested on the user Mac.
