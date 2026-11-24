@@ -88,6 +88,18 @@ def take(driver, device, label, case, root, trial, exporter, args):
         S.run(['xcrun','simctl','io',device['udid'],'screenshot',dest/'settled-compositor.png'],timeout=20)
         report['after_verified'] = verified(driver,label,case == 'root-open')
         S.collect_snapshot(driver, dest/'after')
+        # Read the existing SG_DRIVER ring after capture, not during it.
+        # Stage 199 logs one aggregate per root morph; native already logs
+        # its menu lifecycle. A missing line is not evidence of completion.
+        try:
+            since = report['before_verified']['state'].get('logSeq', 0)
+            lines = driver.call('log', since=since).get('lines', [])
+            lifecycle = [line for line in lines if 'stage199 player root:' in line.get('text', '')
+                         or 'system menu:' in line.get('text', '')]
+            S.save_json(dest/'morph-lifecycle.json', {'since':since,'lines':lifecycle})
+            report['morph_lifecycle_lines'] = len(lifecycle)
+        except Exception as exc:
+            report['morph_lifecycle_error'] = repr(exc)
         before, after = (track(report[k]['state']) for k in ('before_verified','after_verified'))
         report['track_stable'] = bool(before.get('uri')) and before.get('uri') == after.get('uri') and bool(after.get('paused'))
         report['track_uri'] = before.get('uri')

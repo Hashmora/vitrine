@@ -28,7 +28,9 @@ static CGAffineTransform dropdownExitingTransform(void) {
 static char kOwnedGlassKey;
 // Root: two-phase video-fit approximation; More retains the Stage 190 clock.
 // Neither is a recovered UIKit spring constant.
-static const NSTimeInterval kPlayerMorphOpen = 0.46, kPlayerMorphMore = 0.27;
+static const NSTimeInterval kPlayerMorphOpen = 0.54, kPlayerMorphMore = 0.27;
+// A slow render callback must not skip the rounded preview altogether.
+static const NSTimeInterval kPlayerRootMaxStep = 1.0/30.0;
 static CGFloat morphMix(CGFloat a, CGFloat b, CGFloat t) { return a + (b-a)*t; }
 static CGFloat morphClamp(CGFloat t) { return MAX(0, MIN(1, t)); }
 static CGFloat morphSmooth(CGFloat t) { t = morphClamp(t); return t*t*(3-2*t); }
@@ -39,21 +41,21 @@ static CGFloat morphGeometry(CGFloat t) {
     const CGFloat w = 5.8;
     return (1-(1+w*t)*exp(-w*t))/(1-(1+w)*exp(-w));
 }
-// Stage 198: the Stage 197 native capture shows an almost full-size rounded
-// preview lower than its final menu, followed by an upward settling morph.
-// Do not copy the roughly one-second preview hold: driver/UIKit timing is
-// not isolated. The first native frames also miss part of the launch.
+// The paired Stage 198 captures show two rounded previews and one direct
+// native opening. Keep a short readable preview (not the variable UIKit
+// hold) and budget distinct callbacks for the launch and the release.
 static const NSUInteger kPlayerMorphMeshSteps = 12;
-static const CGFloat kPlayerPreviewEnd = 0.40;
+static const CGFloat kPlayerLaunchEnd = 1.0/3.0;
+static const CGFloat kPlayerReleaseStart = 0.45;
 static CGFloat morphRelease(CGFloat t) {
-    return morphGeometry((t-kPlayerPreviewEnd)/(1-kPlayerPreviewEnd));
+    return morphGeometry((t-kPlayerReleaseStart)/(1-kPlayerReleaseStart));
 }
 static CGFloat morphLensRadius(CGSize size, CGFloat lens) {
     CGFloat halfSide = MIN(size.width, size.height) / 2.0;
     return MIN(halfSide, morphMix(kRadius, halfSide, morphClamp(lens)));
 }
 static CGRect morphFlightFrame(CGRect a, CGRect b, CGFloat t, CGFloat release) {
-    CGFloat launch = morphGeometry(t/kPlayerPreviewEnd);
+    CGFloat launch = morphGeometry(t/kPlayerLaunchEnd);
     CGFloat previewW = b.size.width * 0.98;
     CGFloat previewH = b.size.height * 0.98;
     CGFloat drop = MIN(80.0, b.size.height * 0.25);
@@ -708,6 +710,14 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 @property (nonatomic) NSTimeInterval morphElapsed;
 @property (nonatomic) NSTimeInterval morphDuration;
 @property (nonatomic) BOOL morphFromParent;
+#if SG_DRIVER
+@property (nonatomic) CFTimeInterval rootMorphSetupAt;
+@property (nonatomic) CFTimeInterval rootMorphFirstTick;
+@property (nonatomic) NSUInteger rootMorphTicks;
+@property (nonatomic) NSUInteger rootMorphCappedTicks;
+@property (nonatomic) NSTimeInterval rootMorphMaxDelta;
+@property (nonatomic) NSUInteger rootMorphPreviewTicks;
+#endif
 @property (nonatomic, strong) UIMenu *morphPendingRoot;
 @property (nonatomic, strong) UIMenu *rootMenu;
 @property (nonatomic, strong) UIViewController *embedded;
@@ -998,6 +1008,16 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             self.morphDuration = parent ? kPlayerMorphMore : kPlayerMorphOpen;
             self.morphFromParent = parent != nil;
             panel.playerRootGlass = parent == nil;
+#if SG_DRIVER
+            if (!parent) {
+                self.rootMorphSetupAt = CACurrentMediaTime();
+                self.rootMorphFirstTick = 0;
+                self.rootMorphTicks = 0;
+                self.rootMorphCappedTicks = 0;
+                self.rootMorphMaxDelta = 0;
+                self.rootMorphPreviewTicks = 0;
+            }
+#endif
             panel.transform = CGAffineTransformIdentity;
             // Construct the full-size glass once before the visible transition.
             // The layout at the small starting rect must not switch to a
@@ -1082,17 +1102,25 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)tickPlayerMorph:(CADisplayLink *)link {
     SGRDropdownPanel *panel = self.morphPanel;
     if (!panel || !self.window || self.closing) { [self finishPlayerMorph]; return; }
-    // Begin on the first display callback after initial layout. Only More
-    // keeps the capped elapsed clock across dropped frames.
+    // Start at the first callback. Stage 198's unbounded elapsed clock
+    // could consume the entire launch on a late callback. Bound each step
+    // so the geometry cannot jump straight from the anchor to the menu.
+    // More's existing clock is intentionally unchanged.
     CFTimeInterval now = link.timestamp;
-    if (self.morphLastFrame > 0) {
-        // Root uses real elapsed time rather than stretching each missed
-        // frame into a further delay. Keep the existing More clock intact.
-        NSTimeInterval delta = MAX(0, now-self.morphLastFrame);
-        self.morphElapsed += self.morphFromParent ? MIN(1.0/30.0, delta) : delta;
-    }
+    NSTimeInterval delta = self.morphLastFrame > 0 ? MAX(0, now-self.morphLastFrame) : 0;
+    NSTimeInterval maxStep = self.morphFromParent ? 1.0/30.0 : kPlayerRootMaxStep;
+    self.morphElapsed += MIN(maxStep, delta);
     self.morphLastFrame = now;
     CGFloat t = morphClamp(self.morphElapsed/self.morphDuration);
+#if SG_DRIVER
+    if (!self.morphFromParent) {
+        if (self.rootMorphTicks == 0) self.rootMorphFirstTick = CACurrentMediaTime();
+        self.rootMorphTicks++;
+        self.rootMorphMaxDelta = MAX(self.rootMorphMaxDelta, delta);
+        if (delta > maxStep + 0.001) self.rootMorphCappedTicks++;
+        if (t >= kPlayerLaunchEnd && t <= kPlayerReleaseStart) self.rootMorphPreviewTicks++;
+    }
+#endif
     CGFloat g = morphGeometry(t);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -1142,6 +1170,19 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     SGRDropdownPanel *panel = self.morphPanel;
     self.morphPanel = nil;
     if (!panel) return;
+#if SG_DRIVER
+    if (!self.morphFromParent && self.rootMorphSetupAt > 0) {
+        CFTimeInterval ended = CACurrentMediaTime();
+        SGLog(@"stage199 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f preview_ticks=%lu",
+              self.morphElapsed >= self.morphDuration,
+              self.rootMorphFirstTick > 0 ? (self.rootMorphFirstTick-self.rootMorphSetupAt)*1000 : -1.0,
+              self.rootMorphFirstTick > 0 ? (ended-self.rootMorphFirstTick)*1000 : -1.0,
+              self.morphElapsed*1000, (unsigned long)self.rootMorphTicks,
+              (unsigned long)self.rootMorphCappedTicks, self.rootMorphMaxDelta*1000,
+              (unsigned long)self.rootMorphPreviewTicks);
+        self.rootMorphSetupAt = 0;
+    }
+#endif
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     panel.transform = CGAffineTransformIdentity;
