@@ -11,6 +11,7 @@
 #import <CoreVideo/CoreVideo.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <math.h>
+#import <string.h>
 
 static int fail(NSString *message) {
     fprintf(stderr, "stage188 AVFoundation: %s\n", message.UTF8String);
@@ -24,8 +25,9 @@ static id secondsOrNull(CMTime time) {
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        if (argc != 4) {
-            return fail(@"usage: stage188-avfoundation-extract VIDEO.mp4 FRAMES_DIR MAX_FRAMES (0 = all)");
+        BOOL ptsOnly = argc == 5 && strcmp(argv[4], "--pts-only") == 0;
+        if (argc != 4 && !ptsOnly) {
+            return fail(@"usage: stage188-avfoundation-extract VIDEO.mp4 FRAMES_DIR MAX_FRAMES (0 = all) [--pts-only]");
         }
         NSString *videoPath = [NSString stringWithUTF8String:argv[1]];
         NSString *framesPath = [NSString stringWithUTF8String:argv[2]];
@@ -76,23 +78,25 @@ int main(int argc, const char *argv[]) {
                     width = CVPixelBufferGetWidth(pixelBuffer);
                     height = CVPixelBufferGetHeight(pixelBuffer);
                 }
-                CIImage *image = [CIImage imageWithCVPixelBuffer:pixelBuffer];
                 NSString *name = [NSString stringWithFormat:@"frame_%06lu.png", (unsigned long)count];
-                NSURL *target = [NSURL fileURLWithPath:[framesPath stringByAppendingPathComponent:name]];
-                NSError *pngError = nil;
-                BOOL ok = [context writePNGRepresentationOfImage:image toURL:target
-                                                         format:kCIFormatRGBA8 colorSpace:srgb
-                                                        options:@{} error:&pngError];
-                if (!ok) {
-                    failed = YES;
-                    failureDescription = [NSString stringWithFormat:@"PNG %@: %@", name, pngError];
-                    CFRelease(sample);
-                    break;
+                if (!ptsOnly) {
+                    CIImage *image = [CIImage imageWithCVPixelBuffer:pixelBuffer];
+                    NSURL *target = [NSURL fileURLWithPath:[framesPath stringByAppendingPathComponent:name]];
+                    NSError *pngError = nil;
+                    BOOL ok = [context writePNGRepresentationOfImage:image toURL:target
+                                                             format:kCIFormatRGBA8 colorSpace:srgb
+                                                            options:@{} error:&pngError];
+                    if (!ok) {
+                        failed = YES;
+                        failureDescription = [NSString stringWithFormat:@"PNG %@: %@", name, pngError];
+                        CFRelease(sample);
+                        break;
+                    }
                 }
                 id pts = secondsOrNull(CMSampleBufferGetPresentationTimeStamp(sample));
                 id dur = secondsOrNull(CMSampleBufferGetDuration(sample));
                 [timestamps addObject:@{@"frame_index":@(count),
-                                        @"filename":name,
+                                        @"filename":ptsOnly ? [NSNull null] : name,
                                         @"best_effort_timestamp_time":pts,
                                         @"pkt_duration_time":dur}];
                 count++;
@@ -113,6 +117,7 @@ int main(int argc, const char *argv[]) {
         NSDictionary *result = @{
             @"backend":@"AVFoundation (native macOS, no ffmpeg)",
             @"decoded_frames":@(count),
+            @"png_written":@(!ptsOnly),
             @"width":@(width), @"height":@(height),
             @"duration_seconds":secondsOrNull(asset.duration),
             @"nominal_frame_rate":@(track.nominalFrameRate),
