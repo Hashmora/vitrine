@@ -12,6 +12,10 @@
 // Cached after the first call.
 BOOL SGLegacyGlassAvailable(void);
 
+// Root-menu content only: normalized, nonlinear inverse sampling grid.
+// Returns nil when the legacy mesh API is unavailable.
+id _Nullable SGLegacyPlayerContentMesh(CGFloat amount);
+
 // One pane per call site, like UIVisualEffectView. It keeps its own backdrop layer and mesh sized to
 // its bounds, so a pane resized by autoresizing or Auto Layout follows with no help from the caller.
 @interface SGLegacyGlassView : UIView

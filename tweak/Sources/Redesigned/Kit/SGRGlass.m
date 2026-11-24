@@ -526,13 +526,13 @@ void SGRDimSheetGlassTint(UIView *glass, UIColor *color) {
 // sheet's white body and boosted colour matrix. Preserve the artwork's
 // original chroma, keep the background readable, and darken with a neutral
 // film. The same material is used at the anchor, during morph and at rest.
-void SGRStylePlayerRootLegacyGlass(UIView *glass, CGFloat cornerRadius) {
+void SGRStylePlayerRootLegacyGlass(UIView *glass, CGFloat cornerRadius, CGFloat materialAmount) {
     if (![glass isKindOfClass:SGLegacyGlassView.class]) return;
     SGLegacyGlassView *legacy = (SGLegacyGlassView *)glass;
     legacy.clear = YES; // omit the standard high-saturation colour matrix
-    // Stage 201 still reproduced nearly black artwork through the final
-    // pane. Soften local contrast with a slightly wider sampling kernel.
-    legacy.blurRadius = 9.0;
+    // The native preview retains some of the artwork texture. Keep this
+    // blur constant during flight to avoid rebuilding filters every frame.
+    legacy.blurRadius = 7.0;
     UIView *host = glassContent(glass);
     UIView *body = bodyLayer(host, &kSheetBodyKey);
     UIColor *tint = SGRReduceTransparency() ? SGRSolidGlassFill() : [UIColor colorWithWhite:1 alpha:0.035];
@@ -548,7 +548,8 @@ void SGRStylePlayerRootLegacyGlass(UIView *glass, CGFloat cornerRadius) {
     if (rim.layer.cornerRadius != cornerRadius) rim.layer.cornerRadius = cornerRadius;
     // Lift the darkest samples while attenuating the brighter artwork.
     // Neutral rather than album-coloured: the live backdrop supplies chroma.
-    UIColor *dimTint = [UIColor colorWithWhite:0.12 alpha:0.54];
+    CGFloat material = round(MAX(0, MIN(1, materialAmount))*12)/12;
+    UIColor *dimTint = [UIColor colorWithWhite:0.06 alpha:0.12+0.36*material];
     UIView *dim = objc_getAssociatedObject(host, &kSheetDimKey);
     UIColor *effectiveDim = SGRReduceTransparency() ? UIColor.blackColor : dimTint;
     if (!dim || ![dim.backgroundColor isEqual:effectiveDim] || host.subviews.lastObject != rim)

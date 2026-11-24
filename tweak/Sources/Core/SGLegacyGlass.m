@@ -105,6 +105,36 @@ static id SGMakeMeshTransform(SGMeshVertex *vertices, NSUInteger vertexCount, SG
     return transform;
 }
 
+// The menu content needs a different mesh from the backdrop. A regular
+// destination grid with an inward sampling field magnifies and bends glyphs
+// as they approach the oval rim. The field is continuous and does not fold.
+id SGLegacyPlayerContentMesh(CGFloat amount) {
+    if (!SGLegacyGlassAvailable()) return nil;
+    amount = MAX(0, MIN(1, amount));
+    enum { cols = 16, rows = 20 };
+    SGMeshVertex vertices[(cols+1)*(rows+1)];
+    SGMeshFace faces[cols*rows];
+    for (NSUInteger j = 0; j <= rows; j++) {
+        for (NSUInteger i = 0; i <= cols; i++) {
+            CGFloat u = (CGFloat)i/cols, v = (CGFloat)j/rows;
+            CGFloat x = 2*u-1, y = 2*v-1;
+            CGFloat r2 = x*x+y*y;
+            CGFloat sx = x/(1+amount*0.20*r2);
+            CGFloat sy = y/(1+amount*0.36*r2);
+            vertices[j*(cols+1)+i] = (SGMeshVertex){
+                CGPointMake(0.5+0.5*sx, 0.5+0.5*sy), {u,v,0}};
+        }
+    }
+    for (NSUInteger j = 0; j < rows; j++) {
+        for (NSUInteger i = 0; i < cols; i++) {
+            uint32_t a = (uint32_t)(j*(cols+1)+i), b = a+1;
+            uint32_t c = b+cols+1, d = a+cols+1;
+            faces[j*cols+i] = (SGMeshFace){{a,b,c,d},{0,0,0,0}};
+        }
+    }
+    return SGMakeMeshTransform(vertices, (cols+1)*(rows+1), faces, cols*rows);
+}
+
 #pragma mark - displacement field (classic mesh reference, with the lens of adaptive_liquid_glass)
 
 // How the system's glass bends what is behind it, as adaptive_liquid_glass measured it against SwiftUI's own

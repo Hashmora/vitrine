@@ -359,6 +359,11 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic) BOOL morphing;
 @property (nonatomic) BOOL playerRootGlass;
 @property (nonatomic) NSInteger morphContentBlurStep;
+@property (nonatomic) CGFloat morphRootMaterialAmount;
+@property (nonatomic, strong) NSArray *morphContentMeshes;
+@property (nonatomic, strong) id morphOriginalContentMesh;
+@property (nonatomic) NSInteger morphContentMeshIndex;
+@property (nonatomic) NSUInteger morphContentMeshFrames;
 @property (nonatomic) BOOL morphRefreshQueued;
 @property (nonatomic) CGSize morphFinalSize;
 @property (nonatomic) CGFloat morphLensAmount;
@@ -371,6 +376,8 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic) CGFloat actualHeight;
 - (void)configure:(UIMenu *)menu title:(NSString *)title maxHeight:(CGFloat)maximum;
 - (void)applyPlayerContentLens:(CGFloat)amount release:(CGFloat)release;
+- (void)preparePlayerContentMeshes;
+- (void)restorePlayerContentMesh;
 @end
 
 @implementation SGRDropdownPanel
@@ -426,7 +433,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         if (!CGRectEqualToRect(glass.frame, self.bounds)) glass.frame = self.bounds;
         SGShapeGlass(glass, radius, NO);
         if (self.playerRootGlass) {
-            SGRStylePlayerRootLegacyGlass(glass, radius);
+            SGRStylePlayerRootLegacyGlass(glass, radius, self.morphRootMaterialAmount);
         } else {
             NSInteger tintStep = (NSInteger)lround(8.0 * morphClamp(self.morphLensAmount));
             SGRThickenSheetGlassMorph(glass, radius, (CGFloat)tintStep / 8.0);
@@ -447,7 +454,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         if (!CGRectEqualToRect(glass.frame, self.bounds)) glass.frame = self.bounds;
         SGShapeGlass(glass, radius, NO);
-        SGRStylePlayerRootLegacyGlass(glass, radius);
+        SGRStylePlayerRootLegacyGlass(glass, radius, 1);
     } else {
         UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, radius);
         if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
@@ -466,6 +473,46 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         [self updateScrollThumb];
     }
 }
+// Private CALayer mesh support varies by OS. Probe the actual scroll layer,
+// preserve its original state, and keep the existing affine fallback.
+- (void)preparePlayerContentMeshes {
+    self.morphContentMeshFrames = 0;
+    self.morphContentMeshIndex = -1;
+    CALayer *layer = self.scroll.layer;
+    if (SGRReduceTransparency() || !SGLegacyGlassAvailable() ||
+        ![layer respondsToSelector:NSSelectorFromString(@"setMeshTransform:")] ||
+        ![layer respondsToSelector:NSSelectorFromString(@"meshTransform")]) return;
+    @try {
+        self.morphOriginalContentMesh = [layer valueForKey:@"meshTransform"];
+        if (self.morphOriginalContentMesh) { self.morphOriginalContentMesh = nil; return; }
+        NSMutableArray *meshes = [NSMutableArray arrayWithCapacity:12];
+        for (NSUInteger i = 1; i <= 12; i++) {
+            id mesh = SGLegacyPlayerContentMesh((CGFloat)i/12);
+            if (!mesh) return;
+            [meshes addObject:mesh];
+        }
+        self.morphContentMeshes = [meshes copy];
+        // Probe before the animation; setting nil restores the original
+        // layer. Successful KVC is not proof of compositor rendering.
+        [layer setValue:meshes.lastObject forKey:@"meshTransform"];
+        if (![layer valueForKey:@"meshTransform"]) {
+            [self restorePlayerContentMesh];
+            return;
+        }
+        [layer setValue:nil forKey:@"meshTransform"];
+    } @catch (__unused NSException *exception) {
+        [self restorePlayerContentMesh];
+    }
+}
+- (void)restorePlayerContentMesh {
+    if (self.morphContentMeshes.count) {
+        @try { [self.scroll.layer setValue:self.morphOriginalContentMesh forKey:@"meshTransform"]; }
+        @catch (__unused NSException *exception) {}
+    }
+    self.morphContentMeshes = nil;
+    self.morphOriginalContentMesh = nil;
+    self.morphContentMeshIndex = -1;
+}
 // Approximate the refractive displacement of the menu contents with a
 // local affine derivative of a smooth radial field. Only individual glyphs
 // and labels move; row layout, hit targets and the scroll viewport stay put.
@@ -474,6 +521,21 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     if (!self.playerRootGlass) return;
     amount = morphClamp(amount);
     release = morphClamp(release);
+    BOOL meshActive = self.morphContentMeshes.count > 0;
+    if (meshActive) {
+        NSInteger index = (NSInteger)lround(amount*12);
+        if (index != self.morphContentMeshIndex) {
+            @try {
+                id mesh = index > 0 ? self.morphContentMeshes[(NSUInteger)index-1] : self.morphOriginalContentMesh;
+                [self.scroll.layer setValue:mesh forKey:@"meshTransform"];
+                self.morphContentMeshIndex = index;
+            } @catch (__unused NSException *exception) {
+                [self restorePlayerContentMesh];
+                meshActive = NO;
+            }
+        }
+        if (meshActive && index > 0) self.morphContentMeshFrames++;
+    }
     CGFloat hw = MAX(1, self.morphFinalSize.width/2);
     CGFloat hh = MAX(1, self.morphFinalSize.height/2);
     for (SGRDropdownPress *press in self.allButtons) {
@@ -488,10 +550,12 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
             // keep a continuous, position-dependent reveal during release.
             CGFloat edge = morphSmooth((fabs(y)-0.36)/0.48);
             CGFloat aperture = morphSmooth((release-0.18)/0.66);
-            CGFloat opacity = 1-edge*(1-aperture)*0.96;
+            // The mesh itself carries the outer rows beyond the oval rim.
+            // Don't hide them twice: native glyphs briefly bend into view.
+            CGFloat opacity = 1-edge*(1-aperture)*(meshActive ? 0.32 : 0.96);
             if (item.alpha != opacity) item.alpha = opacity;
             CGAffineTransform next = CGAffineTransformIdentity;
-            if (amount > 0) {
+            if (amount > 0 && !meshActive) {
                 CGFloat r2 = x*x+y*y;
                 // Bias the field toward the upper/lower edges. Keep the
                 // central labels relatively stable while the quick actions
@@ -1090,6 +1154,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             panel.morphFinalSize = target.size;
             panel.morphLensAmount = parent ? 0.0 : 1.0;
             panel.morphTintStep = parent ? 0 : -1;
+            panel.morphRootMaterialAmount = 0;
             panel.userInteractionEnabled = NO;
             if (parent) {
                 // Snapshot only the text/controls, not the parent's glass.
@@ -1103,7 +1168,13 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 parent.alpha = 0;
             }
             panel.scroll.alpha = 0;
-            if (!parent) [panel applyPlayerContentLens:0 release:0];
+            if (!parent) {
+                [CATransaction begin];
+                [CATransaction setDisableActions:YES];
+                [panel preparePlayerContentMeshes];
+                [panel applyPlayerContentLens:0 release:0];
+                [CATransaction commit];
+            }
             if (!parent && !SGRReduceTransparency()) {
                 // Blur just the existing content, never the live backdrop.
                 // Same CAFilter approach as PlayerMotion; fail soft if absent.
@@ -1188,6 +1259,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     } else {
         BOOL filtered = panel.scroll.layer.filters.count > 0;
         CGFloat launch = morphGeometry(t/kPlayerLaunchEnd);
+        panel.morphRootMaterialAmount = morphSmooth((t-0.04)/0.36);
         panel.scroll.alpha = filtered ? morphSmooth(t/0.24) * morphMix(0.88, 1, unfold)
                                       : morphSmooth((t-0.16)/0.58);
         // Softer centre and stronger rim displacement while the lens opens.
@@ -1223,13 +1295,13 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 #if SG_DRIVER
     if (!self.morphFromParent && self.rootMorphSetupAt > 0) {
         CFTimeInterval ended = CACurrentMediaTime();
-        SGLog(@"stage202 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f overlap_ticks=%lu",
+        SGLog(@"stage203 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f overlap_ticks=%lu content_mesh_frames=%lu",
               self.morphElapsed >= self.morphDuration,
               self.rootMorphFirstTick > 0 ? (self.rootMorphFirstTick-self.rootMorphSetupAt)*1000 : -1.0,
               self.rootMorphFirstTick > 0 ? (ended-self.rootMorphFirstTick)*1000 : -1.0,
               self.morphElapsed*1000, (unsigned long)self.rootMorphTicks,
               (unsigned long)self.rootMorphCappedTicks, self.rootMorphMaxDelta*1000,
-              (unsigned long)self.rootMorphPreviewTicks);
+              (unsigned long)self.rootMorphPreviewTicks, (unsigned long)panel.morphContentMeshFrames);
         self.rootMorphSetupAt = 0;
     }
 #endif
@@ -1243,6 +1315,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     panel.morphGlass.geometryTransitionActive = NO;
     panel.morphGlass = nil;
     if (panel.playerRootGlass) {
+        [panel restorePlayerContentMesh];
         [panel applyPlayerContentLens:0 release:1];
         panel.scroll.layer.filters = nil;
     }
