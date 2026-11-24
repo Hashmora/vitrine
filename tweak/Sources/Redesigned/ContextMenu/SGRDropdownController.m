@@ -27,7 +27,7 @@ static CGAffineTransform dropdownExitingTransform(void) {
 static char kOwnedGlassKey;
 // Stage 190: normal player open takes ~300–385ms; More ~260ms.
 // These are video-fit approximations, not UIKit's private spring constants.
-static const NSTimeInterval kPlayerMorphOpen = 0.34, kPlayerMorphMore = 0.27;
+static const NSTimeInterval kPlayerMorphOpen = 0.38, kPlayerMorphMore = 0.27;
 static CGFloat morphMix(CGFloat a, CGFloat b, CGFloat t) { return a + (b-a)*t; }
 static CGFloat morphClamp(CGFloat t) { return MAX(0, MIN(1, t)); }
 static CGFloat morphSmooth(CGFloat t) { t = morphClamp(t); return t*t*(3-2*t); }
@@ -38,6 +38,44 @@ static CGFloat morphGeometry(CGFloat t) {
     const CGFloat w = 5.8;
     return (1-(1+w*t)*exp(-w*t))/(1-(1+w)*exp(-w));
 }
+// Stage 195: travel first, unfold second.
+static CGRect morphFlightFrame(CGRect a, CGRect b,
+                               CGFloat t, CGFloat unfold) {
+    t = morphClamp(t);
+
+    CGFloat ax = CGRectGetMidX(a);
+    CGFloat ay = CGRectGetMidY(a);
+    CGFloat bx = CGRectGetMidX(b);
+    CGFloat by = CGRectGetMidY(b);
+
+    CGFloat dx = bx - ax;
+    CGFloat dy = by - ay;
+    CGFloat distance = MAX(1.0, hypot(dx, dy));
+
+    // The center travels independently from the surface size.
+    CGFloat travel = 1.0 - pow(1.0 - t, 3.0);
+    CGFloat cx = morphMix(ax, bx, travel);
+    CGFloat cy = morphMix(ay, by, travel);
+
+    // Transient directional deformation of the compact lens.
+    CGFloat stretch = sin(M_PI * morphClamp(t / 0.48));
+    stretch *= 1.0 - unfold;
+
+    CGFloat axisX = fabs(dx) / distance;
+    CGFloat axisY = fabs(dy) / distance;
+    CGFloat diameter = MIN(a.size.width, a.size.height);
+
+    CGFloat width = morphMix(a.size.width, b.size.width, unfold);
+    CGFloat height = morphMix(a.size.height, b.size.height, unfold);
+
+    width += diameter * stretch * (0.22 * axisX - 0.06 * axisY);
+    height += diameter * stretch * (0.22 * axisY - 0.06 * axisX);
+
+    return CGRectMake(cx - width / 2.0,
+                      cy - height / 2.0,
+                      width, height);
+}
+
 static CGRect morphRect(CGRect a, CGRect b, CGFloat t) {
     return CGRectMake(morphMix(a.origin.x,b.origin.x,t), morphMix(a.origin.y,b.origin.y,t),
                       morphMix(a.size.width,b.size.width,t), morphMix(a.size.height,b.size.height,t));
@@ -327,6 +365,8 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic) BOOL morphing;
 @property (nonatomic) BOOL morphRefreshQueued;
 @property (nonatomic) CGSize morphFinalSize;
+@property (nonatomic) CGFloat morphLensAmount;
+@property (nonatomic) NSInteger morphTintStep;
 @property (nonatomic, strong) SGLegacyGlassView *morphGlass;
 @property (nonatomic, strong) UIView *morphOutgoingContent;
 @property (nonatomic) BOOL waitingForDeferred;
@@ -380,7 +420,14 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
-    CGFloat radius = self.morphing ? MIN(kRadius, MIN(self.bounds.size.width, self.bounds.size.height)/2) : kRadius;
+    CGFloat halfSide = MIN(self.bounds.size.width,
+                           self.bounds.size.height) / 2.0;
+    CGFloat radius = kRadius;
+    if (self.morphing) {
+        radius = MIN(halfSide,
+                     morphMix(kRadius, halfSide,
+                              morphClamp(self.morphLensAmount)));
+    }
     if (self.layer.cornerRadius != radius) self.layer.cornerRadius = radius;
     if (self.morphing && self.morphGlass) {
         // The warm destination material is retained during motion. Only its
@@ -389,6 +436,18 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         if (!CGRectEqualToRect(glass.frame, self.bounds)) glass.frame = self.bounds;
         SGShapeGlass(glass, radius, NO);
         SGRThickenSheetGlass(glass, radius);
+
+        NSInteger tintStep = (NSInteger)lround(
+            8.0 * morphClamp(self.morphLensAmount));
+        if (self.morphTintStep != tintStep) {
+            self.morphTintStep = tintStep;
+            CGFloat lens = (CGFloat)tintStep / 8.0;
+            CGFloat settledDim = self.isSubmenu ? 0.82 : 0.62;
+            SGRDimSheetGlassTint(glass,
+                [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
+                                  alpha:settledDim - 0.28 * lens]);
+        }
+
         [glass layoutIfNeeded];
     } else {
         UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, radius);
@@ -954,6 +1013,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             }
             panel.morphing = YES;
             panel.morphFinalSize = target.size;
+            panel.morphLensAmount = parent ? 0.0 : 1.0;
+            panel.morphTintStep = parent ? 0 : -1;
             panel.userInteractionEnabled = NO;
             if (parent) {
                 // Snapshot only the text/controls, not the parent's glass.
@@ -1004,9 +1065,19 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     CGFloat g = morphGeometry(t);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    panel.frame = morphRect(self.morphFrom, self.morphTo, g);
+    // More retains its existing surface expansion.
+    // Root opening has independent flight and unfolding phases.
+    CGFloat unfold = self.morphFromParent
+        ? g : morphGeometry((t - 0.32) / 0.68);
+
+    panel.morphLensAmount = self.morphFromParent
+        ? 0.0 : 1.0 - unfold;
+
+    panel.frame = self.morphFromParent
+        ? morphRect(self.morphFrom, self.morphTo, g)
+        : morphFlightFrame(self.morphFrom, self.morphTo, t, unfold);
     panel.scroll.alpha = self.morphFromParent ? morphSmooth((t-0.30)/0.52)
-                                                 : morphSmooth((t-0.18)/0.58);
+                                                 : morphSmooth((unfold-0.50)/0.47);
     panel.morphOutgoingContent.alpha = 1-morphSmooth(t/0.30);
     panel.scrollThumb.alpha = 0;
     [panel setNeedsLayout];
@@ -1024,6 +1095,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     [CATransaction setDisableActions:YES];
     panel.frame = self.morphTo;
     panel.morphing = NO;
+    panel.morphLensAmount = 0;
+    panel.morphTintStep = 0;
     panel.morphGlass.geometryTransitionActive = NO;
     panel.morphGlass = nil;
     panel.alpha = 1;
