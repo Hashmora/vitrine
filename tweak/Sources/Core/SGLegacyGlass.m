@@ -681,7 +681,7 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     for (NSUInteger i = 0; i < sizes.count; i++) {
         CGFloat compact = MAX(0, MIN(1, compactAmounts[i].doubleValue));
         id mesh = SGMakeGlassMesh(sizes[i].CGSizeValue, radii[i].doubleValue,
-                                  _magnification * (1 + 0.06 * compact), _lensScale,
+                                  _magnification * (1 + 0.06 * compact), _lensScale * (1 + 0.38 * compact),
                                   YES, _lateralRefraction, _lateralVerticalReach, compact);
         [meshes addObject:mesh ?: NSNull.null];
     }
