@@ -22,7 +22,7 @@ id _Nullable SGLegacyPlayerContentMesh(CGFloat amount);
 
 // Where a caller puts its own content, like UIVisualEffectView.contentView: the backdrop and the mesh
 // live behind it.
-@property (nonatomic, strong, readonly) UIView *contentView;
+@property (nonatomic, strong, readonly) UIView * _Nonnull contentView;
 
 // Corner radius of the glass. Ignored while `capsule` is set, which rounds to half the shorter side.
 @property (nonatomic) CGFloat cornerRadius;
@@ -62,9 +62,9 @@ id _Nullable SGLegacyPlayerContentMesh(CGFloat amount);
 @property (nonatomic) BOOL geometryTransitionActive;
 // Root-player morph only: prepare optical keyframes before the display link.
 // Each index addresses a single live backdrop, never a second glass pane.
-- (void)prepareGeometryTransitionSizes:(NSArray<NSValue *> *)sizes
-                                 radii:(NSArray<NSNumber *> *)radii
-                        compactAmounts:(NSArray<NSNumber *> *)compactAmounts;
+- (void)prepareGeometryTransitionSizes:(NSArray<NSValue *> * _Nullable)sizes
+                                 radii:(NSArray<NSNumber *> * _Nullable)radii
+                        compactAmounts:(NSArray<NSNumber *> * _Nullable)compactAmounts;
 - (void)applyGeometryTransitionMeshAtIndex:(NSUInteger)index;
 
 // Lateral refractive crescents for the Legacy tab lens only. The upper and
@@ -85,6 +85,6 @@ id _Nullable SGLegacyPlayerContentMesh(CGFloat amount);
 // Unified three-part directional rim: same diagonal glare, fine perimeter and
 // long specular on all Legacy panes, their films, and detached compact controls.
 // The host-layer variant supports shapes whose backdrop is hidden temporarily.
-void SGLegacyGlassSpecular(CALayer *host, CGRect bounds, CGFloat radius);
-void SGLegacyGlassClassicSpecular(CALayer *host, CGRect bounds, CGFloat radius);
-void SGLegacyGlassSetSpecularHidden(CALayer *host, BOOL hidden);
+void SGLegacyGlassSpecular(CALayer * _Nullable host, CGRect bounds, CGFloat radius);
+void SGLegacyGlassClassicSpecular(CALayer * _Nullable host, CGRect bounds, CGFloat radius);
+void SGLegacyGlassSetSpecularHidden(CALayer * _Nullable host, BOOL hidden);
