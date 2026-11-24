@@ -41,12 +41,11 @@ static CGFloat morphGeometry(CGFloat t) {
     const CGFloat w = 5.8;
     return (1-(1+w*t)*exp(-w*t))/(1-(1+w)*exp(-w));
 }
-// The paired Stage 198 captures show two rounded previews and one direct
-// native opening. Keep a short readable preview (not the variable UIKit
-// hold) and budget distinct callbacks for the launch and the release.
+// Stage 200: launch and release overlap. The long native preview hold is
+// a simulator artefact, not part of the target morph. Keep the shape moving.
 static const NSUInteger kPlayerMorphMeshSteps = 12;
-static const CGFloat kPlayerLaunchEnd = 1.0/3.0;
-static const CGFloat kPlayerReleaseStart = 0.45;
+static const CGFloat kPlayerLaunchEnd = 0.42;
+static const CGFloat kPlayerReleaseStart = 0.31;
 static CGFloat morphRelease(CGFloat t) {
     return morphGeometry((t-kPlayerReleaseStart)/(1-kPlayerReleaseStart));
 }
@@ -57,8 +56,8 @@ static CGFloat morphLensRadius(CGSize size, CGFloat lens) {
 static CGRect morphFlightFrame(CGRect a, CGRect b, CGFloat t, CGFloat release) {
     CGFloat launch = morphGeometry(t/kPlayerLaunchEnd);
     CGFloat previewW = b.size.width * 0.98;
-    CGFloat previewH = b.size.height * 0.98;
-    CGFloat drop = MIN(80.0, b.size.height * 0.25);
+    CGFloat previewH = b.size.height * 0.94;
+    CGFloat drop = MIN(76.0, b.size.height * 0.24);
     CGFloat px = CGRectGetMidX(b);
     CGFloat py = CGRectGetMidY(b) + drop;
     CGFloat cx = morphMix(morphMix(CGRectGetMidX(a), px, launch), CGRectGetMidX(b), release);
@@ -371,6 +370,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic, copy) void (^back)(void);
 @property (nonatomic) CGFloat actualHeight;
 - (void)configure:(UIMenu *)menu title:(NSString *)title maxHeight:(CGFloat)maximum;
+- (void)applyPlayerContentLens:(CGFloat)amount;
 @end
 
 @implementation SGRDropdownPanel
@@ -430,14 +430,14 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         CGFloat materialCompact = (CGFloat)tintStep / 8.0;
         // Native preview is already dark and optically soft, unlike a clear
         // tab control. Do not use the full compact material range here.
-        if (self.playerRootGlass) materialCompact *= 0.20;
+        if (self.playerRootGlass) materialCompact = 0;
         SGRThickenSheetGlassMorph(glass, radius, materialCompact);
         if (self.morphTintStep != tintStep) {
             self.morphTintStep = tintStep;
             CGFloat lens = (CGFloat)tintStep / 8.0;
             CGFloat settledDim = self.isSubmenu ? 0.82 : 0.62;
             UIColor *dim = self.playerRootGlass
-                ? [UIColor colorWithWhite:0.08 alpha:0.74 - 0.04 * lens]
+                ? [UIColor colorWithWhite:0.12 alpha:0.60 - 0.04 * lens]
                 : [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
                                     alpha:settledDim - 0.42 * lens];
             SGRDimSheetGlassTint(glass, dim);
@@ -447,7 +447,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     } else {
         UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, radius);
         if (glass) SGRDimSheetGlassTint(glass, self.playerRootGlass
-            ? [UIColor colorWithWhite:0.08 alpha:0.74]
+            ? [UIColor colorWithWhite:0.12 alpha:0.60]
             : [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
                                 alpha:self.isSubmenu ? 0.82 : 0.62]);
     }
@@ -462,6 +462,34 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     } else {
         self.scroll.frame = self.bounds;
         [self updateScrollThumb];
+    }
+}
+// Approximate the refractive displacement of the menu contents with a
+// local affine derivative of a smooth radial field. Only individual glyphs
+// and labels move; row layout, hit targets and the scroll viewport stay put.
+// This is not a per-pixel warp: avoid an extra offscreen mesh/raster pass.
+- (void)applyPlayerContentLens:(CGFloat)amount {
+    if (!self.playerRootGlass) return;
+    amount = morphClamp(amount);
+    CGFloat hw = MAX(1, self.morphFinalSize.width/2);
+    CGFloat hh = MAX(1, self.morphFinalSize.height/2);
+    for (SGRDropdownPress *press in self.allButtons) {
+        for (UIView *item in press.subviews) {
+            if (![item isKindOfClass:UILabel.class] && ![item isKindOfClass:UIImageView.class]) continue;
+            CGAffineTransform next = CGAffineTransformIdentity;
+            if (amount > 0) {
+                // center is in press coordinates and independent of item's transform.
+                CGPoint p = [press convertPoint:item.center toView:self.body];
+                CGFloat x = MAX(-1, MIN(1, (p.x-self.scroll.bounds.origin.x-hw)/hw));
+                CGFloat y = MAX(-1, MIN(1, (p.y-self.scroll.bounds.origin.y-hh)/hh));
+                CGFloat r2 = x*x+y*y;
+                CGFloat kx = 0.10*amount, ky = 0.18*amount;
+                next = CGAffineTransformMake(1+kx*(3*x*x+y*y),
+                    2*ky*x*y*hh/hw, 2*kx*x*y*hw/hh,
+                    1+ky*(x*x+3*y*y), kx*x*r2*hw, ky*y*r2*hh);
+            }
+            if (!CGAffineTransformEqualToTransform(item.transform, next)) item.transform = next;
+        }
     }
 }
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
@@ -1039,7 +1067,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                         CGSize size = morphFlightFrame(source, target, t, release).size;
                         [sizes addObject:[NSValue valueWithCGSize:size]];
                         [radii addObject:@(morphLensRadius(size, 1-release))];
-                        [amounts addObject:@(1-release)];
+                        [amounts addObject:@(0.55*(1-release))];
                     }
                     [panel.morphGlass prepareGeometryTransitionSizes:sizes radii:radii compactAmounts:amounts];
                     [panel.morphGlass applyGeometryTransitionMeshAtIndex:0];
@@ -1118,7 +1146,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         self.rootMorphTicks++;
         self.rootMorphMaxDelta = MAX(self.rootMorphMaxDelta, delta);
         if (delta > maxStep + 0.001) self.rootMorphCappedTicks++;
-        if (t >= kPlayerLaunchEnd && t <= kPlayerReleaseStart) self.rootMorphPreviewTicks++;
+        if (t >= kPlayerReleaseStart && t <= kPlayerLaunchEnd) self.rootMorphPreviewTicks++;
     }
 #endif
     CGFloat g = morphGeometry(t);
@@ -1145,9 +1173,13 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         panel.scroll.alpha = morphSmooth((t-0.30)/0.52);
     } else {
         BOOL filtered = panel.scroll.layer.filters.count > 0;
-        panel.scroll.alpha = filtered ? morphSmooth(t/0.24) * morphMix(0.85, 1, unfold)
+        CGFloat launch = morphGeometry(t/kPlayerLaunchEnd);
+        panel.scroll.alpha = filtered ? morphSmooth(t/0.24) * morphMix(0.88, 1, unfold)
                                       : morphSmooth((t-0.16)/0.58);
-        NSInteger blurStep = (NSInteger)lround(8 * (1-unfold));
+        // Softer centre and stronger rim displacement while the lens opens.
+        // Remove all transforms on completion, including interrupted reveals.
+        [panel applyPlayerContentLens:launch*(1-unfold)];
+        NSInteger blurStep = (NSInteger)lround(morphMix(8, 5, launch)*(1-unfold));
         if (filtered && panel.morphContentBlurStep != blurStep) {
             panel.morphContentBlurStep = blurStep;
             @try {
@@ -1173,7 +1205,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 #if SG_DRIVER
     if (!self.morphFromParent && self.rootMorphSetupAt > 0) {
         CFTimeInterval ended = CACurrentMediaTime();
-        SGLog(@"stage199 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f preview_ticks=%lu",
+        SGLog(@"stage200 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f overlap_ticks=%lu",
               self.morphElapsed >= self.morphDuration,
               self.rootMorphFirstTick > 0 ? (self.rootMorphFirstTick-self.rootMorphSetupAt)*1000 : -1.0,
               self.rootMorphFirstTick > 0 ? (ended-self.rootMorphFirstTick)*1000 : -1.0,
@@ -1192,7 +1224,10 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     panel.morphTintStep = 0;
     panel.morphGlass.geometryTransitionActive = NO;
     panel.morphGlass = nil;
-    if (panel.playerRootGlass) panel.scroll.layer.filters = nil;
+    if (panel.playerRootGlass) {
+        [panel applyPlayerContentLens:0];
+        panel.scroll.layer.filters = nil;
+    }
     panel.alpha = 1;
     panel.scroll.alpha = 1;
     panel.scrollThumb.alpha = 1;
