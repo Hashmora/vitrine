@@ -530,7 +530,9 @@ void SGRStylePlayerRootLegacyGlass(UIView *glass, CGFloat cornerRadius) {
     if (![glass isKindOfClass:SGLegacyGlassView.class]) return;
     SGLegacyGlassView *legacy = (SGLegacyGlassView *)glass;
     legacy.clear = YES; // omit the standard high-saturation colour matrix
-    legacy.blurRadius = 6.0;
+    // Stage 201 still reproduced nearly black artwork through the final
+    // pane. Soften local contrast with a slightly wider sampling kernel.
+    legacy.blurRadius = 9.0;
     UIView *host = glassContent(glass);
     UIView *body = bodyLayer(host, &kSheetBodyKey);
     UIColor *tint = SGRReduceTransparency() ? SGRSolidGlassFill() : [UIColor colorWithWhite:1 alpha:0.035];
@@ -544,7 +546,9 @@ void SGRStylePlayerRootLegacyGlass(UIView *glass, CGFloat cornerRadius) {
         rim.layer.borderColor = border.CGColor;
     if (![rim.layer.cornerCurve isEqualToString:kCACornerCurveContinuous]) rim.layer.cornerCurve = kCACornerCurveContinuous;
     if (rim.layer.cornerRadius != cornerRadius) rim.layer.cornerRadius = cornerRadius;
-    UIColor *dimTint = [UIColor colorWithWhite:0.02 alpha:0.46];
+    // Lift the darkest samples while attenuating the brighter artwork.
+    // Neutral rather than album-coloured: the live backdrop supplies chroma.
+    UIColor *dimTint = [UIColor colorWithWhite:0.12 alpha:0.54];
     UIView *dim = objc_getAssociatedObject(host, &kSheetDimKey);
     UIColor *effectiveDim = SGRReduceTransparency() ? UIColor.blackColor : dimTint;
     if (!dim || ![dim.backgroundColor isEqual:effectiveDim] || host.subviews.lastObject != rim)

@@ -45,7 +45,7 @@ static CGFloat morphGeometry(CGFloat t) {
 // a simulator artefact, not part of the target morph. Keep the shape moving.
 static const NSUInteger kPlayerMorphMeshSteps = 18;
 static const CGFloat kPlayerLaunchEnd = 0.42;
-static const CGFloat kPlayerReleaseStart = 0.31;
+static const CGFloat kPlayerReleaseStart = 0.36;
 static CGFloat morphRelease(CGFloat t) {
     return morphGeometry((t-kPlayerReleaseStart)/(1-kPlayerReleaseStart));
 }
@@ -56,8 +56,8 @@ static CGFloat morphLensRadius(CGSize size, CGFloat lens) {
 static CGRect morphFlightFrame(CGRect a, CGRect b, CGFloat t, CGFloat release) {
     CGFloat launch = morphGeometry(t/kPlayerLaunchEnd);
     CGFloat previewW = b.size.width * 0.98;
-    CGFloat previewH = b.size.height * 0.94;
-    CGFloat drop = MIN(76.0, b.size.height * 0.24);
+    CGFloat previewH = b.size.height * 1.035;
+    CGFloat drop = MIN(86.0, b.size.height * 0.27);
     CGFloat px = CGRectGetMidX(b);
     CGFloat py = CGRectGetMidY(b) + drop;
     CGFloat cx = morphMix(morphMix(CGRectGetMidX(a), px, launch), CGRectGetMidX(b), release);
@@ -370,7 +370,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic, copy) void (^back)(void);
 @property (nonatomic) CGFloat actualHeight;
 - (void)configure:(UIMenu *)menu title:(NSString *)title maxHeight:(CGFloat)maximum;
-- (void)applyPlayerContentLens:(CGFloat)amount;
+- (void)applyPlayerContentLens:(CGFloat)amount release:(CGFloat)release;
 @end
 
 @implementation SGRDropdownPanel
@@ -470,20 +470,28 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 // local affine derivative of a smooth radial field. Only individual glyphs
 // and labels move; row layout, hit targets and the scroll viewport stay put.
 // This is not a per-pixel warp: avoid an extra offscreen mesh/raster pass.
-- (void)applyPlayerContentLens:(CGFloat)amount {
+- (void)applyPlayerContentLens:(CGFloat)amount release:(CGFloat)release {
     if (!self.playerRootGlass) return;
     amount = morphClamp(amount);
+    release = morphClamp(release);
     CGFloat hw = MAX(1, self.morphFinalSize.width/2);
     CGFloat hh = MAX(1, self.morphFinalSize.height/2);
     for (SGRDropdownPress *press in self.allButtons) {
         for (UIView *item in press.subviews) {
             if (![item isKindOfClass:UILabel.class] && ![item isKindOfClass:UIImageView.class]) continue;
+            // Center is independent of the item's current affine transform.
+            CGPoint p = [press convertPoint:item.center toView:self.body];
+            CGFloat x = MAX(-1, MIN(1, (p.x-self.scroll.bounds.origin.x-hw)/hw));
+            CGFloat y = MAX(-1, MIN(1, (p.y-self.scroll.bounds.origin.y-hh)/hh));
+            // Native preview exposes the middle rows first. Suppress the
+            // upper and lower glyphs while the rounded rim is still closed;
+            // keep a continuous, position-dependent reveal during release.
+            CGFloat edge = morphSmooth((fabs(y)-0.36)/0.48);
+            CGFloat aperture = morphSmooth((release-0.18)/0.66);
+            CGFloat opacity = 1-edge*(1-aperture)*0.96;
+            if (item.alpha != opacity) item.alpha = opacity;
             CGAffineTransform next = CGAffineTransformIdentity;
             if (amount > 0) {
-                // center is in press coordinates and independent of item's transform.
-                CGPoint p = [press convertPoint:item.center toView:self.body];
-                CGFloat x = MAX(-1, MIN(1, (p.x-self.scroll.bounds.origin.x-hw)/hw));
-                CGFloat y = MAX(-1, MIN(1, (p.y-self.scroll.bounds.origin.y-hh)/hh));
                 CGFloat r2 = x*x+y*y;
                 // Bias the field toward the upper/lower edges. Keep the
                 // central labels relatively stable while the quick actions
@@ -1095,6 +1103,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 parent.alpha = 0;
             }
             panel.scroll.alpha = 0;
+            if (!parent) [panel applyPlayerContentLens:0 release:0];
             if (!parent && !SGRReduceTransparency()) {
                 // Blur just the existing content, never the live backdrop.
                 // Same CAFilter approach as PlayerMotion; fail soft if absent.
@@ -1187,8 +1196,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         // edge stretch further into release instead of fading all optical
         // effects by the same linear factor.
         CGFloat edgeRelease = morphSmooth((unfold-0.18)/0.82);
-        [panel applyPlayerContentLens:launch*(1-edgeRelease)];
-        NSInteger blurStep = (NSInteger)lround(morphMix(8, 5, launch)*pow(1-unfold, 1.65));
+        [panel applyPlayerContentLens:launch*(1-edgeRelease) release:unfold];
+        NSInteger blurStep = (NSInteger)lround(morphMix(8, 7, launch)*pow(1-unfold, 0.90));
         if (filtered && panel.morphContentBlurStep != blurStep) {
             panel.morphContentBlurStep = blurStep;
             @try {
@@ -1214,7 +1223,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 #if SG_DRIVER
     if (!self.morphFromParent && self.rootMorphSetupAt > 0) {
         CFTimeInterval ended = CACurrentMediaTime();
-        SGLog(@"stage201 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f overlap_ticks=%lu",
+        SGLog(@"stage202 player root: completed=%d setup_ms=%.1f wall_ms=%.1f elapsed_ms=%.1f ticks=%lu capped=%lu max_delta_ms=%.1f overlap_ticks=%lu",
               self.morphElapsed >= self.morphDuration,
               self.rootMorphFirstTick > 0 ? (self.rootMorphFirstTick-self.rootMorphSetupAt)*1000 : -1.0,
               self.rootMorphFirstTick > 0 ? (ended-self.rootMorphFirstTick)*1000 : -1.0,
@@ -1234,7 +1243,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     panel.morphGlass.geometryTransitionActive = NO;
     panel.morphGlass = nil;
     if (panel.playerRootGlass) {
-        [panel applyPlayerContentLens:0];
+        [panel applyPlayerContentLens:0 release:1];
         panel.scroll.layer.filters = nil;
     }
     panel.alpha = 1;
