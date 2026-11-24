@@ -26,9 +26,9 @@ static CGAffineTransform dropdownExitingTransform(void) {
                                    CGAffineTransformMakeTranslation(0, 5));
 }
 static char kOwnedGlassKey;
-// Root: two-phase video-fit approximation; More retains the Stage 190 clock.
+// Root and submenu use distinct video-fit geometry profiles.
 // Neither is a recovered UIKit spring constant.
-static const NSTimeInterval kPlayerMorphOpen = 0.54, kPlayerMorphMore = 0.27;
+static const NSTimeInterval kPlayerMorphOpen = 0.54, kPlayerMorphMore = 0.25;
 // A slow render callback must not skip the rounded preview altogether.
 static const NSTimeInterval kPlayerRootMaxStep = 1.0/30.0;
 static CGFloat morphMix(CGFloat a, CGFloat b, CGFloat t) { return a + (b-a)*t; }
@@ -59,14 +59,15 @@ static CGRect morphFlightFrame(CGRect a, CGRect b, CGFloat t, CGFloat release) {
     CGFloat previewH = b.size.height * 1.035;
     CGFloat drop = MIN(86.0, b.size.height * 0.27);
     CGFloat px = CGRectGetMidX(b);
-    CGFloat py = CGRectGetMidY(b) + drop;
+    CGFloat direction = CGRectGetMidY(a) > CGRectGetMidY(b) ? -1 : 1;
+    CGFloat py = CGRectGetMidY(b) + direction*drop;
     CGFloat cx = morphMix(morphMix(CGRectGetMidX(a), px, launch), CGRectGetMidX(b), release);
     CGFloat cy = morphMix(morphMix(CGRectGetMidY(a), py, launch), CGRectGetMidY(b), release);
     CGFloat w = morphMix(morphMix(a.size.width, previewW, launch), b.size.width, release);
     CGFloat h = morphMix(morphMix(a.size.height, previewH, launch), b.size.height, release);
     // Small upward recoil near the end; zero at both endpoints.
     CGFloat tail = morphClamp((t-0.72)/0.28);
-    cy -= 4.0 * sin(M_PI * tail) * sin(M_PI * tail);
+    cy -= direction * 4.0 * sin(M_PI * tail) * sin(M_PI * tail);
     return CGRectMake(cx-w/2, cy-h/2, w, h);
 }
 
@@ -75,17 +76,31 @@ static CGRect morphRect(CGRect a, CGRect b, CGFloat t) {
                       morphMix(a.size.width,b.size.width,t), morphMix(a.size.height,b.size.height,t));
 }
 
-static CGRect dropdownCollapseFrame(CGRect from, CGRect to, CGFloat t) {
-    CGFloat size = morphSmooth(t/0.90);
-    CGFloat travel = morphSmooth((t-0.10)/0.90);
-    CGFloat w = morphMix(from.size.width,to.size.width,size);
-    CGFloat h = morphMix(from.size.height,to.size.height,size);
-    CGFloat x = morphMix(CGRectGetMidX(from),CGRectGetMidX(to),travel);
-    CGFloat y = morphMix(CGRectGetMidY(from),CGRectGetMidY(to),travel);
-    return CGRectMake(x-w/2,y-h/2,w,h);
+// Submenus preserve the row's width and unfold their two vertical edges.
+static CGRect dropdownSubmenuFrame(CGRect from, CGRect to, CGFloat t) {
+    CGFloat g = morphGeometry(t);
+    CGFloat vertical = morphSmooth(t);
+    CGFloat left = morphMix(CGRectGetMinX(from), CGRectGetMinX(to), g);
+    CGFloat right = morphMix(CGRectGetMaxX(from), CGRectGetMaxX(to), g);
+    CGFloat top = morphMix(CGRectGetMinY(from), CGRectGetMinY(to), vertical);
+    CGFloat bottom = morphMix(CGRectGetMaxY(from), CGRectGetMaxY(to), g);
+    return CGRectMake(left,top,MAX(1,right-left),MAX(1,bottom-top));
 }
-static CGFloat dropdownCloseLens(CGFloat initial, CGFloat t) {
-    return morphMix(initial,1,morphSmooth(t/0.72));
+static CGFloat dropdownSubmenuLens(CGFloat t) { return 0.22*(1-morphGeometry(t)); }
+// Close toward the anchor's edges immediately, instead of forming a stationary
+// central bubble. A compact lens is only visible at the very end.
+static CGRect dropdownCollapseFrame(CGRect from, CGRect to, CGFloat t, BOOL submenu) {
+    if (submenu) return dropdownSubmenuFrame(to,from,1-morphSmooth(t));
+    CGFloat g = morphSmooth(t);
+    CGFloat h = morphSmooth(t/0.94);
+    CGFloat x = morphMix(CGRectGetMinX(from),CGRectGetMinX(to),g);
+    CGFloat right = morphMix(CGRectGetMaxX(from),CGRectGetMaxX(to),g);
+    CGFloat y = morphMix(CGRectGetMinY(from),CGRectGetMinY(to),h);
+    CGFloat bottom = morphMix(CGRectGetMaxY(from),CGRectGetMaxY(to),h);
+    return CGRectMake(x,y,MAX(1,right-x),MAX(1,bottom-y));
+}
+static CGFloat dropdownCloseLens(CGFloat initial, CGFloat t, BOOL submenu) {
+    return morphMix(initial,submenu ? 0.22 : 0.82,morphSmooth(t));
 }
 static CGFloat dropdownHostedLens(CGFloat t) {
     CGFloat v = sin(M_PI*morphClamp(t));
@@ -382,6 +397,14 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic) BOOL elasticDrag;
 @property (nonatomic) BOOL elasticHorizontal;
 @property (nonatomic) BOOL elasticEnabled;
+@property (nonatomic) CGPoint elasticAnchor; // normalized point on the originating edge
+@property (nonatomic) BOOL elasticReturning;
+@property (nonatomic) NSUInteger elasticGeneration;
+@property (nonatomic) CGAffineTransform elasticStartTransform;
+@property (nonatomic, copy) void (^elasticSettled)(void);
+- (BOOL)elasticInteractionActive;
+- (void)settleElasticInteraction;
+- (void)updateSurfaceLight:(CGPoint)point;
 @property (nonatomic, strong) UILongPressGestureRecognizer *surfaceTouch;
 @property (nonatomic, strong) CAGradientLayer *touchLight;
 @property (nonatomic, strong) UIMenu *menu;
@@ -464,10 +487,10 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
             [self addGestureRecognizer:self.surfaceTouch];
             self.touchLight = [CAGradientLayer layer];
             self.touchLight.type = kCAGradientLayerRadial;
-            self.touchLight.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.085].CGColor,
-                                        (id)[UIColor colorWithWhite:1 alpha:0.045].CGColor,
+            self.touchLight.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.155].CGColor,
+                                        (id)[UIColor colorWithWhite:1 alpha:0.085].CGColor,
                                         (id)[UIColor colorWithWhite:1 alpha:0].CGColor];
-            self.touchLight.locations = @[@0,@0.42,@1];
+            self.touchLight.locations = @[@0,@0.48,@1];
             self.touchLight.startPoint = CGPointMake(0.5,0.5);
             self.touchLight.endPoint = CGPointMake(1,1);
             self.touchLight.opacity = 0;
@@ -485,7 +508,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         [CATransaction begin]; [CATransaction setDisableActions:YES];
         // Preserve the local touch centre as bounds change; the large gradient
         // is clipped by the panel instead of squeezed into its bounds.
-        CGFloat reach = MAX(180, MAX(self.bounds.size.width,self.bounds.size.height)*0.55);
+        CGFloat reach = MAX(205, MAX(self.bounds.size.width,self.bounds.size.height)*0.65);
         self.touchLight.bounds = CGRectMake(0,0,reach*2,reach*2);
         [CATransaction commit];
     }
@@ -530,7 +553,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         // clips it; don't resize the scrolling viewport on every refresh.
         CGFloat dx = self.bounds.size.width-self.morphFinalSize.width;
         CGFloat dy = self.bounds.size.height-self.morphFinalSize.height;
-        self.scroll.frame = CGRectMake(dx/2, dy/2,
+        self.scroll.frame = CGRectMake(dx/2, self.isSubmenu ? 0 : dy/2,
                                        self.morphFinalSize.width, self.morphFinalSize.height);
     } else {
         self.scroll.frame = self.bounds;
@@ -755,16 +778,26 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         [self.allButtons addObject:press];
     }
 }
+- (BOOL)elasticInteractionActive {
+    UIGestureRecognizerState state = self.surfaceTouch.state;
+    return self.elasticDrag || self.elasticReturning || state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged;
+}
+- (void)settleElasticInteraction {
+    if (![self elasticInteractionActive] && self.elasticSettled) self.elasticSettled();
+}
+- (void)updateSurfaceLight:(CGPoint)point {
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    self.touchLight.position = point;
+    self.touchLight.opacity = 1;
+    [CATransaction commit];
+}
 - (void)flashSurface:(UILongPressGestureRecognizer *)gesture {
     UIGestureRecognizerState state = gesture.state;
     if (state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged) {
         if (self.morphing) return;
         CGPoint point = [gesture locationInView:self];
         CGFloat prior = ((CALayer *)self.touchLight.presentationLayer ?: self.touchLight).opacity;
-        [CATransaction begin]; [CATransaction setDisableActions:YES];
-        self.touchLight.position = point;
-        self.touchLight.opacity = 1;
-        [CATransaction commit];
+        [self updateSurfaceLight:point];
         if (state == UIGestureRecognizerStateBegan) {
 #if SG_DRIVER
             SGLog(@"stage205 popup touch: begin point=%@",NSStringFromCGPoint(point));
@@ -778,6 +811,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 #if SG_DRIVER
         SGLog(@"stage205 popup touch: end");
 #endif
+        if (self.elasticDrag) return; // the pan still owns this contact
         CGFloat prior = ((CALayer *)self.touchLight.presentationLayer ?: self.touchLight).opacity;
         [self.touchLight removeAnimationForKey:@"Vitrine.TouchLight"];
         [CATransaction begin]; [CATransaction setDisableActions:YES];
@@ -786,10 +820,13 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
         fade.fromValue = @(prior); fade.toValue = @0; fade.duration = 0.22;
         [self.touchLight addAnimation:fade forKey:@"Vitrine.TouchLight"];
+        [self settleElasticInteraction];
     }
 }
 - (void)resetElastic {
     if (!self.elasticEnabled) return;
+    self.elasticGeneration++; self.elasticReturning = NO;
+    [self.layer removeAnimationForKey:@"Vitrine.ElasticReturn"];
     [self.touchLight removeAllAnimations];
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     self.touchLight.opacity = 0;
@@ -844,6 +881,15 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         self.dragStartOffset = offset;
         self.dragIsScrolling = NO;
         self.elasticDrag = NO;
+        if (self.elasticEnabled) {
+            BOOL interrupted = self.elasticReturning;
+            CALayer *live = (CALayer *)self.layer.presentationLayer;
+            CGAffineTransform current = live ? live.affineTransform : self.transform;
+            self.elasticGeneration++; self.elasticReturning = NO;
+            [self.layer removeAnimationForKey:@"Vitrine.ElasticReturn"];
+            self.transform = current; self.elasticStartTransform = current;
+            self.elasticDrag = interrupted; // even a cancelled second pan must settle
+        }
         [self.selectionFeedback prepare];
     }
     if (state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged) {
@@ -867,15 +913,30 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 self.elasticDrag = YES;
                 if (!self.scroll.hidden && self.scroll.scrollEnabled) self.scroll.contentOffset = self.dragStartOffset;
                 [self highlightPress:nil notify:NO];
-                CGFloat dx = delta.x/(1+fabs(delta.x)/64.0);
-                CGFloat dy = delta.y/(1+fabs(delta.y)/64.0);
-                // Dominant axis stretches; transverse axis contracts (Poisson-like).
-                // Lock out incidental lateral drift on a mostly vertical pull.
-                if (self.elasticHorizontal) dy *= 0.18; else dx *= 0.18;
-                CGFloat ax = fabs(dx), ay = fabs(dy);
-                CGFloat sx = 1 + ax/320.0 - ay/300.0;
-                CGFloat sy = 1 + ay/270.0 - ax/400.0;
-                self.transform = CGAffineTransformMake(MAX(0.80,sx),0,0,MAX(0.84,sy),dx*0.40,dy*0.48);
+                // Use the anchor-facing edge as the pivot. Opposite edges
+                // carry the visible displacement, not the centre of the pane.
+                CGFloat dx = delta.x/(1+fabs(delta.x)/104.0);
+                CGFloat dy = delta.y/(1+fabs(delta.y)/104.0);
+                CGFloat width = MAX(1,self.bounds.size.width), height = MAX(1,self.bounds.size.height);
+                CGFloat sx, sy;
+                if (self.elasticHorizontal) {
+                    dy *= 0.08;
+                    sx = 1 + MIN(0.20,fabs(dx)/width*0.72);
+                    sy = 1 - MIN(0.09,fabs(dx)/width*0.28);
+                } else {
+                    dx *= 0.08;
+                    sx = 1 - MIN(0.12,fabs(dy)/width*0.43);
+                    sy = 1 + MIN(0.17,fabs(dy)/height*0.85);
+                }
+                CGFloat px = (self.elasticAnchor.x-0.5)*width;
+                CGFloat py = (self.elasticAnchor.y-0.5)*height;
+                CGFloat tx = (1-sx)*px + dx*0.12;
+                CGFloat ty = (1-sy)*py + dy*0.12;
+                CGFloat blend = morphSmooth(hypot(delta.x,delta.y)/45);
+                CGAffineTransform base = self.elasticStartTransform;
+                self.transform = CGAffineTransformMake(morphMix(base.a,sx,blend),0,0,morphMix(base.d,sy,blend),
+                    morphMix(base.tx,tx,blend),morphMix(base.ty,ty,blend));
+                [self updateSurfaceLight:[pan locationInView:self]];
                 return;
             }
         }
@@ -887,14 +948,45 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         state == UIGestureRecognizerStateFailed) {
         if (self.elasticDrag) {
 #if SG_DRIVER
-            SGLog(@"stage204 player touch: elastic release sx=%.3f sy=%.3f submenu=%d",self.transform.a,self.transform.d,self.isSubmenu);
+            SGLog(@"stage206 popup elastic: release sx=%.3f sy=%.3f tx=%.2f ty=%.2f anchor=%@ submenu=%d",self.transform.a,self.transform.d,self.transform.tx,self.transform.ty,NSStringFromCGPoint(self.elasticAnchor),self.isSubmenu);
 #endif
             self.elasticDrag = NO;
             self.dragIsScrolling = NO;
             [self highlightPress:nil notify:NO];
-            [UIView animateWithDuration:0.42 delay:0 usingSpringWithDamping:0.60 initialSpringVelocity:0
-                                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
-                             animations:^{ self.transform = CGAffineTransformIdentity; } completion:nil];
+            // Sample an underdamped return explicitly. Model is identity;
+            // the presentation runs through a small overshoot, then settles.
+            CGAffineTransform initial = self.transform;
+            NSUInteger generation = ++self.elasticGeneration;
+            self.elasticReturning = YES;
+            NSMutableArray *values = [NSMutableArray arrayWithCapacity:37];
+            for (NSUInteger i=0;i<=36;i++) {
+                CGFloat t=(CGFloat)i/36, q=exp(-5.8*t)*(cos(10.5*t)+(5.8/10.5)*sin(10.5*t));
+                if (i==36) q=0;
+                CGAffineTransform v=CGAffineTransformMake(1+(initial.a-1)*q,0,0,1+(initial.d-1)*q,initial.tx*q,initial.ty*q);
+                [values addObject:[NSValue valueWithCATransform3D:CATransform3DMakeAffineTransform(v)]];
+            }
+            CAKeyframeAnimation *spring=[CAKeyframeAnimation animationWithKeyPath:@"transform"];
+            spring.values=values; spring.duration=0.48; spring.calculationMode=kCAAnimationLinear;
+            [CATransaction begin]; [CATransaction setDisableActions:YES];
+            self.transform=CGAffineTransformIdentity;
+            [self.layer addAnimation:spring forKey:@"Vitrine.ElasticReturn"];
+            [CATransaction commit];
+            // The light follows the pan even if the long press was cancelled.
+            [CATransaction begin]; [CATransaction setDisableActions:YES];
+            self.touchLight.opacity=0; [CATransaction commit];
+            CABasicAnimation *fade=[CABasicAnimation animationWithKeyPath:@"opacity"];
+            fade.fromValue=@1; fade.toValue=@0; fade.duration=0.23;
+            [self.touchLight addAnimation:fade forKey:@"Vitrine.TouchLight"];
+            __weak SGRDropdownPanel *weakSelf=self;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.49*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+                SGRDropdownPanel *strongSelf=weakSelf;
+                if (!strongSelf || strongSelf.elasticGeneration!=generation) return;
+                strongSelf.elasticReturning=NO;
+#if SG_DRIVER
+                SGLog(@"stage206 popup elastic: settled submenu=%d",strongSelf.isSubmenu);
+#endif
+                [strongSelf settleElasticInteraction];
+            });
             return;
         }
         SGRDropdownPress *selection = self.dragIsScrolling || self.scroll.hidden || state != UIGestureRecognizerStateEnded ? nil :
@@ -972,7 +1064,7 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
 @property (nonatomic, weak) UIView *anchor;
 @property (nonatomic) BOOL homeFilterAnchor;
 @property (nonatomic) BOOL legacyMorph;
-@property (nonatomic) BOOL playerFlight;
+@property (nonatomic) BOOL playerMaterial;
 @property (nonatomic) BOOL deferInitialOpen;
 @property (nonatomic) BOOL morphPopping;
 @property (nonatomic) CGFloat closeInitialLens;
@@ -1043,9 +1135,9 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     self.anchor = anchor;
     self.homeFilterAnchor = [anchor.accessibilityLabel isEqualToString:@"Filter Home"];
     self.legacyMorph = SGBelowiOS26() && SGUseLegacyGlass() && !UIAccessibilityIsReduceMotionEnabled();
-    // All owned dropdowns use the same optical engine. Only the long player
-    // flight is specific to its top-right anchor and artwork destination.
-    self.playerFlight = self.legacyMorph && [menu.identifier isEqualToString:@"com.vitrine.systemmenu.top"];
+    // All owned Legacy root dropdowns use the same lens geometry. This flag
+    // now selects only the player-specific settled material, not the path.
+    self.playerMaterial = self.legacyMorph && [menu.identifier isEqualToString:@"com.vitrine.systemmenu.top"];
     self.rootMenu = menu;
     self.finish = finish;
     self.panels = [NSMutableArray array];
@@ -1180,7 +1272,9 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
         if (!strongSelf || !strongSelf.window || strongSelf.closing || !livePanel ||
             livePanel.resolution != weakResolution || ![strongSelf.panels containsObject:livePanel]) return;
         if (strongSelf.legacyMorph && strongSelf.embedded) return;
-        if (strongSelf.morphLink) {
+        BOOL interacting = NO;
+        for (SGRDropdownPanel *other in strongSelf.panels) if ([other elasticInteractionActive]) { interacting=YES; break; }
+        if (strongSelf.morphLink || interacting) {
             // Keep geometry stable while the live surface is moving. Rebuild
             // from the latest provider snapshot after the transition.
             livePanel.morphRefreshQueued = YES;
@@ -1245,7 +1339,7 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
         panel.frame = frame;
     }
     for (SGRDropdownPanel *other in self.panels) {
-        if (other == panel || other == self.panels.firstObject) continue;
+        if (other == panel || other == self.panels.firstObject || [other elasticInteractionActive]) continue;
         [other resetElastic];
         CGRect next = other.frame;
         next.origin.y = [self submenuYForHeight:other.actualHeight menu:other.menu];
@@ -1282,6 +1376,27 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     CGFloat y = parent ? [self submenuYForHeight:panel.actualHeight menu:panel.menu] : self.origin.origin.y;
     CGRect frame = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
     panel.frame = frame;
+    if (self.legacyMorph) {
+        CGRect a = [self currentAnchorFrame];
+        // Use the actual originating button, not the panel's centre. More
+        // inherits the same attached edge as its root presentation.
+        CGFloat fx = (CGRectGetMidX(a)-CGRectGetMinX(frame))/MAX(1,frame.size.width);
+        CGFloat fy = (CGRectGetMidY(a)-CGRectGetMinY(frame))/MAX(1,frame.size.height);
+        panel.elasticAnchor = CGPointMake(fx < 0.5 ? 0 : 1, fy < 0.5 ? 0 : 1);
+        __weak SGRDropdownPanel *weakPanel=panel;
+        panel.elasticSettled=^{
+            SGRDropdownPresentation *owner=weakSelf; SGRDropdownPanel *live=weakPanel;
+            if (!owner || !live || owner.closing || owner.morphLink || ![owner.panels containsObject:live]) return;
+            for (SGRDropdownPanel *other in owner.panels) if ([other elasticInteractionActive]) return;
+            UIMenu *pending=owner.morphPendingRoot; owner.morphPendingRoot=nil;
+            if (pending) { [owner update:pending]; return; }
+            for (SGRDropdownPanel *other in [owner.panels copy]) if (other.morphRefreshQueued) {
+                other.morphRefreshQueued=NO;
+                SGRDropdownResolution *resolution=other.resolution;
+                if (resolution.didChange) resolution.didChange([resolution snapshot]);
+            }
+        };
+    }
     if (self.legacyMorph && parent) parent.userInteractionEnabled = NO;
     [self.root.view addSubview:panel];
     [self.panels addObject:panel];
@@ -1323,6 +1438,12 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
         if (parent) {
             // Grow from the selected row, never from the future header.
             source = panel.submenuSource;
+            for (SGRDropdownPress *press in parent.allButtons) {
+                UIMenuElement *item=press.element;
+                if ([item isKindOfClass:UIMenu.class] && [((UIMenu *)item).identifier isEqual:panel.menu.identifier] && [item.title isEqual:panel.menu.title]) {
+                    source=[press convertRect:press.bounds toView:self.root.view]; break;
+                }
+            }
             if (CGRectIsEmpty(source)) source = CGRectMake(CGRectGetMidX(parent.frame)-22,CGRectGetMidY(parent.frame)-22,44,44);
             panel.submenuSource = source;
 #if SG_DRIVER
@@ -1341,7 +1462,7 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
             self.morphTo = target;
             self.morphDuration = parent ? kPlayerMorphMore : (self.morphReversing ? 0.34 : kPlayerMorphOpen);
             self.morphFromParent = parent != nil;
-            panel.playerRootGlass = self.playerFlight && parent == nil;
+            panel.playerRootGlass = self.playerMaterial && parent == nil;
 #if SG_DRIVER
             if (!parent) {
                 self.rootMorphSetupAt = CACurrentMediaTime();
@@ -1370,10 +1491,10 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
                     NSMutableArray<NSNumber *> *amounts = [NSMutableArray array];
                     for (NSUInteger i = 0; i <= kPlayerMorphMeshSteps; i++) {
                         CGFloat t = (CGFloat)i/kPlayerMorphMeshSteps;
-                        BOOL flight = self.playerFlight && !parent && !self.embedded;
+                        BOOL flight = !parent && !self.embedded;
                         CGFloat release = flight ? morphRelease(t) : morphGeometry(t);
-                        CGFloat lens = 1-release;
-                        CGSize size = flight ? morphFlightFrame(source,target,t,release).size : morphRect(source,target,release).size;
+                        CGFloat lens = parent ? dropdownSubmenuLens(t) : 1-release;
+                        CGSize size = parent ? dropdownSubmenuFrame(source,target,t).size : (flight ? morphFlightFrame(source,target,t,release).size : morphRect(source,target,release).size);
                         [sizes addObject:[NSValue valueWithCGSize:size]];
                         [radii addObject:@(morphLensRadius(size,lens))];
                         [amounts addObject:@(0.42*lens)];
@@ -1384,12 +1505,12 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
             }
             panel.morphing = YES;
             panel.morphFinalSize = target.size;
-            panel.morphLensAmount = 1.0;
+            panel.morphLensAmount = parent ? dropdownSubmenuLens(0) : 1.0;
             panel.morphTintStep = -1;
             panel.morphRootMaterialAmount = self.morphReversing ? 1 : 0;
             panel.userInteractionEnabled = NO;
             if (parent) {
-                parent.alpha = 0.92;
+                parent.alpha = 1;
                 parent.userInteractionEnabled = NO;
             }
             panel.scroll.alpha = self.morphReversing ? 1 : 0;
@@ -1406,10 +1527,10 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
                 @try {
                     id filter = SGFilterOfType(@"gaussianBlur");
                     if (filter) {
-                        NSNumber *initialBlur = self.morphReversing ? @0 : @8;
+                        NSNumber *initialBlur = self.morphReversing ? @0 : (parent ? @3 : @8);
                         [filter setValue:initialBlur forKey:@"inputRadius"];
                         panel.scroll.layer.filters = @[filter];
-                        panel.morphContentBlurStep = self.morphReversing ? 0 : 8;
+                        panel.morphContentBlurStep = self.morphReversing ? 0 : (parent ? 3 : 8);
                     }
                 } @catch (NSException *exception) {
                     panel.scroll.layer.filters = nil;
@@ -1462,7 +1583,7 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     self.closeInitialLens = lens; self.closeInitialAlpha = alpha;
     self.closeInitialContentAlpha = contentAlpha; self.closeInitialMaterial = material;
     self.closeHostedAlpha = self.embedded.view.alpha;
-    self.morphElapsed = 0; self.morphLastFrame = 0; self.morphDuration = popping ? 0.30 : 0.34;
+    self.morphElapsed = 0; self.morphLastFrame = 0; self.morphDuration = popping ? 0.23 : 0.24;
     panel.userInteractionEnabled = NO;
     if (self.embedded) self.embedded.view.autoresizingMask = UIViewAutoresizingNone;
     if (!panel.morphing) panel.morphFinalSize = from.size;
@@ -1474,8 +1595,8 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
         NSMutableArray *sizes = [NSMutableArray array], *radii = [NSMutableArray array], *amounts = [NSMutableArray array];
         for (NSUInteger i=0;i<=kPlayerMorphMeshSteps;i++) {
             CGFloat t=(CGFloat)i/kPlayerMorphMeshSteps;
-            CGSize size=dropdownCollapseFrame(from,destination,t).size;
-            CGFloat l=dropdownCloseLens(lens,t);
+            CGSize size=dropdownCollapseFrame(from,destination,t,popping).size;
+            CGFloat l=dropdownCloseLens(lens,t,popping);
             [sizes addObject:[NSValue valueWithCGSize:size]];
             [radii addObject:@(morphLensRadius(size,l))]; [amounts addObject:@(0.42*l)];
         }
@@ -1495,28 +1616,28 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     // Start at the first callback. Stage 198's unbounded elapsed clock
     // could consume the entire launch on a late callback. Bound each step
     // so the geometry cannot jump straight from the anchor to the menu.
-    // More's existing clock is intentionally unchanged.
+    // Short transitions use a wider cap so a delayed callback does not stretch the entire animation.
     CFTimeInterval now = link.timestamp;
     NSTimeInterval delta = self.morphLastFrame > 0 ? MAX(0, now-self.morphLastFrame) : 0;
-    NSTimeInterval maxStep = self.morphFromParent ? 1.0/30.0 : kPlayerRootMaxStep;
+    NSTimeInterval maxStep = (self.morphHosted || self.morphReversing || self.morphFromParent) ? 1.0/15.0 : kPlayerRootMaxStep;
     self.morphElapsed += MIN(maxStep, delta);
     self.morphLastFrame = now;
     CGFloat progress = morphClamp(self.morphElapsed/self.morphDuration);
     CGFloat t = progress;
     if (self.morphReversing) {
         [CATransaction begin]; [CATransaction setDisableActions:YES];
-        panel.morphLensAmount = dropdownCloseLens(self.closeInitialLens,t);
+        panel.morphLensAmount = dropdownCloseLens(self.closeInitialLens,t,self.morphPopping);
         panel.morphRootMaterialAmount = self.closeInitialMaterial*(1-morphSmooth(t));
-        panel.frame = dropdownCollapseFrame(self.morphFrom,self.morphTo,t);
+        panel.frame = dropdownCollapseFrame(self.morphFrom,self.morphTo,t,self.morphPopping);
         [panel.morphGlass applyGeometryTransitionMeshAtIndex:(NSUInteger)lround(t*kPlayerMorphMeshSteps)];
-        panel.scroll.alpha = self.closeInitialContentAlpha*(1-morphSmooth(t/0.74));
+        panel.scroll.alpha = self.closeInitialContentAlpha*(1-morphSmooth((t-0.10)/0.78));
         [panel applyPlayerContentLens:panel.morphLensAmount release:1-panel.morphLensAmount];
-        dropdownContentBlur(panel.scroll.layer,8*morphSmooth(t/0.65));
+        dropdownContentBlur(panel.scroll.layer,(self.morphPopping ? 3 : 6)*morphSmooth(t));
         if (self.embedded && panel == self.panels.firstObject) {
-            self.embedded.view.alpha = self.closeHostedAlpha*(1-morphSmooth(t/0.74));
+            self.embedded.view.alpha = self.closeHostedAlpha*(1-morphSmooth((t-0.10)/0.78));
             self.embedded.view.center = CGPointMake(CGRectGetMidX(panel.bounds),CGRectGetMidY(panel.bounds));
         }
-        panel.alpha = self.closeInitialAlpha*(1-morphSmooth((t-0.18)/0.82));
+        panel.alpha = self.closeInitialAlpha*(1-morphSmooth((t-0.50)/0.50));
         panel.scrollThumb.alpha = 0;
         [panel setNeedsLayout]; [panel layoutIfNeeded];
         [CATransaction commit];
@@ -1554,10 +1675,14 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
         UIView *old = panel.morphOutgoingContent, *incoming = self.hostedIncoming;
         old.center = CGPointMake(CGRectGetMidX(panel.bounds),CGRectGetMidY(panel.bounds));
         incoming.center = CGPointMake(CGRectGetMidX(panel.bounds),CGRectGetMidY(panel.bounds));
-        old.alpha = 1-morphSmooth(t/0.65);
-        incoming.alpha = morphSmooth((t-0.24)/0.76);
-        dropdownContentBlur(old.layer,10*lens);
-        if (!self.hostedOriginalFilters.count) dropdownContentBlur(incoming.layer,10*lens);
+        old.alpha = 1-morphSmooth(t/0.58);
+        incoming.alpha = morphSmooth((t-0.16)/0.74);
+        NSInteger blur = (NSInteger)lround(7*lens);
+        if (panel.morphContentBlurStep != blur) {
+            panel.morphContentBlurStep = blur;
+            dropdownContentBlur(old.layer,blur);
+            if (!self.hostedOriginalFilters.count) dropdownContentBlur(incoming.layer,blur);
+        }
         NSInteger idx = (NSInteger)lround(lens*12);
         if (idx != self.hostedMeshIndex && self.hostedMeshes.count == 12) {
             @try {
@@ -1570,7 +1695,7 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
         [CATransaction commit];
         if (t >= 1) {
 #if SG_DRIVER
-            SGLog(@"stage205 popup hosted: completed=1 class=%@",NSStringFromClass(self.embedded.class));
+            SGLog(@"stage206 popup hosted: completed=1 elapsed_ms=%.1f class=%@",self.morphElapsed*1000,NSStringFromClass(self.embedded.class));
 #endif
             [self finishPlayerMorph];
         }
@@ -1588,13 +1713,13 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     CGFloat g = morphGeometry(t);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    // More uses a separate foreground expansion.
+    // More uses row-anchored vertical expansion without the root preview.
     // Root grows into a rounded preview before lifting and squaring off.
-    BOOL flight = self.playerFlight && !self.morphFromParent && !self.embedded;
+    BOOL flight = !self.morphFromParent && !self.embedded;
     CGFloat unfold = flight ? morphRelease(t) : g;
-    panel.morphLensAmount = 1.0-unfold;
+    panel.morphLensAmount = self.morphFromParent ? dropdownSubmenuLens(t) : 1.0-unfold;
     if (!flight) {
-        panel.frame = morphRect(self.morphFrom, self.morphTo, g);
+        panel.frame = self.morphFromParent ? dropdownSubmenuFrame(self.morphFrom,self.morphTo,t) : morphRect(self.morphFrom, self.morphTo, g);
         [panel.morphGlass applyGeometryTransitionMeshAtIndex:(NSUInteger)lround(t*kPlayerMorphMeshSteps)];
     } else {
         CGRect frame = morphFlightFrame(self.morphFrom, self.morphTo, t, unfold);
@@ -1607,16 +1732,16 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
         BOOL filtered = panel.scroll.layer.filters.count > 0;
         CGFloat launch = flight ? morphGeometry(t/kPlayerLaunchEnd) : g;
         panel.morphRootMaterialAmount = morphSmooth((t-0.04)/0.36);
-        panel.scroll.alpha = filtered ? morphSmooth(t/0.24) * morphMix(0.88, 1, unfold)
-                                      : morphSmooth((t-0.16)/0.58);
+        panel.scroll.alpha = self.morphFromParent ? morphSmooth(t/0.27) :
+            (filtered ? morphSmooth(t/0.24) * morphMix(0.88, 1, unfold) : morphSmooth((t-0.16)/0.58));
         // Softer centre and stronger rim displacement while the lens opens.
         // Remove all transforms on completion, including interrupted reveals.
         // The centre focuses ahead of the perimeter. Preserve the
         // edge stretch further into release instead of fading all optical
         // effects by the same linear factor.
         CGFloat edgeRelease = morphSmooth((unfold-0.18)/0.82);
-        [panel applyPlayerContentLens:launch*(1-edgeRelease) release:unfold];
-        NSInteger blurStep = (NSInteger)lround(morphMix(8, 7, launch)*pow(1-unfold, 0.90));
+        [panel applyPlayerContentLens:(self.morphFromParent ? 0.28 : 1)*launch*(1-edgeRelease) release:unfold];
+        NSInteger blurStep = (NSInteger)lround((self.morphFromParent ? 3 : morphMix(8, 7, launch))*pow(1-unfold, 0.90));
         if (filtered && panel.morphContentBlurStep != blurStep) {
             panel.morphContentBlurStep = blurStep;
             @try {
@@ -1725,9 +1850,10 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     if (self.hostedTransitioning || !self.embeddedFollowsContentSize || self.embedded != controller ||
         !self.window || self.closing || !self.panels.count) return;
     SGRDropdownPanel *panel = self.panels.firstObject;
-    [panel resetElastic];
+    if ([panel elasticInteractionActive]) return;
     CGRect next = [self embeddedFrameForSize:controller.preferredContentSize];
     if (CGRectEqualToRect(next, panel.frame)) return;
+    [panel resetElastic];
     [UIView animateWithDuration:0.18 delay:0
                         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut
                      animations:^{
@@ -1792,7 +1918,7 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     }
     self.morphPanel = panel; self.morphFrom = from; self.morphTo = target;
     self.morphHosted = YES; self.morphFromParent = NO;
-    self.morphDuration = 0.42; self.morphElapsed = 0; self.morphLastFrame = 0;
+    self.morphDuration = 0.29; self.morphElapsed = 0; self.morphLastFrame = 0;
     UIView *glass = objc_getAssociatedObject(panel,&kOwnedGlassKey);
     if ([glass isKindOfClass:SGLegacyGlassView.class]) {
         panel.morphGlass = (SGLegacyGlassView *)glass;
@@ -1808,6 +1934,7 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
         [panel.morphGlass applyGeometryTransitionMeshAtIndex:0];
     }
     panel.morphing = YES; panel.morphFinalSize = target.size; panel.morphLensAmount = 0;
+    panel.morphContentBlurStep = -1;
     self.morphLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tickPlayerMorph:)];
     [self.morphLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     return YES;
@@ -1853,6 +1980,7 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
 - (void)update:(UIMenu *)menu {
     if (!menu || !self.window || self.closing || self.popping || (self.legacyMorph && self.embedded)) return;
     if (self.morphLink) { self.morphPendingRoot = menu; return; }
+    for (SGRDropdownPanel *panel in self.panels) if ([panel elasticInteractionActive]) { self.morphPendingRoot=menu; return; }
     for (SGRDropdownPanel *panel in self.panels) [panel resetElastic];
     self.rootMenu = menu;
     SGRDropdownPanel *first = self.panels.firstObject;

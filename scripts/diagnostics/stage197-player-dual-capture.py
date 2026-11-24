@@ -146,11 +146,12 @@ def recorded_event(driver, label, case, before):
             start = (x+5, y+h/2)
             via = (max(8,start[0]-95),start[1])
         else:
-            start = (x+w/2, y+h-5) if case.startswith('root') else (x+5,y+h/2)
+            start = (x+w/2, y+h-4)
             via = (start[0],start[1]+95)
         point = lambda p: f'{round(p[0])},{round(p[1])}'
         if case.endswith('-flash'):
-            return driver.call('longpress',at=point(start),duration=.85)
+            # Top rim avoids the actionable bottom row on native More/Home.
+            return driver.call('longpress',at=point((x+w/2,y+3)),duration=.85)
         return driver.call('swipe',**{'from':point(start),'to':point(via),
             'duration':.55,'hold':.45,'drag':1})
     return S.event(driver,case)
@@ -200,7 +201,7 @@ def take(driver, device, label, case, root, trial, exporter, args):
         try:
             since = report['before_verified']['state'].get('logSeq', 0)
             lines = driver.call('log', since=since).get('lines', [])
-            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:', 'stage201 player root:', 'stage202 player root:', 'stage203 player root:', 'stage204 player ', 'stage205 popup '))
+            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:', 'stage201 player root:', 'stage202 player root:', 'stage203 player root:', 'stage204 player ', 'stage205 popup ', 'stage206 popup '))
                          or 'system menu:' in line.get('text', '')]
             S.save_json(dest/'morph-lifecycle.json', {'since':since,'lines':lifecycle})
             report['morph_lifecycle_lines'] = len(lifecycle)
@@ -291,7 +292,7 @@ def main():
     devices = S.sim_devices()
     targets = [('ios26',S.resolve_sim(devices,26,args.udid26),S.Driver(args.port26)),
                ('ios18',S.resolve_sim(devices,18,args.udid18),S.Driver(args.port18))]
-    root = args.out/f'stage205-popup-lifecycle-{dt.datetime.now():%Y%m%d-%H%M%S}'
+    root = args.out/f'stage206-popup-lifecycle-{dt.datetime.now():%Y%m%d-%H%M%S}'
     root.mkdir(parents=True,exist_ok=False)
     exporter = S.build_native_extractor(args.out)
     S.save_json(root/'configuration.json',{'targets':[{'label':l,'device':d,'port':v.port} for l,d,v in targets],
