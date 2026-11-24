@@ -613,6 +613,17 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
     [self setNeedsLayout];
 }
 
+- (void)setGeometryTransitionActive:(BOOL)active {
+    if (_geometryTransitionActive == active) return;
+    _geometryTransitionActive = active;
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(settle) object:nil];
+    if (!active) {
+        _lastResize = 0;
+        _meshSize = CGSizeZero;
+        [self setNeedsLayout];
+    }
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGSize size = self.bounds.size;
@@ -623,6 +634,13 @@ static const CFTimeInterval kResizeBurst = 0.05, kSettle = 0.1;
         [CATransaction commit];
     }
     CGFloat radius = _capsule ? MIN(size.width, size.height) / 2 : _cornerRadius;
+    // The owner has already laid out the destination mesh. Even on crossing
+    // the 100pt classic threshold, keep the live backdrop and moving rim;
+    // do not switch lens families or allocate a mesh mid-transition.
+    if (_geometryTransitionActive && _meshSize.width >= 1 && _meshSize.height >= 1) {
+        [self followSize:size radius:radius];
+        return;
+    }
     if (CGSizeEqualToSize(size, _meshSize) && radius == _meshRadius) return;
     BOOL classic = self.classic;
     CFTimeInterval now = CACurrentMediaTime();

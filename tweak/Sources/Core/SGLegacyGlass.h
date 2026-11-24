@@ -53,6 +53,10 @@ BOOL SGLegacyGlassAvailable(void);
 // No light along the rim: for a pane whose owner draws its own (a held switch's lens, lit on two arcs only). NO by default.
 @property (nonatomic) BOOL rimless;
 
+// Opt-in for a single prepared menu transition. Retain its warm mesh while
+// following the moving bounds/rim; rebuild exactly once when it settles.
+@property (nonatomic) BOOL geometryTransitionActive;
+
 // Lateral refractive crescents for the Legacy tab lens only. The upper and
 // lower edge and the central channel stay unwarped; other panes are unchanged.
 @property (nonatomic) BOOL lateralRefraction;

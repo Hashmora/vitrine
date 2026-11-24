@@ -3,6 +3,7 @@
 #import <objc/runtime.h>
 #import <math.h>
 #import "Core/SGCore.h"
+#import "Core/SGLegacyGlass.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "SGRDropdownController.h"
 #import "SGRDropdownDeferred.h"
@@ -30,6 +31,13 @@ static const NSTimeInterval kPlayerMorphOpen = 0.34, kPlayerMorphMore = 0.27;
 static CGFloat morphMix(CGFloat a, CGFloat b, CGFloat t) { return a + (b-a)*t; }
 static CGFloat morphClamp(CGFloat t) { return MAX(0, MIN(1, t)); }
 static CGFloat morphSmooth(CGFloat t) { t = morphClamp(t); return t*t*(3-2*t); }
+// Fast initial expansion with a softly damped tail. Normalized to exactly 1.
+// This is a fitted approximation, not a recovered UIKit spring.
+static CGFloat morphGeometry(CGFloat t) {
+    t = morphClamp(t);
+    const CGFloat w = 5.8;
+    return (1-(1+w*t)*exp(-w*t))/(1-(1+w)*exp(-w));
+}
 static CGRect morphRect(CGRect a, CGRect b, CGFloat t) {
     return CGRectMake(morphMix(a.origin.x,b.origin.x,t), morphMix(a.origin.y,b.origin.y,t),
                       morphMix(a.size.width,b.size.width,t), morphMix(a.size.height,b.size.height,t));
@@ -318,8 +326,8 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic) BOOL homeFilterRoot;
 @property (nonatomic) BOOL morphing;
 @property (nonatomic) BOOL morphRefreshQueued;
-@property (nonatomic) CGFloat morphProgress;
-@property (nonatomic) CGFloat morphFinalWidth;
+@property (nonatomic) CGSize morphFinalSize;
+@property (nonatomic, strong) SGLegacyGlassView *morphGlass;
 @property (nonatomic, strong) UIView *morphOutgoingContent;
 @property (nonatomic) BOOL waitingForDeferred;
 @property (nonatomic, copy) void (^choose)(UIMenuElement *element);
@@ -374,22 +382,28 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     [super layoutSubviews];
     CGFloat radius = self.morphing ? MIN(kRadius, MIN(self.bounds.size.width, self.bounds.size.height)/2) : kRadius;
     if (self.layer.cornerRadius != radius) self.layer.cornerRadius = radius;
-    UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, radius);
-    // The owned pane is not UIKit's already-darkened context menu. Match the
-    // opacity of the reference surface here, rather than letting the artwork
-    // and the previous menu read sharply through the live glass material.
-    CGFloat dim = self.isSubmenu ? 0.82 : 0.62;
-    // Preserve the settled material. A small transient reduction lets the
-    // refractive edge read during expansion; no independent fake highlight.
-    if (self.morphing) dim -= 0.10 * sin(M_PI * morphClamp(self.morphProgress));
-    if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11 alpha:dim]);
+    if (self.morphing && self.morphGlass) {
+        // The warm destination material is retained during motion. Only its
+        // geometry and the directional rim follow the changing outline.
+        SGLegacyGlassView *glass = self.morphGlass;
+        if (!CGRectEqualToRect(glass.frame, self.bounds)) glass.frame = self.bounds;
+        SGShapeGlass(glass, radius, NO);
+        SGRThickenSheetGlass(glass, radius);
+        [glass layoutIfNeeded];
+    } else {
+        UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, radius);
+        if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
+                                                            alpha:self.isSubmenu ? 0.82 : 0.62]);
+    }
     if (self.morphing) {
-        // The glass changes bounds, not scale. Keep the text at full size,
-        // right-aligned with the growing surface and clipped by its contour.
-        self.scroll.frame = CGRectMake(self.bounds.size.width-self.morphFinalWidth, 0,
-                                       self.morphFinalWidth, self.bounds.size.height);
-    } else self.scroll.frame = self.bounds;
-    [self updateScrollThumb];
+        // Keep the entire destination text layout stable. The moving pane
+        // clips it; don't resize the scrolling viewport on every refresh.
+        self.scroll.frame = CGRectMake(self.bounds.size.width-self.morphFinalSize.width, 0,
+                                       self.morphFinalSize.width, self.morphFinalSize.height);
+    } else {
+        self.scroll.frame = self.bounds;
+        [self updateScrollThumb];
+    }
 }
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
     if (scrollView == self.scroll) [self updateScrollThumb];
@@ -633,7 +647,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 @property (nonatomic, weak) SGRDropdownPanel *morphPanel;
 @property (nonatomic) CGRect morphFrom;
 @property (nonatomic) CGRect morphTo;
-@property (nonatomic) CFTimeInterval morphStarted;
+@property (nonatomic) CFTimeInterval morphLastFrame;
+@property (nonatomic) NSTimeInterval morphElapsed;
 @property (nonatomic) NSTimeInterval morphDuration;
 @property (nonatomic) BOOL morphFromParent;
 @property (nonatomic, strong) UIMenu *morphPendingRoot;
@@ -720,15 +735,18 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     CGFloat safeBottom = CGRectGetHeight(self.root.view.bounds) - self.window.safeAreaInsets.bottom - 12;
     return MIN(safeBottom, CGRectGetMinY(self.origin) + kPanelMaximum);
 }
-- (CGFloat)minimumSubmenuTop {
+- (CGFloat)minimumSubmenuTop:(UIMenu *)menu {
     CGFloat bottom = [self submenuStackBottom];
-    return MIN(bottom - 1, MAX(62, CGRectGetMinY(self.origin) + kSubmenuDrop));
+    BOOL playerMore = self.playerMorph && [menu.identifier isEqualToString:@"com.vitrine.systemmenu.more"];
+    // Stage 190: tall player More can retain the root's top edge. Shorter
+    // menus still align to the bottom; other dropdowns retain their offset.
+    return MIN(bottom - 1, MAX(62, CGRectGetMinY(self.origin) + (playerMore ? 0 : kSubmenuDrop)));
 }
-- (CGFloat)submenuYForHeight:(CGFloat)height {
-    return MAX([self minimumSubmenuTop], [self submenuStackBottom] - height);
+- (CGFloat)submenuYForHeight:(CGFloat)height menu:(UIMenu *)menu {
+    return MAX([self minimumSubmenuTop:menu], [self submenuStackBottom] - height);
 }
-- (CGFloat)submenuAvailableHeight {
-    return MAX(1, [self submenuStackBottom] - [self minimumSubmenuTop]);
+- (CGFloat)submenuAvailableHeight:(UIMenu *)menu {
+    return MAX(1, [self submenuStackBottom] - [self minimumSubmenuTop:menu]);
 }
 - (void)outsideTapped { [self dismiss:nil]; }
 - (void)backTapped { [self popMenu]; }
@@ -840,14 +858,14 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             self.origin = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
             frame.origin.y = y;
         } else {
-            frame.origin.y = [self submenuYForHeight:panel.actualHeight];
+            frame.origin.y = [self submenuYForHeight:panel.actualHeight menu:panel.menu];
         }
         panel.frame = frame;
     }
     for (SGRDropdownPanel *other in self.panels) {
         if (other == panel || other == self.panels.firstObject) continue;
         CGRect next = other.frame;
-        next.origin.y = [self submenuYForHeight:other.actualHeight];
+        next.origin.y = [self submenuYForHeight:other.actualHeight menu:other.menu];
         other.frame = next;
     }
 }
@@ -864,11 +882,11 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     // The root retains its anchor. Submenus share a lower edge with the
     // reference's 520pt menu stack; shorter menus begin farther down while
     // long menus use the available height and scroll internally.
-    CGFloat maximum = parent ? [self submenuAvailableHeight] :
+    CGFloat maximum = parent ? [self submenuAvailableHeight:menu] :
         MAX(1, CGRectGetHeight(self.root.view.bounds) - self.window.safeAreaInsets.bottom - 12
             - MAX(62, self.window.safeAreaInsets.top));
     [self loadMenu:menu intoPanel:panel title:title maximum:MIN(kPanelMaximum, maximum)];
-    CGFloat y = parent ? [self submenuYForHeight:panel.actualHeight] : self.origin.origin.y;
+    CGFloat y = parent ? [self submenuYForHeight:panel.actualHeight menu:panel.menu] : self.origin.origin.y;
     CGRect frame = CGRectMake(self.origin.origin.x, y, kWidth, panel.actualHeight);
     panel.frame = frame;
     [self.root.view addSubview:panel];
@@ -905,6 +923,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     // Only the first reveal animates; deferred refreshes are in-place.
     if (self.playerMorph && !self.embedded && (!parent ||
         [panel.menu.identifier isEqualToString:@"com.vitrine.systemmenu.more"])) {
+        if (self.morphPanel == panel && self.morphLink) return;
         [self finishPlayerMorph];
         CGRect target = panel.frame;
         CGRect source = target;
@@ -922,9 +941,19 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             self.morphDuration = parent ? kPlayerMorphMore : kPlayerMorphOpen;
             self.morphFromParent = parent != nil;
             panel.transform = CGAffineTransformIdentity;
+            // Construct the full-size glass once before the visible transition.
+            // The layout at the small starting rect must not switch to a
+            // different mesh family or trigger a costly first-frame build.
+            [panel setNeedsLayout];
+            [panel layoutIfNeeded];
+            UIView *glass = objc_getAssociatedObject(panel, &kOwnedGlassKey);
+            if ([glass isKindOfClass:SGLegacyGlassView.class]) {
+                panel.morphGlass = (SGLegacyGlassView *)glass;
+                [panel.morphGlass layoutIfNeeded];
+                panel.morphGlass.geometryTransitionActive = YES;
+            }
             panel.morphing = YES;
-            panel.morphProgress = 0;
-            panel.morphFinalWidth = target.size.width;
+            panel.morphFinalSize = target.size;
             panel.userInteractionEnabled = NO;
             if (parent) {
                 // Snapshot only the text/controls, not the parent's glass.
@@ -939,11 +968,14 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             }
             panel.scroll.alpha = 0;
             panel.scrollThumb.alpha = 0;
-            panel.alpha = parent ? 1 : 0;
+            // Never fade the backdrop's entire compositing group from zero.
+            // Only the contents fade in; the surface is visible at the anchor.
+            panel.alpha = 1;
             panel.frame = source;
             [panel setNeedsLayout];
             [panel layoutIfNeeded];
-            self.morphStarted = CACurrentMediaTime();
+            self.morphLastFrame = 0;
+            self.morphElapsed = 0;
             self.morphLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tickPlayerMorph:)];
             [self.morphLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
             return;
@@ -961,16 +993,22 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)tickPlayerMorph:(CADisplayLink *)link {
     SGRDropdownPanel *panel = self.morphPanel;
     if (!panel || !self.window || self.closing) { [self finishPlayerMorph]; return; }
-    CGFloat t = morphClamp((CACurrentMediaTime()-self.morphStarted)/self.morphDuration);
-    CGFloat g = 1-pow(1-t, 3);
+    // Begin on the first display callback after the initial layout. Cap
+    // elapsed progress across dropped frames so the first visible state
+    // cannot skip straight from the small button to the finished menu.
+    CFTimeInterval now = link.timestamp;
+    if (self.morphLastFrame > 0)
+        self.morphElapsed += MIN(1.0/30.0, MAX(0, now-self.morphLastFrame));
+    self.morphLastFrame = now;
+    CGFloat t = morphClamp(self.morphElapsed/self.morphDuration);
+    CGFloat g = morphGeometry(t);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    panel.morphProgress = g;
     panel.frame = morphRect(self.morphFrom, self.morphTo, g);
-    panel.alpha = self.morphFromParent ? 1 : morphSmooth(t/0.30);
-    panel.scroll.alpha = morphSmooth((t-0.12)/0.60);
-    panel.morphOutgoingContent.alpha = 1-morphSmooth(t/0.46);
-    panel.scrollThumb.alpha = morphSmooth((t-0.60)/0.40);
+    panel.scroll.alpha = self.morphFromParent ? morphSmooth((t-0.30)/0.52)
+                                                 : morphSmooth((t-0.18)/0.58);
+    panel.morphOutgoingContent.alpha = 1-morphSmooth(t/0.30);
+    panel.scrollThumb.alpha = 0;
     [panel setNeedsLayout];
     [panel layoutIfNeeded];
     [CATransaction commit];
@@ -984,9 +1022,10 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     if (!panel) return;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    panel.morphing = NO;
-    panel.morphProgress = 1;
     panel.frame = self.morphTo;
+    panel.morphing = NO;
+    panel.morphGlass.geometryTransitionActive = NO;
+    panel.morphGlass = nil;
     panel.alpha = 1;
     panel.scroll.alpha = 1;
     panel.scrollThumb.alpha = 1;
@@ -1095,10 +1134,10 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
         if (!sub) continue;
         SGRDropdownPanel *panel = self.panels[i];
         CGPoint prior = panel.scroll.contentOffset;
-        [self loadMenu:sub intoPanel:panel title:sub.title maximum:MIN(kPanelMaximum, [self submenuAvailableHeight])];
+        [self loadMenu:sub intoPanel:panel title:sub.title maximum:MIN(kPanelMaximum, [self submenuAvailableHeight:sub])];
         [panel.resolution begin];
         CGRect frame = panel.frame;
-        frame.origin.y = [self submenuYForHeight:panel.actualHeight];
+        frame.origin.y = [self submenuYForHeight:panel.actualHeight menu:panel.menu];
         frame.size.height = panel.actualHeight;
         panel.frame = frame;
         panel.scroll.contentOffset = prior;
