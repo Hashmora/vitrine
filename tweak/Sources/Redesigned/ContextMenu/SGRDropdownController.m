@@ -4,6 +4,7 @@
 #import <math.h>
 #import "Core/SGCore.h"
 #import "Core/SGLegacyGlass.h"
+#import "Core/SGRuntime.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "SGRDropdownController.h"
 #import "SGRDropdownDeferred.h"
@@ -25,9 +26,9 @@ static CGAffineTransform dropdownExitingTransform(void) {
                                    CGAffineTransformMakeTranslation(0, 5));
 }
 static char kOwnedGlassKey;
-// Stage 190: normal player open takes ~300–385ms; More ~260ms.
-// These are video-fit approximations, not UIKit's private spring constants.
-static const NSTimeInterval kPlayerMorphOpen = 0.38, kPlayerMorphMore = 0.27;
+// Root: two-phase video-fit approximation; More retains the Stage 190 clock.
+// Neither is a recovered UIKit spring constant.
+static const NSTimeInterval kPlayerMorphOpen = 0.46, kPlayerMorphMore = 0.27;
 static CGFloat morphMix(CGFloat a, CGFloat b, CGFloat t) { return a + (b-a)*t; }
 static CGFloat morphClamp(CGFloat t) { return MAX(0, MIN(1, t)); }
 static CGFloat morphSmooth(CGFloat t) { t = morphClamp(t); return t*t*(3-2*t); }
@@ -38,39 +39,34 @@ static CGFloat morphGeometry(CGFloat t) {
     const CGFloat w = 5.8;
     return (1-(1+w*t)*exp(-w*t))/(1-(1+w)*exp(-w));
 }
-// Stage 196: overlap flight and unfolding, without a stop at the handoff.
+// Stage 198: the Stage 197 native capture shows an almost full-size rounded
+// preview lower than its final menu, followed by an upward settling morph.
+// Do not copy the roughly one-second preview hold: driver/UIKit timing is
+// not isolated. The first native frames also miss part of the launch.
 static const NSUInteger kPlayerMorphMeshSteps = 12;
-static CGFloat morphUnfold(CGFloat t) {
-    return morphSmooth((t - 0.22) / 0.78);
+static const CGFloat kPlayerPreviewEnd = 0.40;
+static CGFloat morphRelease(CGFloat t) {
+    return morphGeometry((t-kPlayerPreviewEnd)/(1-kPlayerPreviewEnd));
 }
 static CGFloat morphLensRadius(CGSize size, CGFloat lens) {
     CGFloat halfSide = MIN(size.width, size.height) / 2.0;
     return MIN(halfSide, morphMix(kRadius, halfSide, morphClamp(lens)));
 }
-static CGFloat morphFlightStretch(CGFloat t, CGFloat unfold) {
-    return sin(M_PI * morphClamp(t / 0.62)) * (1 - unfold);
-}
-static CGRect morphFlightFrame(CGRect a, CGRect b, CGFloat t, CGFloat unfold) {
-    t = morphClamp(t);
-    CGFloat travel = 1 - pow(1 - t, 2.0);
-    CGFloat cx = morphMix(CGRectGetMidX(a), CGRectGetMidX(b), travel);
-    CGFloat cy = morphMix(CGRectGetMidY(a), CGRectGetMidY(b), travel);
-    CGFloat stretch = morphFlightStretch(t, unfold);
-    CGFloat diameter = MIN(a.size.width, a.size.height);
-    CGFloat width = morphMix(a.size.width, b.size.width, unfold) - diameter * 0.13 * stretch;
-    CGFloat height = morphMix(a.size.height, b.size.height, unfold) + diameter * 0.32 * stretch;
-    return CGRectMake(cx-width/2, cy-height/2, width, height);
-}
-static CGAffineTransform morphFlightTransform(CGRect a, CGRect b, CGFloat t, CGFloat unfold) {
-    CGFloat dx = CGRectGetMidX(b)-CGRectGetMidX(a);
-    CGFloat dy = CGRectGetMidY(b)-CGRectGetMidY(a);
-    // Orient the long axis along the flight while compact; remove the rotation
-    // before content appears. The underlying pane is never replaced.
-    CGFloat angle = atan2(-dx, dy);
-    if (angle > M_PI_2) angle -= M_PI;
-    if (angle < -M_PI_2) angle += M_PI;
-    CGFloat weight = morphSmooth(t/0.10) * (1-morphSmooth(unfold/0.40));
-    return CGAffineTransformMakeRotation(angle * weight);
+static CGRect morphFlightFrame(CGRect a, CGRect b, CGFloat t, CGFloat release) {
+    CGFloat launch = morphGeometry(t/kPlayerPreviewEnd);
+    CGFloat previewW = b.size.width * 0.98;
+    CGFloat previewH = b.size.height * 0.98;
+    CGFloat drop = MIN(80.0, b.size.height * 0.25);
+    CGFloat px = CGRectGetMidX(b);
+    CGFloat py = CGRectGetMidY(b) + drop;
+    CGFloat cx = morphMix(morphMix(CGRectGetMidX(a), px, launch), CGRectGetMidX(b), release);
+    CGFloat cy = morphMix(morphMix(CGRectGetMidY(a), py, launch), CGRectGetMidY(b), release);
+    CGFloat w = morphMix(morphMix(a.size.width, previewW, launch), b.size.width, release);
+    CGFloat h = morphMix(morphMix(a.size.height, previewH, launch), b.size.height, release);
+    // Small upward recoil near the end; zero at both endpoints.
+    CGFloat tail = morphClamp((t-0.72)/0.28);
+    cy -= 4.0 * sin(M_PI * tail) * sin(M_PI * tail);
+    return CGRectMake(cx-w/2, cy-h/2, w, h);
 }
 
 static CGRect morphRect(CGRect a, CGRect b, CGFloat t) {
@@ -360,6 +356,8 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 // Only the Home filter has a compact leading selection indicator on iOS 26.
 @property (nonatomic) BOOL homeFilterRoot;
 @property (nonatomic) BOOL morphing;
+@property (nonatomic) BOOL playerRootGlass;
+@property (nonatomic) NSInteger morphContentBlurStep;
 @property (nonatomic) BOOL morphRefreshQueued;
 @property (nonatomic) CGSize morphFinalSize;
 @property (nonatomic) CGFloat morphLensAmount;
@@ -427,26 +425,37 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         SGShapeGlass(glass, radius, NO);
         NSInteger tintStep = (NSInteger)lround(
             8.0 * morphClamp(self.morphLensAmount));
-        SGRThickenSheetGlassMorph(glass, radius, (CGFloat)tintStep / 8.0);
+        CGFloat materialCompact = (CGFloat)tintStep / 8.0;
+        // Native preview is already dark and optically soft, unlike a clear
+        // tab control. Do not use the full compact material range here.
+        if (self.playerRootGlass) materialCompact *= 0.20;
+        SGRThickenSheetGlassMorph(glass, radius, materialCompact);
         if (self.morphTintStep != tintStep) {
             self.morphTintStep = tintStep;
             CGFloat lens = (CGFloat)tintStep / 8.0;
             CGFloat settledDim = self.isSubmenu ? 0.82 : 0.62;
-            SGRDimSheetGlassTint(glass,
-                [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
-                                  alpha:settledDim - 0.42 * lens]);
+            UIColor *dim = self.playerRootGlass
+                ? [UIColor colorWithWhite:0.08 alpha:0.74 - 0.04 * lens]
+                : [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
+                                    alpha:settledDim - 0.42 * lens];
+            SGRDimSheetGlassTint(glass, dim);
         }
 
         [glass layoutIfNeeded];
     } else {
         UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, radius);
-        if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
-                                                            alpha:self.isSubmenu ? 0.82 : 0.62]);
+        if (glass) SGRDimSheetGlassTint(glass, self.playerRootGlass
+            ? [UIColor colorWithWhite:0.08 alpha:0.74]
+            : [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
+                                alpha:self.isSubmenu ? 0.82 : 0.62]);
     }
     if (self.morphing) {
         // Keep the entire destination text layout stable. The moving pane
         // clips it; don't resize the scrolling viewport on every refresh.
-        self.scroll.frame = CGRectMake(self.bounds.size.width-self.morphFinalSize.width, 0,
+        CGFloat dx = self.bounds.size.width-self.morphFinalSize.width;
+        CGFloat dy = self.bounds.size.height-self.morphFinalSize.height;
+        self.scroll.frame = CGRectMake(self.playerRootGlass ? dx/2 : dx,
+                                       self.playerRootGlass ? dy/2 : 0,
                                        self.morphFinalSize.width, self.morphFinalSize.height);
     } else {
         self.scroll.frame = self.bounds;
@@ -988,6 +997,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             self.morphTo = target;
             self.morphDuration = parent ? kPlayerMorphMore : kPlayerMorphOpen;
             self.morphFromParent = parent != nil;
+            panel.playerRootGlass = parent == nil;
             panel.transform = CGAffineTransformIdentity;
             // Construct the full-size glass once before the visible transition.
             // The layout at the small starting rect must not switch to a
@@ -1005,11 +1015,11 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                     NSMutableArray<NSNumber *> *amounts = [NSMutableArray array];
                     for (NSUInteger i = 0; i <= kPlayerMorphMeshSteps; i++) {
                         CGFloat t = (CGFloat)i/kPlayerMorphMeshSteps;
-                        CGFloat unfold = morphUnfold(t);
-                        CGSize size = morphFlightFrame(source, target, t, unfold).size;
+                        CGFloat release = morphRelease(t);
+                        CGSize size = morphFlightFrame(source, target, t, release).size;
                         [sizes addObject:[NSValue valueWithCGSize:size]];
-                        [radii addObject:@(morphLensRadius(size, 1-unfold))];
-                        [amounts addObject:@(1-unfold)];
+                        [radii addObject:@(morphLensRadius(size, 1-release))];
+                        [amounts addObject:@(1-release)];
                     }
                     [panel.morphGlass prepareGeometryTransitionSizes:sizes radii:radii compactAmounts:amounts];
                     [panel.morphGlass applyGeometryTransitionMeshAtIndex:0];
@@ -1032,6 +1042,20 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 parent.alpha = 0;
             }
             panel.scroll.alpha = 0;
+            if (!parent && !SGRReduceTransparency()) {
+                // Blur just the existing content, never the live backdrop.
+                // Same CAFilter approach as PlayerMotion; fail soft if absent.
+                @try {
+                    id filter = SGFilterOfType(@"gaussianBlur");
+                    if (filter) {
+                        [filter setValue:@8 forKey:@"inputRadius"];
+                        panel.scroll.layer.filters = @[filter];
+                        panel.morphContentBlurStep = 8;
+                    }
+                } @catch (NSException *exception) {
+                    panel.scroll.layer.filters = nil;
+                }
+            }
             panel.scrollThumb.alpha = 0;
             // Never fade the backdrop's entire compositing group from zero.
             // Only the contents fade in; the surface is visible at the anchor.
@@ -1058,15 +1082,14 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)tickPlayerMorph:(CADisplayLink *)link {
     SGRDropdownPanel *panel = self.morphPanel;
     if (!panel || !self.window || self.closing) { [self finishPlayerMorph]; return; }
-    // Begin on the first display callback after the initial layout. Cap
-    // elapsed progress across dropped frames so the first visible state
-    // cannot skip straight from the small button to the finished menu.
+    // Begin on the first display callback after initial layout. Only More
+    // keeps the capped elapsed clock across dropped frames.
     CFTimeInterval now = link.timestamp;
     if (self.morphLastFrame > 0) {
-        // Root flight catches up a little faster after a missed refresh;
-        // preserve the established More clock and never skip the full morph.
-        NSTimeInterval cap = self.morphFromParent ? 1.0/30.0 : 1.0/20.0;
-        self.morphElapsed += MIN(cap, MAX(0, now-self.morphLastFrame));
+        // Root uses real elapsed time rather than stretching each missed
+        // frame into a further delay. Keep the existing More clock intact.
+        NSTimeInterval delta = MAX(0, now-self.morphLastFrame);
+        self.morphElapsed += self.morphFromParent ? MIN(1.0/30.0, delta) : delta;
     }
     self.morphLastFrame = now;
     CGFloat t = morphClamp(self.morphElapsed/self.morphDuration);
@@ -1074,9 +1097,9 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     // More retains its existing surface expansion.
-    // Root opening has independent flight and unfolding phases.
+    // Root grows into a rounded preview before lifting and squaring off.
     CGFloat unfold = self.morphFromParent
-        ? g : morphUnfold(t);
+        ? g : morphRelease(t);
 
     panel.morphLensAmount = self.morphFromParent
         ? 0.0 : 1.0 - unfold;
@@ -1085,14 +1108,27 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         panel.frame = morphRect(self.morphFrom, self.morphTo, g);
     } else {
         CGRect frame = morphFlightFrame(self.morphFrom, self.morphTo, t, unfold);
-        // UIView.frame is undefined while rotated; drive bounds and center.
+        // Keep the large rounded preview upright, as in the native capture.
         panel.bounds = (CGRect){CGPointZero, frame.size};
         panel.center = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
-        panel.transform = morphFlightTransform(self.morphFrom, self.morphTo, t, unfold);
         [panel.morphGlass applyGeometryTransitionMeshAtIndex:(NSUInteger)lround(t*kPlayerMorphMeshSteps)];
     }
-    panel.scroll.alpha = self.morphFromParent ? morphSmooth((t-0.30)/0.52)
-                                                 : morphSmooth((unfold-0.45)/0.50);
+    if (self.morphFromParent) {
+        panel.scroll.alpha = morphSmooth((t-0.30)/0.52);
+    } else {
+        BOOL filtered = panel.scroll.layer.filters.count > 0;
+        panel.scroll.alpha = filtered ? morphSmooth(t/0.24) * morphMix(0.85, 1, unfold)
+                                      : morphSmooth((t-0.16)/0.58);
+        NSInteger blurStep = (NSInteger)lround(8 * (1-unfold));
+        if (filtered && panel.morphContentBlurStep != blurStep) {
+            panel.morphContentBlurStep = blurStep;
+            @try {
+                [panel.scroll.layer setValue:@(blurStep) forKeyPath:@"filters.gaussianBlur.inputRadius"];
+            } @catch (NSException *exception) {
+                panel.scroll.layer.filters = nil;
+            }
+        }
+    }
     panel.morphOutgoingContent.alpha = 1-morphSmooth(t/0.30);
     panel.scrollThumb.alpha = 0;
     [panel setNeedsLayout];
@@ -1115,6 +1151,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     panel.morphTintStep = 0;
     panel.morphGlass.geometryTransitionActive = NO;
     panel.morphGlass = nil;
+    if (panel.playerRootGlass) panel.scroll.layer.filters = nil;
     panel.alpha = 1;
     panel.scroll.alpha = 1;
     panel.scrollThumb.alpha = 1;
