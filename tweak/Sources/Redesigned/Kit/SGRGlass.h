@@ -117,6 +117,8 @@ void SGRThickenSheetGlass(UIView *glass, CGFloat cornerRadius);
 void SGRThickenSheetGlassMorph(UIView *glass, CGFloat cornerRadius, CGFloat compact);
 // Opt-in material for the legacy player root; does not modify ordinary sheets.
 void SGRStylePlayerRootLegacyGlass(UIView *glass, CGFloat cornerRadius, CGFloat materialAmount);
+// Suppress the decorative directional glare only on owned Legacy dropdowns.
+void SGRSoftenLegacyDropdownRim(UIView *glass);
 // A black layer over the body SGRThickenSheetGlass gives a pane, for menus whose white text the light body
 // leaves too little contrast to read. Call it after SGRThickenSheetGlass.
 void SGRDimSheetGlass(UIView *glass, CGFloat alpha);

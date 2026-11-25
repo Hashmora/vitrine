@@ -28,7 +28,7 @@ static CGAffineTransform dropdownExitingTransform(void) {
 static char kOwnedGlassKey;
 // Root and submenu use distinct video-fit geometry profiles.
 // Neither is a recovered UIKit spring constant.
-static const NSTimeInterval kPlayerMorphOpen = 0.54, kPlayerMorphMore = 0.42;
+static const NSTimeInterval kPlayerMorphOpen = 0.54, kPlayerMorphMore = 0.52;
 // A slow render callback must not skip the rounded preview altogether.
 static const NSTimeInterval kPlayerRootMaxStep = 1.0/30.0;
 static CGFloat morphMix(CGFloat a, CGFloat b, CGFloat t) { return a + (b-a)*t; }
@@ -83,7 +83,14 @@ static CGFloat dropdownSpringProgress(CGFloat t, CGFloat damping, CGFloat freque
     CGFloat residual = exp(-damping*t)*(cos(frequency*t)+(damping/frequency)*sin(frequency*t));
     return 1-residual*(1-morphSmooth((t-0.82)/0.18));
 }
-static CGFloat dropdownSubmenuProgress(CGFloat t) { return dropdownSpringProgress(t,8.5,8.0); }
+// Slower acceleration, with a visible but small spring tail. The previous
+// 8.5 damping reached most of the height in the first few display callbacks.
+static CGFloat dropdownSubmenuProgress(CGFloat t) {
+    CGFloat g=dropdownSpringProgress(t,5.4,8.0);
+    // Keep the rebound small without a hard clamp or a velocity jump.
+    CGFloat over=MAX(0,g-1);
+    return g-over+over/(1+over/0.04);
+}
 static CGRect dropdownSubmenuFrame(CGRect from, CGRect to, CGFloat t) {
     CGFloat g = dropdownSubmenuProgress(t);
     CGRect f = morphRect(from,to,g);
@@ -102,14 +109,18 @@ static CGRect dropdownCollapseFrame(CGRect from, CGRect to, CGFloat t, BOOL subm
         f.origin.y+=(CGRectGetMidY(to)-CGRectGetMidY(from))*(g-size);
         return f;
     }
-    CGFloat size=morphSmooth(t/0.92), travel=morphSmooth((t-0.06)/0.94);
-    CGFloat w=morphMix(from.size.width,to.size.width,size), h=morphMix(from.size.height,to.size.height,size);
+    // Shared Home-style return: lose the square corners while drawing the
+    // glass toward the anchor, then let the compact lens catch up. Do not
+    // fly through the oversized opening preview or leave a tiny dark dot.
+    CGFloat shrink=morphGeometry(t), travel=morphGeometry(t/0.94);
+    CGFloat w=morphMix(from.size.width,to.size.width,shrink);
+    CGFloat h=morphMix(from.size.height,to.size.height,morphGeometry(t/0.86));
     CGFloat x=morphMix(CGRectGetMidX(from),CGRectGetMidX(to),travel);
     CGFloat y=morphMix(CGRectGetMidY(from),CGRectGetMidY(to),travel);
     return CGRectMake(x-w/2,y-h/2,w,h);
 }
 static CGFloat dropdownCloseLens(CGFloat initial, CGFloat t, BOOL submenu) {
-    return morphMix(initial,submenu ? 0.22 : 1,morphSmooth(t/(submenu ? 1 : 0.78)));
+    return morphMix(initial,submenu ? 0.12 : 1,morphSmooth(t/(submenu ? 1 : 0.55)));
 }
 static CGFloat dropdownHostedLens(CGFloat t) {
     CGFloat v = sin(M_PI*morphClamp(t));
@@ -536,7 +547,10 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         if (self.playerRootGlass) {
             SGRStylePlayerRootLegacyGlass(glass, radius, self.morphRootMaterialAmount);
         } else {
-            NSInteger tintStep = (NSInteger)lround(8.0 * morphClamp(self.morphLensAmount));
+            // Submenu changes are principally geometry. Keep its backdrop
+            // filters stable throughout the spring; the prepared mesh still
+            // follows the rounded edges.
+            NSInteger tintStep = self.isSubmenu ? 0 : (NSInteger)lround(8.0 * morphClamp(self.morphLensAmount));
             SGRThickenSheetGlassMorph(glass, radius, (CGFloat)tintStep / 8.0);
             if (self.morphTintStep != tintStep) {
                 self.morphTintStep = tintStep;
@@ -560,6 +574,12 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, radius);
         if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
                                 alpha:self.isSubmenu ? 0.82 : 0.62]);
+    }
+    if (SGBelowiOS26() && SGUseLegacyGlass()) {
+        // No bright directional rim on dropdowns, including during mesh
+        // updates. Keep the underlying refractive mesh and subtle hairline.
+        UIView *glass = objc_getAssociatedObject(self, &kOwnedGlassKey);
+        SGRSoftenLegacyDropdownRim(glass);
     }
     if (self.morphing) {
         // Keep the entire destination text layout stable. The moving pane
@@ -946,7 +966,10 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 CGFloat px = (self.elasticAnchor.x-0.5)*width;
                 CGFloat py = (self.elasticAnchor.y-0.5)*height;
                 CGFloat tx = (1-sx)*px + dx*0.12;
-                CGFloat ty = (1-sy)*py + dy*(self.elasticHorizontal ? 0.12 : (self.isSubmenu ? 0.68 : 0.30));
+                // More drifts a little to the right as it is pulled down;
+                // keep its resting frame unchanged and spring back together.
+                if (self.isSubmenu && !self.elasticHorizontal) tx += MAX(0,dy)*0.15;
+                CGFloat ty = (1-sy)*py + dy*(self.elasticHorizontal ? 0.12 : (self.isSubmenu ? 0.79 : 0.30));
                 CGFloat blend = morphSmooth(hypot(delta.x,delta.y)/45);
                 CGAffineTransform base = self.elasticStartTransform;
                 self.transform = CGAffineTransformMake(morphMix(base.a,sx,blend),0,0,morphMix(base.d,sy,blend),
@@ -1083,7 +1106,9 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 }
 - (void)setSubmenuReveal:(CGFloat)reveal sourceHeight:(CGFloat)sourceHeight {
     reveal=morphClamp(reveal);
-    CGFloat content=morphSmooth((reveal-0.16)/0.68);
+    // Reveal the rows through the expanding aperture instead of fading in
+    // the whole list together. The same rule clips the rows on return.
+    CGFloat content=morphSmooth(reveal/0.30);
     for (UIView *child in self.body.subviews) {
         if (child != self.header) child.alpha=content;
     }
@@ -1238,6 +1263,11 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     for (SGRDropdownPress *press in parent.allButtons) {
         UIMenuElement *item=press.element;
         if ([item isKindOfClass:UIMenu.class] && [((UIMenu *)item).identifier isEqual:child.menu.identifier] && [item.title isEqual:child.menu.title]) {
+            // A row returning to the parent is not a pressed control. A
+            // cancelled UIKit touch can otherwise leave its grey overlay.
+            [press setHighlighted:NO];
+            [press.highlight.layer removeAllAnimations];
+            press.highlight.alpha=0;
             press.alpha=rowAlpha; break;
         }
     }
@@ -1574,11 +1604,13 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
             if (parent) {
                 parent.alpha = 1;
                 parent.userInteractionEnabled = NO;
-                [self applyStackParent:parent child:panel offset:0 rowAlpha:0];
+                [self applyStackParent:parent child:panel offset:0 rowAlpha:1];
                 [panel setSubmenuReveal:0 sourceHeight:source.size.height];
             }
             panel.scroll.alpha = parent || self.morphReversing ? 1 : 0;
-            {
+            // Submenu never consumes the content mesh in its frame loop.
+            // Do not allocate/probe 12 unused meshes before the first frame.
+            if (!parent) {
                 [CATransaction begin];
                 [CATransaction setDisableActions:YES];
                 [panel preparePlayerContentMeshes];
@@ -1601,9 +1633,9 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
                 }
             }
             panel.scrollThumb.alpha = 0;
-            // Never fade the backdrop's entire compositing group from zero.
-            // Only the contents fade in; the surface is visible at the anchor.
-            panel.alpha = 1;
+            // The root surface is visible at the anchor; a submenu first
+            // hands off the visible source row before revealing its glass.
+            panel.alpha = parent ? 0 : 1;
             panel.frame = self.morphReversing ? target : source;
             [panel setNeedsLayout];
             [panel layoutIfNeeded];
@@ -1647,7 +1679,7 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     self.closeInitialLens = lens; self.closeInitialAlpha = alpha;
     self.closeInitialContentAlpha = contentAlpha; self.closeInitialMaterial = material;
     self.closeHostedAlpha = self.embedded.view.alpha;
-    self.morphElapsed = 0; self.morphLastFrame = 0; self.morphDuration = popping ? 0.40 : 0.32;
+    self.morphElapsed = 0; self.morphLastFrame = 0; self.morphDuration = popping ? 0.52 : 0.34;
     panel.userInteractionEnabled = NO;
     if (self.embedded) self.embedded.view.autoresizingMask = UIViewAutoresizingNone;
     if (!panel.morphing) panel.morphFinalSize = from.size;
@@ -1669,7 +1701,7 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     }
     panel.morphing = YES;
     panel.morphLensAmount = lens;
-    if (!panel.morphContentMeshes.count) [panel preparePlayerContentMeshes];
+    if (!popping && !panel.morphContentMeshes.count) [panel preparePlayerContentMeshes];
     self.morphLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tickPlayerMorph:)];
     [self.morphLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     return YES;
@@ -1680,10 +1712,11 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     // Start at the first callback. Stage 198's unbounded elapsed clock
     // could consume the entire launch on a late callback. Bound each step
     // so the geometry cannot jump straight from the anchor to the menu.
-    // Short transitions use a wider cap so a delayed callback does not stretch the entire animation.
     CFTimeInterval now = link.timestamp;
     NSTimeInterval delta = self.morphLastFrame > 0 ? MAX(0, now-self.morphLastFrame) : 0;
-    NSTimeInterval maxStep = (self.morphHosted || self.morphReversing || self.morphFromParent) ? 1.0/15.0 : kPlayerRootMaxStep;
+    // No 67ms jumps across the row handoff or the Home-style collapse.
+    // Hosted settings keep their separate short transition budget.
+    NSTimeInterval maxStep = self.morphHosted ? 1.0/15.0 : kPlayerRootMaxStep;
     self.morphElapsed += MIN(maxStep, delta);
     self.morphLastFrame = now;
     CGFloat progress = morphClamp(self.morphElapsed/self.morphDuration);
@@ -1694,7 +1727,10 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
         panel.morphRootMaterialAmount = self.closeInitialMaterial*(1-morphSmooth(t));
         panel.frame = dropdownCollapseFrame(self.morphFrom,self.morphTo,t,self.morphPopping);
         [panel.morphGlass applyGeometryTransitionMeshAtIndex:(NSUInteger)lround(t*kPlayerMorphMeshSteps)];
-        CGFloat landing=morphSmooth((t-0.80)/0.20);
+        // The row is already unpressed before it reaches the parent.
+        // Crossfade the glass and the source row throughout the landing,
+        // rather than leaving a bright grey capsule at the end.
+        CGFloat landing=morphSmooth((t-0.56)/0.40);
         if (self.morphPopping) {
             CGFloat reveal=1-morphClamp(dropdownSubmenuProgress(t));
             panel.scroll.alpha=1;
@@ -1702,15 +1738,19 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
             if (self.panels.count>1)
                 [self applyStackParent:self.panels[self.panels.count-2] child:panel offset:8*reveal rowAlpha:landing];
         } else {
-            panel.scroll.alpha=self.closeInitialContentAlpha*(1-morphSmooth((t-0.04)/0.68));
+            panel.scroll.alpha=self.closeInitialContentAlpha*(1-morphSmooth(t/0.43));
             [panel applyPlayerContentLens:panel.morphLensAmount release:1-panel.morphLensAmount];
-            dropdownContentBlur(panel.scroll.layer,5*morphSmooth(t));
+            NSInteger blur=(NSInteger)lround(7*morphSmooth(t/0.52));
+            if (panel.morphContentBlurStep!=blur || !panel.scroll.layer.filters.count) {
+                panel.morphContentBlurStep=blur;
+                dropdownContentBlur(panel.scroll.layer,blur);
+            }
         }
         if (self.embedded && panel == self.panels.firstObject) {
             self.embedded.view.alpha = self.closeHostedAlpha*(1-morphSmooth((t-0.10)/0.78));
             self.embedded.view.center = CGPointMake(CGRectGetMidX(panel.bounds),CGRectGetMidY(panel.bounds));
         }
-        panel.alpha = self.closeInitialAlpha*(1-(self.morphPopping ? landing : morphSmooth((t-0.32)/0.68)));
+        panel.alpha = self.closeInitialAlpha*(1-(self.morphPopping ? landing : morphSmooth((t-0.22)/0.78)));
         panel.scrollThumb.alpha = 0;
         [panel setNeedsLayout]; [panel layoutIfNeeded];
         [CATransaction commit];
@@ -1810,7 +1850,9 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
             (filtered ? morphSmooth(t/0.24) * morphMix(0.88, 1, unfold) : morphSmooth((t-0.16)/0.58));
         if (self.morphFromParent && self.panels.count>1) {
             [panel setSubmenuReveal:unfold sourceHeight:self.morphFrom.size.height];
-            [self applyStackParent:self.panels[self.panels.count-2] child:panel offset:8*dropdownSubmenuProgress(t) rowAlpha:0];
+            CGFloat handoff=morphSmooth(t/0.23);
+            panel.alpha=handoff;
+            [self applyStackParent:self.panels[self.panels.count-2] child:panel offset:8*dropdownSubmenuProgress(t) rowAlpha:1-handoff];
         }
         // Softer centre and stronger rim displacement while the lens opens.
         // Remove all transforms on completion, including interrupted reveals.

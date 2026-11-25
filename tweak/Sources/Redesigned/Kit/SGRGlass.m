@@ -557,6 +557,15 @@ void SGRStylePlayerRootLegacyGlass(UIView *glass, CGFloat cornerRadius, CGFloat 
     else if (!CGRectEqualToRect(dim.frame, host.bounds)) dim.frame = host.bounds;
 }
 
+void SGRSoftenLegacyDropdownRim(UIView *glass) {
+    if (!SGBelowiOS26() || ![glass isKindOfClass:SGLegacyGlassView.class]) return;
+    SGLegacyGlassView *legacy = (SGLegacyGlassView *)glass;
+    legacy.rimless = YES;
+    SGLegacyGlassSetSpecularHidden(legacy.layer, YES);
+    UIView *rim = objc_getAssociatedObject(glassContent(glass), &kSheetRimKey);
+    if (rim && rim.alpha != 0.32) rim.alpha = 0.32;
+}
+
 void SGRDimSheetGlass(UIView *glass, CGFloat alpha) {
     SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:0 alpha:alpha]);
 }
