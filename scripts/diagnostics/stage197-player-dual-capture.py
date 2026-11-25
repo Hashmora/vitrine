@@ -201,7 +201,7 @@ def take(driver, device, label, case, root, trial, exporter, args):
         try:
             since = report['before_verified']['state'].get('logSeq', 0)
             lines = driver.call('log', since=since).get('lines', [])
-            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:', 'stage201 player root:', 'stage202 player root:', 'stage203 player root:', 'stage204 player ', 'stage205 popup ', 'stage206 popup '))
+            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:', 'stage201 player root:', 'stage202 player root:', 'stage203 player root:', 'stage204 player ', 'stage205 popup ', 'stage206 popup ', 'stage207 popup '))
                          or 'system menu:' in line.get('text', '')]
             S.save_json(dest/'morph-lifecycle.json', {'since':since,'lines':lifecycle})
             report['morph_lifecycle_lines'] = len(lifecycle)
@@ -292,7 +292,7 @@ def main():
     devices = S.sim_devices()
     targets = [('ios26',S.resolve_sim(devices,26,args.udid26),S.Driver(args.port26)),
                ('ios18',S.resolve_sim(devices,18,args.udid18),S.Driver(args.port18))]
-    root = args.out/f'stage206-popup-lifecycle-{dt.datetime.now():%Y%m%d-%H%M%S}'
+    root = args.out/f'stage207-popup-lifecycle-{dt.datetime.now():%Y%m%d-%H%M%S}'
     root.mkdir(parents=True,exist_ok=False)
     exporter = S.build_native_extractor(args.out)
     S.save_json(root/'configuration.json',{'targets':[{'label':l,'device':d,'port':v.port} for l,d,v in targets],
