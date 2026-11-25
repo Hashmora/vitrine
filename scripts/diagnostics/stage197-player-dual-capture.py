@@ -8,6 +8,7 @@ import datetime as dt
 import importlib.util
 from pathlib import Path
 import sys
+import re
 import time
 
 HERE = Path(__file__).resolve().parent
@@ -18,7 +19,7 @@ spec.loader.exec_module(G)
 N, S = G.N, G.S
 CASES = ('root-open', 'root-close', 'more-open', 'more-close',
          'root-drag-x', 'root-drag-y', 'more-drag-x', 'more-drag-y', 'root-flash', 'speed-open', 'speed-close',
-         'more-back', 'more-flash', 'home-open', 'home-close', 'home-drag-x', 'home-drag-y', 'home-flash')
+         'more-back', 'more-flash', 'more-scroll-up', 'more-hold-scroll-up', 'home-open', 'home-close', 'home-drag-x', 'home-drag-y', 'home-flash')
 SPEED = 'Speed, Pitch & Reverb'
 
 
@@ -107,7 +108,7 @@ def prepare(driver, label, case):
             root = verified(driver, label, True, timeout=5)
             time.sleep(1.2)
             root = verified(driver,label,True)
-            if case in ('more-close','more-back','more-drag-x','more-drag-y','more-flash'):
+            if case in ('more-close','more-back','more-drag-x','more-drag-y','more-flash','more-scroll-up','more-hold-scroll-up'):
                 frame = front_frame(root,label)
                 driver.call('menu.pick',title='More')
                 verified(driver,label,True,more=True,root_frame=frame)
@@ -138,6 +139,16 @@ def recorded_event(driver, label, case, before):
         return driver.call('menu.pick',title=SPEED)
     if case == 'speed-close':
         return driver.call('tap',at='7,360')
+    if case in ('more-scroll-up','more-hold-scroll-up'):
+        x,y,w,h = front_frame(before,label)
+        start = f'{round(x+w*.5)},{round(y+h*.76)}'
+        end = f'{round(x+w*.5)},{round(y+h*.30)}'
+        if case == 'more-hold-scroll-up':
+            # Same uninterrupted UITouch: first leg stays at one point for
+            # 650ms, then moves through the content. No driver rebuild.
+            return driver.call('swipe.reverse', **{'from':start,'via':start,'to':end,
+                                'up':.65,'back':.55,'hold':.15})
+        return driver.call('swipe', **{'from':start,'to':end,'duration':.55,'hold':.15,'drag':1})
     if case.endswith(('-drag-x','-drag-y')) or case.endswith('-flash'):
         x,y,w,h = front_frame(before,label)
         # Start on the rim, not a row centre. Hold the stretched state and
@@ -170,11 +181,11 @@ def verify_after(driver,label,case,before):
         if any(abs(a-b)>2 for a,b in zip(front_frame(result,label),before['root_frame'])):
             raise S.EvidenceError('More back did not restore root geometry')
         return result
-    more = case == 'more-open' or case.startswith('more-drag-') or case == 'more-flash'
+    more = case == 'more-open' or case.startswith('more-drag-') or case in ('more-flash','more-scroll-up','more-hold-scroll-up')
     result = verified(driver,label,True,more=more,
         root_frame=front_frame(before,label) if case == 'more-open' else before.get('root_frame'),
         player=not case.startswith('home-'))
-    if case.endswith(('-drag-x','-drag-y')) or case.endswith('-flash'):
+    if case.endswith(('-drag-x','-drag-y')) or case.endswith('-flash') or case in ('more-scroll-up','more-hold-scroll-up'):
         prior, current = front_frame(before,label),front_frame(result,label)
         if any(abs(a-b)>2 for a,b in zip(prior,current)):
             raise S.EvidenceError(f'surface did not return to prior geometry: {prior} -> {current}')
@@ -201,10 +212,12 @@ def take(driver, device, label, case, root, trial, exporter, args):
         try:
             since = report['before_verified']['state'].get('logSeq', 0)
             lines = driver.call('log', since=since).get('lines', [])
-            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:', 'stage201 player root:', 'stage202 player root:', 'stage203 player root:', 'stage204 player ', 'stage205 popup ', 'stage206 popup ', 'stage207 popup ', 'stage208 popup '))
+            lifecycle = [line for line in lines if any(tag in line.get('text', '') for tag in ('stage199 player root:', 'stage200 player root:', 'stage201 player root:', 'stage202 player root:', 'stage203 player root:', 'stage204 player ', 'stage205 popup ', 'stage206 popup ', 'stage207 popup ', 'stage208 popup ', 'stage209 popup '))
                          or 'system menu:' in line.get('text', '')]
             S.save_json(dest/'morph-lifecycle.json', {'since':since,'lines':lifecycle})
             report['morph_lifecycle_lines'] = len(lifecycle)
+            if label == 'ios18' and case in ('more-scroll-up','more-hold-scroll-up'):
+                report['legacy_scroll_evidence'] = scroll_evidence(lifecycle)
         except Exception as exc:
             report['morph_lifecycle_error'] = repr(exc)
         try:
@@ -212,6 +225,9 @@ def take(driver, device, label, case, root, trial, exporter, args):
         except Exception as exc:
             report['metadata_error'] = repr(exc)
         report['after_verified'] = verify_after(driver,label,case,report['before_verified'])
+        if label == 'ios18' and case in ('more-scroll-up','more-hold-scroll-up'):
+            if not report.get('legacy_scroll_evidence',{}).get('advanced'):
+                raise S.EvidenceError('Legacy scroll not confirmed by offset telemetry (menu may fit without scrolling)')
         before, after = (track(report[k]['state']) for k in ('before_verified','after_verified'))
         report['track_stable'] = bool(before.get('uri')) and before.get('uri') == after.get('uri') and bool(after.get('paused'))
         report['track_uri'] = before.get('uri')
@@ -226,6 +242,16 @@ def take(driver, device, label, case, root, trial, exporter, args):
     S.save_json(dest/'report.json',report)
     print(f'{label}/{case}/{trial:02}: {report["status"]} {report.get("error", "")[:200]}',flush=True)
     return report
+
+
+def scroll_evidence(lines):
+    starts, ends = [], []
+    for line in lines:
+        m = re.search(r'stage209 popup scroll: (begin|end|settled) offset=(-?\d+(?:\.\d+)?)', line.get('text',''))
+        if m and 'submenu=1' in line.get('text',''):
+            (starts if m[1] == 'begin' else ends).append(float(m[2]))
+    return {'start_offsets':starts,'end_offsets':ends,
+            'advanced':bool(starts and ends and max(ends)-starts[0]>2)}
 
 
 def pair_summary(left, right):
@@ -270,7 +296,14 @@ def self_test():
     assert recorded_event(GestureDriver(),'ios18','root-flash',before)[1]['duration'] >= .8
     assert recorded_event(GestureDriver(),'ios18','more-back',before) == ('tap',{'id':'Vitrine.Dropdown.Back'})
     assert recorded_event(GestureDriver(),'ios26','more-back',dict(before,native=before['legacy']))[0] == 'tap'
-    print('PASS paired report, strict renderer check, gesture routing and metadata gating')
+    command, gesture = recorded_event(GestureDriver(),'ios18','more-hold-scroll-up',before)
+    assert command == 'swipe.reverse' and gesture['from']==gesture['via'] and gesture['to']!=gesture['from'] and gesture['up']>=.6
+    assert recorded_event(GestureDriver(),'ios18','more-scroll-up',before)[0]=='swipe'
+    assert scroll_evidence([{'text':'stage209 popup scroll: begin offset=0.00 max=42.00 submenu=1'},
+                            {'text':'stage209 popup scroll: end offset=42.00 decelerate=0 submenu=1'}])['advanced']
+    assert not scroll_evidence([{'text':'stage209 popup scroll: begin offset=0.00 max=0.00 submenu=1'},
+                                {'text':'stage209 popup scroll: end offset=0.00 decelerate=0 submenu=1'}])['advanced']
+    print('PASS paired report, strict renderer check, held-scroll routing, offset evidence and metadata gating')
 
 
 def main():
@@ -292,7 +325,7 @@ def main():
     devices = S.sim_devices()
     targets = [('ios26',S.resolve_sim(devices,26,args.udid26),S.Driver(args.port26)),
                ('ios18',S.resolve_sim(devices,18,args.udid18),S.Driver(args.port18))]
-    root = args.out/f'stage208-popup-lifecycle-{dt.datetime.now():%Y%m%d-%H%M%S}'
+    root = args.out/f'stage209-popup-lifecycle-{dt.datetime.now():%Y%m%d-%H%M%S}'
     root.mkdir(parents=True,exist_ok=False)
     exporter = S.build_native_extractor(args.out)
     S.save_json(root/'configuration.json',{'targets':[{'label':l,'device':d,'port':v.port} for l,d,v in targets],

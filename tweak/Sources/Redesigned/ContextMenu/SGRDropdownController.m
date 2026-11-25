@@ -28,7 +28,7 @@ static CGAffineTransform dropdownExitingTransform(void) {
 static char kOwnedGlassKey;
 // Root and submenu use distinct video-fit geometry profiles.
 // Neither is a recovered UIKit spring constant.
-static const NSTimeInterval kPlayerMorphOpen = 0.54, kPlayerMorphMore = 0.52;
+static const NSTimeInterval kPlayerMorphOpen = 0.46, kPlayerMorphMore = 0.46;
 // A slow render callback must not skip the rounded preview altogether.
 static const NSTimeInterval kPlayerRootMaxStep = 1.0/30.0;
 static CGFloat morphMix(CGFloat a, CGFloat b, CGFloat t) { return a + (b-a)*t; }
@@ -400,6 +400,19 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 - (void)activate { if (self.enabled && self.pick) self.pick(self.element); }
 @end
 
+// UIScrollView normally refuses to cancel tracking in a UIControl. A
+// stationary row may highlight, but moving it vertically must scroll.
+@interface SGRDropdownLegacyScrollView : UIScrollView
+@end
+@implementation SGRDropdownLegacyScrollView
+- (BOOL)touchesShouldCancelInContentView:(UIView *)view {
+    for (UIView *candidate = view; candidate && candidate != self; candidate = candidate.superview) {
+        if ([candidate isKindOfClass:SGRDropdownPress.class]) return YES;
+    }
+    return [super touchesShouldCancelInContentView:view];
+}
+@end
+
 @interface SGRDropdownPanel : UIView <UIGestureRecognizerDelegate, UIScrollViewDelegate>
 @property (nonatomic, strong) UIScrollView *scroll;
 @property (nonatomic, strong) UIView *body;
@@ -413,6 +426,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic, strong) UISelectionFeedbackGenerator *selectionFeedback;
 @property (nonatomic, weak) SGRDropdownPress *draggedPress;
 @property (nonatomic) CGPoint dragStartOffset;
+@property (nonatomic) CGPoint touchStartOffset;
 @property (nonatomic) BOOL dragIsScrolling;
 @property (nonatomic) BOOL elasticDrag;
 @property (nonatomic) BOOL elasticHorizontal;
@@ -433,14 +447,12 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 // Only the Home filter has a compact leading selection indicator on iOS 26.
 @property (nonatomic) BOOL homeFilterRoot;
 @property (nonatomic) BOOL morphing;
-@property (nonatomic) BOOL playerRootGlass;
 @property (nonatomic) CGRect submenuSource;
 @property (nonatomic) CGFloat stackOffset;
 @property (nonatomic, weak) UIImageView *headerChevron;
 - (void)setStackDisplacement:(CGFloat)offset;
 - (void)setSubmenuReveal:(CGFloat)reveal sourceHeight:(CGFloat)sourceHeight;
 @property (nonatomic) NSInteger morphContentBlurStep;
-@property (nonatomic) CGFloat morphRootMaterialAmount;
 @property (nonatomic, strong) NSArray *morphContentMeshes;
 @property (nonatomic, strong) id morphOriginalContentMesh;
 @property (nonatomic) NSInteger morphContentMeshIndex;
@@ -460,6 +472,7 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 - (void)preparePlayerContentMeshes;
 - (void)restorePlayerContentMesh;
 - (void)resetElastic;
+- (void)highlightPress:(SGRDropdownPress *)press notify:(BOOL)notify;
 @end
 
 @implementation SGRDropdownPanel
@@ -471,12 +484,19 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         self.backgroundColor = UIColor.clearColor;
         self.accessibilityIdentifier = @"Vitrine.Dropdown.Panel";
         self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-        self.scroll = [UIScrollView new];
+        self.elasticEnabled = SGBelowiOS26() && SGUseLegacyGlass() && !UIAccessibilityIsReduceMotionEnabled();
+        self.scroll = self.elasticEnabled ? [SGRDropdownLegacyScrollView new] : [UIScrollView new];
         self.scroll.showsVerticalScrollIndicator = YES;
         self.scroll.indicatorStyle = UIScrollViewIndicatorStyleWhite;
         self.scroll.showsHorizontalScrollIndicator = NO;
         self.scroll.alwaysBounceVertical = NO;
-        self.scroll.delaysContentTouches = NO;
+        self.scroll.delaysContentTouches = self.elasticEnabled;
+        if (self.elasticEnabled) {
+            self.scroll.canCancelContentTouches = YES;
+            // Edge overscroll is supplied by the glass panel, not a second
+            // independently bouncing scroll transform.
+            self.scroll.bounces = NO;
+        }
         self.scroll.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
         self.scroll.backgroundColor = UIColor.clearColor;
         self.scroll.delegate = self;
@@ -498,7 +518,6 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         self.selectionPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragAcrossMenu:)];
         self.selectionPan.cancelsTouchesInView = YES;
         self.selectionPan.delegate = self;
-        self.elasticEnabled = SGBelowiOS26() && SGUseLegacyGlass() && !UIAccessibilityIsReduceMotionEnabled();
         if (self.elasticEnabled) {
             [self addGestureRecognizer:self.selectionPan];
             self.surfaceTouch = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(flashSurface:)];
@@ -544,32 +563,19 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
         SGLegacyGlassView *glass = self.morphGlass;
         if (!CGRectEqualToRect(glass.frame, self.bounds)) glass.frame = self.bounds;
         SGShapeGlass(glass, radius, NO);
-        if (self.playerRootGlass) {
-            SGRStylePlayerRootLegacyGlass(glass, radius, self.morphRootMaterialAmount);
-        } else {
-            // Submenu changes are principally geometry. Keep its backdrop
-            // filters stable throughout the spring; the prepared mesh still
-            // follows the rounded edges.
-            NSInteger tintStep = self.isSubmenu ? 0 : (NSInteger)lround(8.0 * morphClamp(self.morphLensAmount));
-            SGRThickenSheetGlassMorph(glass, radius, (CGFloat)tintStep / 8.0);
-            if (self.morphTintStep != tintStep) {
-                self.morphTintStep = tintStep;
-                CGFloat lens = (CGFloat)tintStep / 8.0;
-                CGFloat settledDim = self.isSubmenu ? 0.82 : 0.62;
-                SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
-                    alpha:settledDim - 0.42 * lens]);
-            }
+        // All roots use the Home material: a transparent compact lens
+        // becomes the settled dark sheet as it opens. More retains its
+        // existing material because it continues an already-open row.
+        NSInteger tintStep = self.isSubmenu ? 0 : (NSInteger)lround(8.0 * morphClamp(self.morphLensAmount));
+        SGRThickenSheetGlassMorph(glass, radius, (CGFloat)tintStep / 8.0);
+        if (self.morphTintStep != tintStep) {
+            self.morphTintStep = tintStep;
+            CGFloat lens = (CGFloat)tintStep / 8.0;
+            CGFloat settledDim = self.isSubmenu ? 0.82 : 0.62;
+            SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
+                alpha:settledDim - 0.42 * lens]);
         }
         [glass layoutIfNeeded];
-    } else if (self.playerRootGlass && SGUseLegacyGlass()) {
-        // Do not call the ordinary sheet helper first: it would reset the
-        // blur to 10pt on every settled layout and rebuild the filters twice.
-        UIView *glass = SGGlassFor(self, &kOwnedGlassKey);
-        glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-        glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        if (!CGRectEqualToRect(glass.frame, self.bounds)) glass.frame = self.bounds;
-        SGShapeGlass(glass, radius, NO);
-        SGRStylePlayerRootLegacyGlass(glass, radius, 1);
     } else {
         UIView *glass = SGRGlassPaneIn(self, &kOwnedGlassKey, radius);
         if (glass) SGRDimSheetGlassTint(glass, [UIColor colorWithWhite:self.isSubmenu ? 0.16 : 0.11
@@ -690,6 +696,28 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 }
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
     if (scrollView == self.scroll) [self updateScrollThumb];
+}
+- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
+    if (scrollView != self.scroll || !self.elasticEnabled) return;
+    [self highlightPress:nil notify:NO];
+#if SG_DRIVER
+    SGLog(@"stage209 popup scroll: begin offset=%.2f max=%.2f submenu=%d",scrollView.contentOffset.y,
+        MAX(0,scrollView.contentSize.height-scrollView.bounds.size.height),self.isSubmenu);
+#endif
+}
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
+    if (scrollView != self.scroll || !self.elasticEnabled) return;
+#if SG_DRIVER
+    SGLog(@"stage209 popup scroll: end offset=%.2f decelerate=%d submenu=%d",scrollView.contentOffset.y,decelerate,self.isSubmenu);
+#endif
+    if (!decelerate) [self settleElasticInteraction];
+}
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    if (scrollView != self.scroll || !self.elasticEnabled) return;
+#if SG_DRIVER
+    SGLog(@"stage209 popup scroll: settled offset=%.2f submenu=%d",scrollView.contentOffset.y,self.isSubmenu);
+#endif
+    [self settleElasticInteraction];
 }
 - (void)updateScrollThumb {
     CGFloat visible = CGRectGetHeight(self.scroll.bounds);
@@ -813,7 +841,10 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 }
 - (BOOL)elasticInteractionActive {
     UIGestureRecognizerState state = self.surfaceTouch.state;
-    return self.elasticDrag || self.elasticReturning || state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged;
+    UIGestureRecognizerState panState = self.selectionPan.state;
+    return self.elasticDrag || self.elasticReturning || state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged ||
+        (self.elasticEnabled && (panState == UIGestureRecognizerStateBegan || panState == UIGestureRecognizerStateChanged ||
+         self.scroll.tracking || self.scroll.dragging || self.scroll.decelerating));
 }
 - (void)settleElasticInteraction {
     if (![self elasticInteractionActive] && self.elasticSettled) self.elasticSettled();
@@ -853,7 +884,10 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         CABasicAnimation *fade = [CABasicAnimation animationWithKeyPath:@"opacity"];
         fade.fromValue = @(prior); fade.toValue = @0; fade.duration = 0.22;
         [self.touchLight addAnimation:fade forKey:@"Vitrine.TouchLight"];
-        [self settleElasticInteraction];
+        // UIKit may clear scroll.tracking after delivering this callback.
+        // Recheck once after the same touch dispatch has finished.
+        __weak SGRDropdownPanel *weakSelf = self;
+        dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf settleElasticInteraction]; });
     }
 }
 - (void)resetElastic {
@@ -879,7 +913,22 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             ![view.accessibilityIdentifier isEqualToString:@"Vitrine.Dropdown.Back"]) return NO;
         if ([view isKindOfClass:UIScrollView.class] && view != self.scroll) return NO;
     }
+    self.touchStartOffset = self.scroll.contentOffset;
     return !self.morphing;
+}
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)recognizer {
+    if (recognizer != self.selectionPan || !self.elasticEnabled) return YES;
+    if (self.morphing) return NO;
+    if (self.scroll.hidden || !self.scroll.scrollEnabled) return YES;
+    CGPoint v = [self.selectionPan velocityInView:self.superview];
+    if (fabs(v.x) > fabs(v.y)*1.8) return YES;
+    CGFloat maximum = MAX(0,self.scroll.contentSize.height-self.scroll.bounds.size.height);
+    CGFloat offset = MAX(0,MIN(maximum,self.touchStartOffset.y));
+    // Let UIScrollView claim every vertical/diagonal movement for which
+    // there is content in that direction. Only outward edge pulls may
+    // engage the panel, and never force contentOffset back under the finger.
+    BOOL outward = (v.y > 0 && offset <= 1) || (v.y < 0 && offset >= maximum-1);
+    return maximum <= 0.5 || outward;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer
  shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
@@ -898,9 +947,12 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     return nil;
 }
 - (void)highlightPress:(SGRDropdownPress *)press notify:(BOOL)notify {
-    if (self.draggedPress == press) return;
+    if (self.draggedPress == press && (press || !self.elasticEnabled)) return;
     self.draggedPress = press;
-    for (SGRDropdownPress *button in self.allButtons) button.highlighted = (button == press);
+    for (SGRDropdownPress *button in self.allButtons) {
+        BOOL highlighted = button == press;
+        if (button.highlighted != highlighted) button.highlighted = highlighted;
+    }
     if (press && notify) {
         [self.selectionFeedback selectionChanged];
         [self.selectionFeedback prepare];
@@ -909,7 +961,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (void)dragAcrossMenu:(UIPanGestureRecognizer *)pan {
     UIGestureRecognizerState state = pan.state;
     if (state == UIGestureRecognizerStateBegan) {
-        CGPoint offset = self.scroll.contentOffset;
+        CGPoint offset = self.elasticEnabled ? self.touchStartOffset : self.scroll.contentOffset;
         if (self.elasticEnabled && !self.scroll.hidden) offset.y = MAX(0,MIN(offset.y,MAX(0,self.scroll.contentSize.height-self.scroll.bounds.size.height)));
         self.dragStartOffset = offset;
         self.dragIsScrolling = NO;
@@ -932,19 +984,28 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
         CGFloat maxOffset = MAX(0,self.scroll.contentSize.height-self.scroll.bounds.size.height);
         BOOL atEdge = (movement.y > 0 && self.dragStartOffset.y <= 1) ||
                       (movement.y < 0 && self.dragStartOffset.y >= maxOffset-1);
-        BOOL elasticIntent = self.elasticEnabled && (self.elasticDrag || atEdge || fabs(movement.x)>fabs(movement.y)*1.15);
-        if (self.scroll.scrollEnabled && !self.scroll.hidden && !elasticIntent &&
-            fabs(self.scroll.contentOffset.y - self.dragStartOffset.y) > 7) self.dragIsScrolling = YES;
+        BOOL scrollable = self.scroll.scrollEnabled && !self.scroll.hidden && maxOffset > 0.5;
+        BOOL horizontalIntent = fabs(movement.x)>fabs(movement.y)*(self.elasticEnabled ? 1.8 : 1.15);
+        if (scrollable && (self.elasticEnabled ?
+            (fabs(self.scroll.contentOffset.y-self.dragStartOffset.y)>2 || (!horizontalIntent && !atEdge && !self.elasticDrag)) :
+            fabs(self.scroll.contentOffset.y-self.dragStartOffset.y)>7)) {
+            self.dragIsScrolling = YES;
+            if (self.elasticEnabled && self.elasticDrag) {
+                // Reversing an edge pull into available content must resume
+                // scrolling rather than pin the list or stretch its width.
+                self.elasticDrag = NO;
+                self.transform = CGAffineTransformIdentity;
+            }
+        }
         if (self.elasticEnabled && !self.dragIsScrolling) {
             CGPoint delta = [pan translationInView:self.superview];
             // Preserve vertical scrolling on long menus; horizontal pulls and
             // drags on a non-scrolling surface become elastic after 22pt.
-            BOOL horizontal = fabs(delta.x) > fabs(delta.y)*1.15;
+            BOOL horizontal = horizontalIntent;
             if (self.elasticDrag || (hypot(delta.x,delta.y) > 22 &&
                 (horizontal || atEdge || !self.scroll.scrollEnabled || self.scroll.hidden))) {
                 if (!self.elasticDrag) self.elasticHorizontal = horizontal;
                 self.elasticDrag = YES;
-                if (!self.scroll.hidden && self.scroll.scrollEnabled) self.scroll.contentOffset = self.dragStartOffset;
                 [self highlightPress:nil notify:NO];
                 // Use the anchor-facing edge as the pivot. Opposite edges
                 // carry the visible displacement, not the centre of the pane.
@@ -954,22 +1015,22 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 CGFloat sx, sy;
                 if (self.elasticHorizontal) {
                     dy *= 0.08;
-                    sx = 1 + MIN(0.20,fabs(dx)/width*0.72);
-                    sy = 1 - MIN(0.09,fabs(dx)/width*0.28);
+                    sx = 1 + MIN(scrollable ? 0.018 : 0.028,fabs(dx)/width*(scrollable ? 0.07 : 0.12));
+                    sy = 1 - MIN(0.025,fabs(dx)/width*0.10);
                 } else {
                     dx *= 0.08;
                     // Native vertical drag is mostly displacement, with a
                     // small stretch; the tall More sheet barely narrows.
-                    sx = 1 - MIN(self.isSubmenu ? 0.012 : 0.035,fabs(dy)/width*(self.isSubmenu ? 0.05 : 0.14));
+                    sx = 1 - MIN(self.isSubmenu ? 0.022 : 0.035,fabs(dy)/width*(self.isSubmenu ? 0.10 : 0.14));
                     sy = 1 + MIN(self.isSubmenu ? 0.040 : 0.055,fabs(dy)/height*(self.isSubmenu ? 0.36 : 0.32));
                 }
                 CGFloat px = (self.elasticAnchor.x-0.5)*width;
                 CGFloat py = (self.elasticAnchor.y-0.5)*height;
                 CGFloat tx = (1-sx)*px + dx*0.12;
-                // More drifts a little to the right as it is pulled down;
-                // keep its resting frame unchanged and spring back together.
-                if (self.isSubmenu && !self.elasticHorizontal) tx += MAX(0,dy)*0.15;
-                CGFloat ty = (1-sy)*py + dy*(self.elasticHorizontal ? 0.12 : (self.isSubmenu ? 0.79 : 0.30));
+                // A vertical pull narrows More about its own centre; do
+                // not change the exposed parent's lateral stack separation.
+                if (self.isSubmenu && !self.elasticHorizontal) tx = 0;
+                CGFloat ty = (1-sy)*py + dy*(self.elasticHorizontal ? 0.12 : (self.isSubmenu ? 0.62 : 0.30));
                 CGFloat blend = morphSmooth(hypot(delta.x,delta.y)/45);
                 CGAffineTransform base = self.elasticStartTransform;
                 self.transform = CGAffineTransformMake(morphMix(base.a,sx,blend),0,0,morphMix(base.d,sy,blend),
@@ -977,6 +1038,12 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
                 [self updateSurfaceLight:[pan locationInView:self]];
                 return;
             }
+        }
+        if (self.elasticEnabled) {
+            // A moving Legacy finger never selects a row. UIControl owns
+            // stationary presses/taps; pan owns motion and surface light.
+            [self highlightPress:nil notify:NO];
+            return;
         }
         SGRDropdownPress *candidate = (self.dragIsScrolling || self.scroll.hidden) ? nil :
             [self pressAtScrollPoint:[pan locationInView:self.scroll]];
@@ -1026,11 +1093,12 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
             });
             return;
         }
-        SGRDropdownPress *selection = self.dragIsScrolling || self.scroll.hidden || state != UIGestureRecognizerStateEnded ? nil :
+        SGRDropdownPress *selection = self.elasticEnabled || self.dragIsScrolling || self.scroll.hidden || state != UIGestureRecognizerStateEnded ? nil :
             [self pressAtScrollPoint:[pan locationInView:self.scroll]];
         [self highlightPress:nil notify:NO];
         if (selection) [selection activate];
         self.dragIsScrolling = NO;
+        if (self.elasticEnabled) [self settleElasticInteraction];
     }
 }
 - (void)configure:(UIMenu *)menu title:(NSString *)title maxHeight:(CGFloat)maximum {
@@ -1100,6 +1168,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     [self setNeedsLayout];
 }
 - (void)setStackDisplacement:(CGFloat)offset {
+    if (fabs(offset-self.stackOffset)<0.0001) return;
     CGPoint centre=self.center;
     centre.x += offset-self.stackOffset;
     self.stackOffset=offset; self.center=centre;
@@ -1127,13 +1196,11 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
 @property (nonatomic, weak) UIView *anchor;
 @property (nonatomic) BOOL homeFilterAnchor;
 @property (nonatomic) BOOL legacyMorph;
-@property (nonatomic) BOOL playerMaterial;
 @property (nonatomic) BOOL deferInitialOpen;
 @property (nonatomic) BOOL morphPopping;
 @property (nonatomic) CGFloat closeInitialLens;
 @property (nonatomic) CGFloat closeInitialAlpha;
 @property (nonatomic) CGFloat closeInitialContentAlpha;
-@property (nonatomic) CGFloat closeInitialMaterial;
 @property (nonatomic) CGFloat closeHostedAlpha;
 @property (nonatomic) BOOL morphHosted;
 @property (nonatomic, strong) UIView *hostedIncoming;
@@ -1200,9 +1267,6 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     self.anchor = anchor;
     self.homeFilterAnchor = [anchor.accessibilityLabel isEqualToString:@"Filter Home"];
     self.legacyMorph = SGBelowiOS26() && SGUseLegacyGlass() && !UIAccessibilityIsReduceMotionEnabled();
-    // All owned Legacy root dropdowns use the same lens geometry. This flag
-    // now selects only the player-specific settled material, not the path.
-    self.playerMaterial = self.legacyMorph && [menu.identifier isEqualToString:@"com.vitrine.systemmenu.top"];
     self.rootMenu = menu;
     self.finish = finish;
     self.panels = [NSMutableArray array];
@@ -1554,7 +1618,6 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
             self.morphTo = target;
             self.morphDuration = parent ? kPlayerMorphMore : (self.morphReversing ? 0.34 : kPlayerMorphOpen);
             self.morphFromParent = parent != nil;
-            panel.playerRootGlass = self.playerMaterial && parent == nil;
 #if SG_DRIVER
             if (!parent) {
                 self.rootMorphSetupAt = CACurrentMediaTime();
@@ -1599,7 +1662,6 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
             panel.morphFinalSize = target.size;
             panel.morphLensAmount = parent ? dropdownSubmenuLens(0) : 1.0;
             panel.morphTintStep = -1;
-            panel.morphRootMaterialAmount = self.morphReversing ? 1 : 0;
             panel.userInteractionEnabled = NO;
             if (parent) {
                 parent.alpha = 1;
@@ -1668,7 +1730,6 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     CGRect from = panel.frame;
     CGFloat lens = panel.morphing ? panel.morphLensAmount : 0;
     CGFloat alpha = panel.alpha, contentAlpha = panel.scroll.alpha;
-    CGFloat material = panel.morphing ? panel.morphRootMaterialAmount : 1;
     [self.morphLink invalidate]; self.morphLink = nil;
     [self finishHostedOptics];
     [panel.morphOutgoingContent removeFromSuperview]; panel.morphOutgoingContent = nil;
@@ -1677,7 +1738,7 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     self.reverseSelection = selection;
     self.morphFrom = from; self.morphTo = destination;
     self.closeInitialLens = lens; self.closeInitialAlpha = alpha;
-    self.closeInitialContentAlpha = contentAlpha; self.closeInitialMaterial = material;
+    self.closeInitialContentAlpha = contentAlpha;
     self.closeHostedAlpha = self.embedded.view.alpha;
     self.morphElapsed = 0; self.morphLastFrame = 0; self.morphDuration = popping ? 0.52 : 0.34;
     panel.userInteractionEnabled = NO;
@@ -1724,7 +1785,6 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     if (self.morphReversing) {
         [CATransaction begin]; [CATransaction setDisableActions:YES];
         panel.morphLensAmount = dropdownCloseLens(self.closeInitialLens,t,self.morphPopping);
-        panel.morphRootMaterialAmount = self.closeInitialMaterial*(1-morphSmooth(t));
         panel.frame = dropdownCollapseFrame(self.morphFrom,self.morphTo,t,self.morphPopping);
         [panel.morphGlass applyGeometryTransitionMeshAtIndex:(NSUInteger)lround(t*kPlayerMorphMeshSteps)];
         // The row is already unpressed before it reaches the parent.
@@ -1783,7 +1843,6 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
         CGFloat lens = dropdownHostedLens(t);
         [CATransaction begin]; [CATransaction setDisableActions:YES];
         panel.morphLensAmount = lens;
-        panel.morphRootMaterialAmount = 1-0.35*lens;
         panel.frame = morphRect(self.morphFrom,self.morphTo,morphSmooth(t));
         [panel.morphGlass applyGeometryTransitionMeshAtIndex:(NSUInteger)lround(t*kPlayerMorphMeshSteps)];
         UIView *old = panel.morphOutgoingContent, *incoming = self.hostedIncoming;
@@ -1845,7 +1904,6 @@ static __weak SGRDropdownPresentation *sg_hostedTransition;
     {
         BOOL filtered = panel.scroll.layer.filters.count > 0;
         CGFloat launch = flight ? morphGeometry(t/kPlayerLaunchEnd) : g;
-        panel.morphRootMaterialAmount = morphSmooth((t-0.04)/0.36);
         panel.scroll.alpha = self.morphFromParent ? 1 :
             (filtered ? morphSmooth(t/0.24) * morphMix(0.88, 1, unfold) : morphSmooth((t-0.16)/0.58));
         if (self.morphFromParent && self.panels.count>1) {
@@ -2042,7 +2100,7 @@ static UIMenu *matchingSubmenu(UIMenu *root, NSString *identifier) {
     }
     self.morphPanel = panel; self.morphFrom = from; self.morphTo = target;
     self.morphHosted = YES; self.morphFromParent = NO;
-    self.morphDuration = 0.29; self.morphElapsed = 0; self.morphLastFrame = 0;
+    self.morphDuration = 0.26; self.morphElapsed = 0; self.morphLastFrame = 0;
     UIView *glass = objc_getAssociatedObject(panel,&kOwnedGlassKey);
     if ([glass isKindOfClass:SGLegacyGlassView.class]) {
         panel.morphGlass = (SGLegacyGlassView *)glass;
