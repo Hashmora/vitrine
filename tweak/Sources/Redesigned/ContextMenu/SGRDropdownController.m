@@ -407,7 +407,8 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @implementation SGRDropdownLegacyScrollView
 - (BOOL)touchesShouldCancelInContentView:(UIView *)view {
     for (UIView *candidate = view; candidate && candidate != self; candidate = candidate.superview) {
-        if ([candidate isKindOfClass:SGRDropdownPress.class]) return YES;
+        if ([candidate isKindOfClass:SGRDropdownPress.class] ||
+            [candidate.accessibilityIdentifier isEqualToString:@"Vitrine.Dropdown.Back"]) return YES;
     }
     return [super touchesShouldCancelInContentView:view];
 }
@@ -433,6 +434,8 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 @property (nonatomic) BOOL elasticEnabled;
 @property (nonatomic) CGPoint elasticAnchor; // normalized point on the originating edge
 @property (nonatomic) BOOL elasticReturning;
+@property (nonatomic) BOOL scrollEdgeActive;
+@property (nonatomic) CGFloat scrollEdgePeak;
 @property (nonatomic) NSUInteger elasticGeneration;
 @property (nonatomic) CGAffineTransform elasticStartTransform;
 @property (nonatomic, copy) void (^elasticSettled)(void);
@@ -495,7 +498,10 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
             self.scroll.canCancelContentTouches = YES;
             // Edge overscroll is supplied by the glass panel, not a second
             // independently bouncing scroll transform.
-            self.scroll.bounces = NO;
+            self.scroll.bounces = YES;
+            self.scroll.alwaysBounceHorizontal = NO;
+            self.scroll.directionalLockEnabled = YES;
+            self.scroll.decelerationRate = UIScrollViewDecelerationRateNormal;
         }
         self.scroll.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
         self.scroll.backgroundColor = UIColor.clearColor;
@@ -695,7 +701,106 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
     }
 }
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
-    if (scrollView == self.scroll) [self updateScrollThumb];
+    if (scrollView != self.scroll) return;
+    [self updateScrollThumb];
+
+    if (!self.elasticEnabled || self.morphing ||
+        scrollView.hidden || !scrollView.scrollEnabled) return;
+
+    // Preserve the independent horizontal surface gesture.
+    if (self.elasticDrag && self.elasticHorizontal) return;
+
+    CGFloat minimum = -scrollView.adjustedContentInset.top;
+    CGFloat maximum = MAX(minimum,
+        scrollView.contentSize.height -
+        scrollView.bounds.size.height +
+        scrollView.adjustedContentInset.bottom);
+
+    CGFloat offset = scrollView.contentOffset.y;
+    CGFloat edge = offset - MAX(minimum, MIN(maximum, offset));
+
+    UIGestureRecognizerState panState =
+        scrollView.panGestureRecognizer.state;
+
+    if (scrollView.dragging &&
+        (panState == UIGestureRecognizerStateBegan ||
+         panState == UIGestureRecognizerStateChanged)) {
+        [self updateSurfaceLight:
+            [scrollView.panGestureRecognizer locationInView:self]];
+    }
+
+    if (fabs(edge) < 0.05) {
+        if (self.scrollEdgeActive) {
+            self.scrollEdgeActive = NO;
+            self.scrollEdgePeak = 0;
+
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            self.transform = CGAffineTransformIdentity;
+            [CATransaction commit];
+
+#if SG_DRIVER
+            SGLog(@"stage210 popup edge: edge=0 phase=settled submenu=%d",
+                  self.isSubmenu);
+#endif
+            __weak SGRDropdownPanel *weakSelf = self;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf settleElasticInteraction];
+            });
+        }
+        return;
+    }
+
+    // Native rubber-banding supplies displacement and release velocity.
+    // Do not create a second spring for the same vertical gesture.
+    if (!self.scrollEdgeActive) {
+        self.scrollEdgeActive = YES;
+        self.scrollEdgePeak = 0;
+        if (self.elasticReturning) {
+            self.elasticGeneration++;
+            self.elasticReturning = NO;
+            [self.layer removeAnimationForKey:@"Vitrine.ElasticReturn"];
+        }
+    }
+
+    CGFloat dy = -edge / (1.0 + fabs(edge)/90.0);
+    CGFloat width = MAX(1, self.bounds.size.width);
+    CGFloat height = MAX(1, self.bounds.size.height);
+
+    CGFloat sx = 1.0 - MIN(
+        self.isSubmenu ? 0.020 : 0.028,
+        fabs(dy)/width * 0.13
+    );
+
+    CGFloat sy = 1.0 + MIN(
+        self.isSubmenu ? 0.038 : 0.050,
+        fabs(dy)/height * 0.36
+    );
+
+    CGFloat px = (self.elasticAnchor.x - 0.5)*width;
+    CGFloat py = (self.elasticAnchor.y - 0.5)*height;
+
+    CGFloat tx = self.isSubmenu ? 0 : (1-sx)*px;
+    CGFloat ty = (1-sy)*py +
+                 dy*(self.isSubmenu ? 0.62 : 0.40);
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.transform = CGAffineTransformMake(
+        sx, 0, 0, sy, tx, ty
+    );
+    [CATransaction commit];
+
+    if (fabs(edge) > self.scrollEdgePeak + 2) {
+        self.scrollEdgePeak = fabs(edge);
+#if SG_DRIVER
+        SGLog(@"stage210 popup edge: edge=%.2f phase=%@ submenu=%d",
+              edge,
+              scrollView.dragging ? @"drag" :
+              scrollView.decelerating ? @"inertia" : @"return",
+              self.isSubmenu);
+#endif
+    }
 }
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
     if (scrollView != self.scroll || !self.elasticEnabled) return;
@@ -710,7 +815,28 @@ static CGFloat contentHeight(UIMenu *menu, BOOL withHeader) {
 #if SG_DRIVER
     SGLog(@"stage209 popup scroll: end offset=%.2f decelerate=%d submenu=%d",scrollView.contentOffset.y,decelerate,self.isSubmenu);
 #endif
-    if (!decelerate) [self settleElasticInteraction];
+    CGFloat light = ((CALayer *)self.touchLight.presentationLayer
+                     ?: self.touchLight).opacity;
+    [self.touchLight removeAnimationForKey:@"Vitrine.TouchLight"];
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.touchLight.opacity = 0;
+    [CATransaction commit];
+
+    CABasicAnimation *fade =
+        [CABasicAnimation animationWithKeyPath:@"opacity"];
+    fade.fromValue = @(light);
+    fade.toValue = @0;
+    fade.duration = 0.23;
+    [self.touchLight addAnimation:fade forKey:@"Vitrine.TouchLight"];
+
+    if (!decelerate) {
+        __weak SGRDropdownPanel *weakSelf = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf settleElasticInteraction];
+        });
+    }
 }
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
     if (scrollView != self.scroll || !self.elasticEnabled) return;
@@ -842,7 +968,7 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 - (BOOL)elasticInteractionActive {
     UIGestureRecognizerState state = self.surfaceTouch.state;
     UIGestureRecognizerState panState = self.selectionPan.state;
-    return self.elasticDrag || self.elasticReturning || state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged ||
+    return self.scrollEdgeActive || self.elasticDrag || self.elasticReturning || state == UIGestureRecognizerStateBegan || state == UIGestureRecognizerStateChanged ||
         (self.elasticEnabled && (panState == UIGestureRecognizerStateBegan || panState == UIGestureRecognizerStateChanged ||
          self.scroll.tracking || self.scroll.dragging || self.scroll.decelerating));
 }
@@ -892,6 +1018,8 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
 }
 - (void)resetElastic {
     if (!self.elasticEnabled) return;
+    self.scrollEdgeActive = NO;
+    self.scrollEdgePeak = 0;
     self.elasticGeneration++; self.elasticReturning = NO;
     [self.layer removeAnimationForKey:@"Vitrine.ElasticReturn"];
     [self.touchLight removeAllAnimations];
@@ -921,14 +1049,14 @@ static UILabel *textLabel(NSString *title, UIFont *font, UIColor *color) {
     if (self.morphing) return NO;
     if (self.scroll.hidden || !self.scroll.scrollEnabled) return YES;
     CGPoint v = [self.selectionPan velocityInView:self.superview];
-    if (fabs(v.x) > fabs(v.y)*1.8) return YES;
-    CGFloat maximum = MAX(0,self.scroll.contentSize.height-self.scroll.bounds.size.height);
-    CGFloat offset = MAX(0,MIN(maximum,self.touchStartOffset.y));
-    // Let UIScrollView claim every vertical/diagonal movement for which
-    // there is content in that direction. Only outward edge pulls may
-    // engage the panel, and never force contentOffset back under the finger.
-    BOOL outward = (v.y > 0 && offset <= 1) || (v.y < 0 && offset >= maximum-1);
-    return maximum <= 0.5 || outward;
+    CGFloat maximum = MAX(0,
+        self.scroll.contentSize.height-self.scroll.bounds.size.height);
+    if (maximum <= 0.5) return YES;
+
+    // A scrollable panel has exactly one owner of vertical motion,
+    // including reversals and movement beyond either edge.
+    if (self.scrollEdgeActive) return NO;
+    return fabs(v.x) > fabs(v.y)*1.8;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer
  shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
