@@ -157,6 +157,28 @@ void SGDJQueueNextSetTapped(void) {
         }
     });
 }
+// Clear is another QueueHeader PillButton, not necessarily identified by a
+// stable accessibility ID. Reserve its actual frame whenever it shares Edit's
+// row. Ignore the edit button's own wrappers and any pills on other rows.
+CGFloat SGDJQueueActionLeadingEdge(UIView *page, UIView *edit) {
+    CGRect editFrame = [edit convertRect:edit.bounds toView:page];
+    __block CGFloat leading = CGRectGetMinX(editFrame);
+    SGForEachView(page, ^(UIView *view) {
+        if (view == edit || [view isDescendantOfView:edit] || [edit isDescendantOfView:view] ||
+            ![NSStringFromClass(view.class) isEqualToString:@"_TtCOOO17NowPlaying_ECMKit11QueueHeader2UI7Private10PillButton"]) return;
+        for (UIView *ancestor = view; ancestor && ancestor != page; ancestor = ancestor.superview) {
+            if (ancestor.hidden || ancestor.alpha <= 0.01) return;
+        }
+        CGRect frame = [view convertRect:view.bounds toView:page];
+        if (CGRectIsEmpty(frame) || !CGRectIntersectsRect(frame, page.bounds)) return;
+        CGFloat overlap = MIN(CGRectGetMaxY(frame), CGRectGetMaxY(editFrame)) -
+                          MAX(CGRectGetMinY(frame), CGRectGetMinY(editFrame));
+        if (overlap < MIN(CGRectGetHeight(frame), CGRectGetHeight(editFrame)) * 0.5) return;
+        leading = MIN(leading, CGRectGetMinX(frame));
+    });
+    return leading;
+}
+
 static void renderNextDJSet(UIView *page, UIView *edit, BOOL visible) {
     BOOL requestMode = SGInt(SGKeyDJQueueSetMode, SGDJQueueSetModeSkip) == SGDJQueueSetModeRequest;
     BOOL enabled = !sPickingSegment && !sHandingOver && (!requestMode ||
@@ -170,7 +192,9 @@ static void hideNextDJSet(UIView *page) {
     renderNextDJSet(page, nil, NO);
 }
 static void drawNewSegmentButton(UIView *page) {
-    if (!page) return;
+    static BOOL drawing;
+    if (!page || drawing) return;
+    drawing = YES;
     UIView *edit = descendant(page, ^BOOL(UIView *view) {
         return [view.accessibilityIdentifier isEqualToString:@"queue-edit-button"];
     });
@@ -180,6 +204,7 @@ static void drawNewSegmentButton(UIView *page) {
         if (view.hidden || view.alpha <= 0.01) { visible = NO; break; }
     }
     renderNextDJSet(page, edit, visible);
+    drawing = NO;
 }
 
 void SGDJQueueBeginPick(void) {
@@ -374,15 +399,30 @@ static BOOL queueEditActionFrom(UIView *control, UIView *page, NSString *identif
 // Next DJ Set immediately, and this hook catches state changes that don't go
 // through a UIKit UIControl action (including the return from Edit).
 %hook _TtCOOO17NowPlaying_ECMKit11QueueHeader2UI7Private10PillButton
+- (void)layoutSubviews {
+    %orig;
+    UIView *pill = (UIView *)self;
+    UIView *page = sQueuePageView;
+    if (sDJActive && page.window && [pill isDescendantOfView:page]) drawNewSegmentButton(page);
+}
+- (void)didMoveToSuperview {
+    %orig;
+    UIView *page = sQueuePageView;
+    if (sDJActive && page.window && [(UIView *)self isDescendantOfView:page]) drawNewSegmentButton(page);
+}
 - (void)setHidden:(BOOL)hidden {
     %orig;
     UIView *edit = (UIView *)self;
-    if (!sDJActive || (![edit.accessibilityIdentifier isEqualToString:@"queue-edit-button"] &&
+    UIView *page = sQueuePageView;
+    if (!sDJActive || !page.window || ![edit isDescendantOfView:page]) return;
+    if (![edit.accessibilityIdentifier isEqualToString:@"queue-edit-button"] &&
         !descendant(edit, ^BOOL(UIView *child) {
             return [child.accessibilityIdentifier isEqualToString:@"queue-edit-button"];
-        }))) return;
-    UIView *page = sQueuePageView;
-    if (!page || !page.window || edit.window != page.window) return;
+        })) {
+        // Clear can appear/disappear without a controller layout pass.
+        drawNewSegmentButton(page);
+        return;
+    }
     objc_setAssociatedObject(page, &kNewSegmentEditPending, hidden ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (hidden) {
         hideNextDJSet(page);

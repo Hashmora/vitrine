@@ -61,7 +61,8 @@ void SGDJNativeDrawNextSet(UIView *page, UIView *edit, BOOL visible, BOOL enable
     if (button.enabled != enabled) button.enabled = enabled;
     CGRect editFrame = [edit convertRect:edit.bounds toView:page];
     CGSize size = [button sizeThatFits:CGSizeMake(200, 44)];
-    CGFloat available = CGRectGetMinX(editFrame) - 108;
+    CGFloat leading = SGDJQueueActionLeadingEdge(page, edit);
+    CGFloat available = leading - 108;
     if (available < 100 || CGRectGetMinY(editFrame) < 0 || CGRectGetMaxY(editFrame) > page.bounds.size.height) {
         button.hidden = YES;
         return;
@@ -70,8 +71,9 @@ void SGDJNativeDrawNextSet(UIView *page, UIView *edit, BOOL visible, BOOL enable
     button.titleLabel.numberOfLines = 1;
     button.titleLabel.adjustsFontSizeToFitWidth = YES;
     button.titleLabel.minimumScaleFactor = 0.8;
-    button.frame = CGRectMake(CGRectGetMinX(editFrame) - width - 8, CGRectGetMidY(editFrame) - 22, width, 44);
+    CGRect frame = CGRectMake(leading - width - 8, CGRectGetMidY(editFrame) - 22, width, 44);
+    if (!CGRectEqualToRect(button.frame, frame)) button.frame = frame;
     if (button.superview != page) [page addSubview:button];
-    [page bringSubviewToFront:button];
+    if (page.subviews.lastObject != button) [page bringSubviewToFront:button];
     button.hidden = NO;
 }
